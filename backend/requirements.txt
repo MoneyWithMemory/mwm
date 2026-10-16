@@ -1,0 +1,6 @@
+# Money with Memory (MwM) - Backend Requirements
+# Core runtime is self-contained using Python 3.10+ standard library.
+# Optional utilities for testing and development:
+
+requests>=2.31.0
+pytest>=8.0.0

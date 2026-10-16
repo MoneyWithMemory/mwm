@@ -1,0 +1,9 @@
+{
+  "models": {
+    "buyer-agent": {
+      "path": "QWEN3_4B_INST_Q4_K_M",
+      "context_window": 8192,
+      "gpu_layers": 99
+    }
+  }
+}

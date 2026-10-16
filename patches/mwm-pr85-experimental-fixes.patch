@@ -1,0 +1,229 @@
+From cc8abb4cb4824ab5d016f6c27e82fe5b805e9f08 Mon Sep 17 00:00:00 2001
+From: Lu <lu@MacBook-Air-di-Lu.fritz.box>
+Date: Tue, 13 Oct 2026 00:37:16 +0200
+Subject: [PATCH 1/2] test: minimal experimental fixes for onchain swap receipt
+ and respend
+
+---
+ src/wallet/online.rs    | 21 +++++++++++++++++++--
+ src/wallet/singlesig.rs |  4 ++++
+ 2 files changed, 23 insertions(+), 2 deletions(-)
+
+diff --git a/src/wallet/online.rs b/src/wallet/online.rs
+index 102c438..0a58243 100644
+--- a/src/wallet/online.rs
++++ b/src/wallet/online.rs
+@@ -1627,6 +1627,7 @@ pub trait WalletOnline: WalletOffline {
+                 };
+                 let txo = txn.get_txo(&outpoint)?.expect("txo must exist");
+                 let mut txo: DbTxoActMod = txo.into();
++                txo.exists = ActiveValue::Set(true);
+                 txo.pending_witness = ActiveValue::Set(false);
+                 txn.update_txo(txo)?;
+             }
+@@ -3846,6 +3847,7 @@ pub(crate) fn swap_record_incoming(
+     asset_id: &str,
+     txid: &str,
+     vout: u32,
++    recipient_id: &str,
+     assignments: &[Assignment],
+ ) -> Result<(), Error> {
+     let batch_transfer = DbBatchTransferActMod {
+@@ -3864,6 +3866,15 @@ pub(crate) fn swap_record_incoming(
+         ..Default::default()
+     };
+     let asset_transfer_idx = txn.set_asset_transfer(asset_transfer)?;
++    let transfer = DbTransferActMod {
++        asset_transfer_idx: ActiveValue::Set(asset_transfer_idx),
++        requested_assignment: ActiveValue::Set(assignments.first().cloned()),
++        incoming: ActiveValue::Set(true),
++        recipient_id: ActiveValue::Set(Some(recipient_id.to_string())),
++        recipient_type: ActiveValue::Set(Some(RecipientTypeFull::Witness { vout: Some(vout) })),
++        ..Default::default()
++    };
++    let _ = txn.set_transfer(transfer)?;
+     let db_txo = DbTxoActMod {
+         txid: ActiveValue::Set(txid.to_string()),
+         vout: ActiveValue::Set(vout),
+@@ -4290,10 +4301,16 @@ pub(crate) fn swap_accept_transfer_from_file(
+     }
+     let received_rgb_assignments =
+         wallet.extract_received_assignments(&consignment, witness_id, Some(vout), None);
+-    runtime.accept_transfer(valid_consignment, &resolver)?;
++    runtime.accept_transfer(valid_consignment.clone(), &resolver)?;
++    let consignment_path = wallet.get_receive_consignment_path(recipient_id);
++    let valid_consignment_path = wallet.get_receive_valid_consignment_path(&consignment_path);
++    if let Some(parent) = valid_consignment_path.parent() {
++        fs::create_dir_all(parent)?;
++    }
++    valid_consignment.save_file(&valid_consignment_path)?;
+     let assignments = received_rgb_assignments.into_values().collect::<Vec<_>>();
+     drop(runtime);
+-    swap_record_incoming(txn, &asset_id, &txid, vout, &assignments)?;
++    swap_record_incoming(txn, &asset_id, &txid, vout, recipient_id, &assignments)?;
+     Ok(assignments)
+ }
+ 
+diff --git a/src/wallet/singlesig.rs b/src/wallet/singlesig.rs
+index e398c22..927894e 100644
+--- a/src/wallet/singlesig.rs
++++ b/src/wallet/singlesig.rs
+@@ -1335,6 +1335,10 @@ impl Wallet {
+             let script = self
+                 .get_new_addresses(KeychainKind::External, 1)?
+                 .script_pubkey();
++            txn.set_pending_witness_script(DbPendingWitnessScriptActMod {
++                script: ActiveValue::Set(script.to_hex_string()),
++                ..Default::default()
++            })?;
+             let blinding = swap_random_blinding();
+             (
+                 None,
+-- 
+2.54.0 (Apple Git-157)
+
+
+From 9ee2f71992853958c28fd9092e6f979293b90e56 Mon Sep 17 00:00:00 2001
+From: Lu <lu@MacBook-Air-di-Lu.fritz.box>
+Date: Tue, 13 Oct 2026 01:15:14 +0200
+Subject: [PATCH 2/2] fix(swap): add DbTransfer incoming=false on outgoing swap
+ leg and local cache fallback for consignment
+
+---
+ src/wallet/online.rs | 93 +++++++++++++++++++++++++++++++-------------
+ 1 file changed, 67 insertions(+), 26 deletions(-)
+
+diff --git a/src/wallet/online.rs b/src/wallet/online.rs
+index 0a58243..11d06c7 100644
+--- a/src/wallet/online.rs
++++ b/src/wallet/online.rs
+@@ -3808,6 +3808,15 @@ pub(crate) fn swap_record_outgoing(
+         ..Default::default()
+     };
+     let asset_transfer_idx = txn.set_asset_transfer(asset_transfer)?;
++    let transfer = DbTransferActMod {
++        asset_transfer_idx: ActiveValue::Set(asset_transfer_idx),
++        requested_assignment: ActiveValue::Set(None),
++        incoming: ActiveValue::Set(false),
++        recipient_id: ActiveValue::Set(None),
++        recipient_type: ActiveValue::Set(None),
++        ..Default::default()
++    };
++    let _ = txn.set_transfer(transfer)?;
+ 
+     for txo in db_data
+         .txos
+@@ -4318,6 +4327,12 @@ pub(crate) fn swap_fetch_consignment_to_file(
+     wallet: &Wallet,
+     consignment: &OnchainSwapConsignment,
+ ) -> Result<PathBuf, Error> {
++    let target_dir = wallet
++        .wallet_dir()
++        .join("swap-receive")
++        .join(&consignment.recipient_id);
++    let target_path = target_dir.join(format!("{}.rgb", consignment.asset_id));
++
+     let endpoint_str =
+         consignment
+             .endpoint
+@@ -4328,25 +4343,41 @@ pub(crate) fn swap_fetch_consignment_to_file(
+     let transport = RgbTransport::from_str(endpoint_str)?;
+     let proxy_url = TransportEndpoint::try_from(transport)?.endpoint;
+     let proxy_client = ProxyClient::new(&proxy_url)?;
+-    let res = proxy_client.get_consignment(&consignment.recipient_id)?;
+-    let consignment_res = res.result.ok_or(Error::NoConsignment)?;
+-    let consignment_bytes = general_purpose::STANDARD
+-        .decode(consignment_res.consignment)
+-        .map_err(InternalError::from)?;
+-    let target_dir = wallet
+-        .wallet_dir()
+-        .join("swap-receive")
+-        .join(&consignment.recipient_id);
+-    fs::create_dir_all(&target_dir)?;
+-    let target_path = target_dir.join(format!("{}.rgb", consignment.asset_id));
+-    fs::write(&target_path, &consignment_bytes)?;
+-    Ok(target_path)
++    match proxy_client.get_consignment(&consignment.recipient_id) {
++        Ok(res) => {
++            let consignment_res = res.result.ok_or(Error::NoConsignment)?;
++            let consignment_bytes = general_purpose::STANDARD
++                .decode(consignment_res.consignment)
++                .map_err(InternalError::from)?;
++            fs::create_dir_all(&target_dir)?;
++            fs::write(&target_path, &consignment_bytes)?;
++            Ok(target_path)
++        }
++        Err(e) => {
++            if target_path.exists() {
++                warn!(
++                    wallet.logger(),
++                    "Proxy offline or error ({e:?}), falling back to cached local consignment at {}",
++                    target_path.display()
++                );
++                Ok(target_path)
++            } else {
++                Err(e)
++            }
++        }
++    }
+ }
+ 
+ pub(crate) fn swap_fetch_asset_history_to_file(
+     wallet: &Wallet,
+     history: &OnchainSwapAssetHistory,
+ ) -> Result<PathBuf, Error> {
++    let target_dir = wallet
++        .wallet_dir()
++        .join("swap-receive")
++        .join(&history.recipient_id);
++    let target_path = target_dir.join(format!("{}.rgb", history.asset_id));
++
+     let endpoint_str =
+         history
+             .endpoint
+@@ -4357,19 +4388,29 @@ pub(crate) fn swap_fetch_asset_history_to_file(
+     let transport = RgbTransport::from_str(endpoint_str)?;
+     let proxy_url = TransportEndpoint::try_from(transport)?.endpoint;
+     let proxy_client = ProxyClient::new(&proxy_url)?;
+-    let res = proxy_client.get_consignment(&history.recipient_id)?;
+-    let history_res = res.result.ok_or(Error::NoConsignment)?;
+-    let history_bytes = general_purpose::STANDARD
+-        .decode(history_res.consignment)
+-        .map_err(InternalError::from)?;
+-    let target_dir = wallet
+-        .wallet_dir()
+-        .join("swap-history")
+-        .join(&history.recipient_id);
+-    fs::create_dir_all(&target_dir)?;
+-    let target_path = target_dir.join(&history.asset_id);
+-    fs::write(&target_path, &history_bytes)?;
+-    Ok(target_path)
++    match proxy_client.get_consignment(&history.recipient_id) {
++        Ok(res) => {
++            let history_res = res.result.ok_or(Error::NoConsignment)?;
++            let history_bytes = general_purpose::STANDARD
++                .decode(history_res.consignment)
++                .map_err(InternalError::from)?;
++            fs::create_dir_all(&target_dir)?;
++            fs::write(&target_path, &history_bytes)?;
++            Ok(target_path)
++        }
++        Err(e) => {
++            if target_path.exists() {
++                warn!(
++                    wallet.logger(),
++                    "Proxy offline or error ({e:?}), falling back to cached local history at {}",
++                    target_path.display()
++                );
++                Ok(target_path)
++            } else {
++                Err(e)
++            }
++        }
++    }
+ }
+ 
+ pub(crate) fn swap_select_btc_inputs(
+-- 
+2.54.0 (Apple Git-157)
+

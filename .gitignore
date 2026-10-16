@@ -1,0 +1,95 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Node & Frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+.npm
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Rust & Compiled Binaries
+target/
+**/*.rs.bk
+Cargo.lock
+*.dylib
+*.dll
+*.bundle
+*.so
+
+# Databases & SQLite
+*.sqlite
+*.sqlite3
+*.db
+
+# Environments & Sensitive Keys (Strict Zero-Leak Rule)
+.env
+.env.*
+*.env
+*.pem
+*.key
+*.seed
+
+# Compressed Archives & Bundles
+*.tar.gz
+*.tgz
+*.zip
+*.tar
+*.7z
+*.bundle
+
+# Upstream Large Source Checkouts & Local Backups
+/rgb-lib/
+/rgb-lib-python/
+/backup_mwm_pr85/
+/assets/
+/view/
+/.status/
+/.agents/
+skills-lock.json
+
+# Internal Workspace Notes (Pre-Hackathon)
+rules.md
+todo.md
+/docs/
+
+# Root Redundancy Files (Official files are in patches/ and docs/)
+/mwm-pr85-experimental-fixes.patch
+/PR85_PINNED_SHA.txt
+
+# Logs & Temp
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.orbstack/

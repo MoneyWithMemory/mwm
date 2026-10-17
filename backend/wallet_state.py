@@ -316,7 +316,7 @@ class WalletStateManager:
         assets: List[AssetBalance] = []
         btc_sats = balance_data.get("btc_sats", 100_000_000)
         assets.append(AssetBalance(
-            asset_id="BTC",
+            asset_id="btc",
             ticker="BTC",
             schema="BTC",
             precision=8,

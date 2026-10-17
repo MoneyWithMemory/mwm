@@ -437,7 +437,7 @@ def finalize_agreement(session_id: str, agreed_price_usd: int) -> None:
         network_fee_sat=session.network_fee_sat,
         buyer_address=session.buyer_address,
         seller_address=session.seller_address,
-        expiry_unix=now + 3600,
+        expiry_unix=now + 600,  # 10 minutes TTL
     )
     terms_hash = compute_terms_hash(canonical_terms)
 
@@ -537,6 +537,12 @@ def create_session(req: CreateSessionRequest):
     if not seller_wid:
         seller_wid = "wallet_b"
 
+    if req.buyer_wallet_id == seller_wid or buyer_addr == req.seller_address:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "self_trade", "message": "Cannot create a trade session with yourself"},
+        )
+
     seller_profile = wallet_state_manager.get_profile(seller_wid)
     seller_addr = req.seller_address
 
@@ -565,6 +571,7 @@ def create_session(req: CreateSessionRequest):
             buyer_max_budget_usd=req.buyer_max_ceiling_usd,
             seller_min_reserve_usd=seller_profile.secret_min_reserve_usd,
             network_fee_sat=2_000,
+            expiry_seconds=600,
             initial_status=SessionStatus.BLOCKED_BY_GATE,
             initial_gate=gate_info,
         )
@@ -586,6 +593,7 @@ def create_session(req: CreateSessionRequest):
         buyer_max_budget_usd=req.buyer_max_ceiling_usd,
         seller_min_reserve_usd=seller_profile.secret_min_reserve_usd,
         network_fee_sat=2_000,
+        expiry_seconds=600,
         initial_status=SessionStatus.NEGOTIATING,
     )
 
@@ -621,8 +629,30 @@ def sign_session(session_id: str, req: SignSessionRequest):
 
     if session.status != SessionStatus.AWAITING_SIGNATURES:
         raise HTTPException(
-            status_code=400,
-            detail={"code": "invalid_session_state", "message": f"Cannot sign session in state {session.status}"},
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "not_awaiting_signatures", "message": f"Session is {session.status}"},
+        )
+
+    now = int(time.time())
+    if session.expiry_unix and now > session.expiry_unix:
+        session.status = SessionStatus.EXPIRED
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "expired", "message": "The terms expired before both signatures"},
+        )
+
+    is_buyer = req.wallet_id in (session.buyer_wallet_id, session.buyer_address)
+    is_seller = req.wallet_id in (session.seller_wallet_id, session.seller_address)
+    if not (is_buyer or is_seller):
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "forbidden", "message": "Wallet is not part of this session"},
+        )
+
+    if (is_buyer and session.buyer_signed) or (is_seller and session.seller_signed):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "already_signed", "message": "This wallet already signed"},
         )
 
     # Validate terms_hash: if provided by user, must match active session terms_hash
@@ -631,7 +661,7 @@ def sign_session(session_id: str, req: SignSessionRequest):
             logger.warning(f"Signature mismatch on session {session_id}: expected {session.terms_hash}, got {req.terms_hash}")
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail={"code": "terms_hash_mismatch", "message": "Terms hash mismatch with active session terms"},
+                detail={"code": "terms_hash_mismatch", "message": "The signed terms differ from the active terms"},
             )
 
     active_hash = session.terms_hash or ""
@@ -659,11 +689,12 @@ def cancel_session(session_id: str, req: CancelSessionRequest):
             detail={"code": "session_not_found", "message": f"Session {session_id} does not exist"},
         )
 
-    if session.status in (SessionStatus.SETTLING, SessionStatus.SETTLED):
+    if session.status not in (SessionStatus.NEGOTIATING, SessionStatus.AWAITING_SIGNATURES):
         raise HTTPException(
-            status_code=400,
-            detail={"code": "cannot_cancel", "message": f"Cannot cancel session in state {session.status}"},
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "not_cancellable", "message": f"Session is {session.status}"},
         )
 
     session_store.cancel_session(session_id, req.wallet_id)
     return session.to_session_view(viewer_wallet_id=req.wallet_id)
+

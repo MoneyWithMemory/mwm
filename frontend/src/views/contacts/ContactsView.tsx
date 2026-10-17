@@ -1,20 +1,79 @@
+import { useState } from 'react'
+import { useContacts } from '@/api'
+import { EmptyState, ErrorState, Skeleton } from '@/components/ui'
 import { useWalletContext } from '@/lib/navigation'
+import { ContactRow } from './ContactRow'
+import { ContactSheet } from './ContactSheet'
 
-// Stub (M1.1). Owned by Domi from here on: see M2.4.
+function ContactsSkeleton() {
+  return (
+    <div className="flex flex-col gap-2" role="status" aria-label="Loading contacts">
+      {[0, 1, 2, 3].map((i) => (
+        <Skeleton key={i} className="h-[76px] rounded-card" />
+      ))}
+    </div>
+  )
+}
+
 export function ContactsView() {
-  const { navigate } = useWalletContext()
+  const { walletId, navigate } = useWalletContext()
+  const contacts = useContacts(walletId)
+  const [selected, setSelected] = useState<{ address: string; open: boolean } | null>(null)
+
+  const list = contacts.data
+  const current = list?.find((c) => c.address === selected?.address)
+  const trade = (address: string) => navigate('trade', { counterpartyId: address })
+
+  let body
+  if (list && list.length > 0) {
+    body = (
+      <ul className="flex flex-col divide-y divide-separator rounded-card bg-surface shadow-card">
+        {list.map((contact) => (
+          <ContactRow
+            key={contact.address}
+            contact={contact}
+            onOpen={() => setSelected({ address: contact.address, open: true })}
+            onTrade={() => trade(contact.address)}
+          />
+        ))}
+      </ul>
+    )
+  } else if (list) {
+    body = (
+      <EmptyState
+        className="rounded-card bg-surface shadow-card"
+        title="No contacts yet"
+        description="Counterparties appear here after your first trade or when you add one."
+      />
+    )
+  } else if (contacts.error) {
+    body = (
+      <ErrorState
+        title="Couldn't load contacts"
+        message="Check your connection and try again."
+        onRetry={contacts.refresh}
+      />
+    )
+  } else {
+    body = <ContactsSkeleton />
+  }
 
   return (
-    <div className="flex flex-col gap-3 p-4">
-      <h1 className="text-lg font-semibold">Contacts</h1>
-      <p className="text-sm opacity-70">No-KYC address book with Reliability % and trust tier.</p>
-      <button
-        type="button"
-        className="pressable self-start rounded-lg bg-black/10 px-3 py-2 text-sm"
-        onClick={() => navigate('trade', { counterpartyId: 'wallet_b' })}
-      >
-        Trade with Wallet B
-      </button>
+    <div className="flex flex-col justify-start gap-4 p-4">
+      <header className="flex flex-col gap-1">
+        <h1 className="text-lg font-semibold">Contacts</h1>
+        <p className="text-sm text-hint">No-KYC address book</p>
+      </header>
+      {body}
+      {current && selected && (
+        <ContactSheet
+          contact={current}
+          open={selected.open}
+          walletId={walletId}
+          onClose={() => setSelected({ ...selected, open: false })}
+          onTrade={() => trade(current.address)}
+        />
+      )}
     </div>
   )
 }

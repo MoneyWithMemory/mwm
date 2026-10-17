@@ -1,4 +1,8 @@
 @import "tailwindcss";
+/* Docs and scripts hold no UI classes: Tailwind scans every file, and a change to one it scans
+   but the app does not import reloads every open page (losing each wallet's place). */
+@source not "../*.md";
+@source not "../scripts";
 /* Inter, bundled locally (the demo may run without internet); Apple devices use SF Pro first. */
 @import "@fontsource-variable/inter/wght.css";
 

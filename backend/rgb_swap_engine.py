@@ -51,6 +51,7 @@ class WalletManager:
         self.data_root.mkdir(parents=True, exist_ok=True)
         self._wallets: Dict[str, rgb_lib.Wallet] = {}
         self._onlines: Dict[str, Any] = {}
+        self._addresses: Dict[str, str] = {}
 
     def get_wallet_dir(self, wallet_id: str) -> Path:
         wdir = self.data_root / wallet_id
@@ -60,12 +61,10 @@ class WalletManager:
     def get_or_create_wallet(self, wallet_id: str, mnemonic: Optional[str] = None) -> Tuple[rgb_lib.Wallet, Any, str]:
         """
         Load an existing wallet or generate a new one, persisting keys in keys.json.
-        Returns (wallet, online, address).
+        Returns (wallet, online, address). Primary address is cached for stability.
         """
-        if wallet_id in self._wallets and wallet_id in self._onlines:
-            wallet = self._wallets[wallet_id]
-            online = self._onlines[wallet_id]
-            return wallet, online, wallet.get_address()
+        if wallet_id in self._wallets and wallet_id in self._onlines and wallet_id in self._addresses:
+            return self._wallets[wallet_id], self._onlines[wallet_id], self._addresses[wallet_id]
 
         wdir = self.get_wallet_dir(wallet_id)
         keys_file = wdir / "keys.json"
@@ -123,9 +122,11 @@ class WalletManager:
         )
         online = wallet.go_online(online_opts)
 
+        address = wallet.get_address()
+        self._addresses[wallet_id] = address
         self._wallets[wallet_id] = wallet
         self._onlines[wallet_id] = online
-        return wallet, online, wallet.get_address()
+        return wallet, online, address
 
     def get_balances(self, wallet_id: str) -> Dict[str, Any]:
         """Fetch total BTC balance and all NIA asset balances."""

@@ -68,8 +68,11 @@ class Session(BaseModel):
     settlement_message: str = ""
     error_message: Optional[str] = None
 
+    thinking: Optional[str] = None
+    gate: Optional[Dict[str, Any]] = None
     history: List[NegotiationTurn] = Field(default_factory=list)
     created_at_unix: int = Field(default_factory=lambda: int(time.time()))
+    updated_at_unix: int = Field(default_factory=lambda: int(time.time()))
 
     def to_view(self, viewer_wallet_id: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -99,6 +102,163 @@ class Session(BaseModel):
         data["my_private_thought"] = my_latest_thought
         return data
 
+    def to_session_view(self, viewer_wallet_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Produce SessionView matching the exact frontend types.ts contract.
+        Ensures strict perspective masking: my_private_thought is only revealed
+        for the requesting wallet's own turns, never for the counterparty.
+        """
+        from backend.memory_graph import memory_graph
+
+        is_buyer = viewer_wallet_id == self.buyer_wallet_id
+        is_seller = viewer_wallet_id == self.seller_wallet_id
+        my_role = "buyer" if is_buyer else ("seller" if is_seller else "buyer")
+
+        counterparty_address = self.seller_address if is_buyer else self.buyer_address
+        counterparty_wallet_id = self.seller_wallet_id if is_buyer else self.buyer_wallet_id
+
+        rep = memory_graph.get_reputation(counterparty_wallet_id)
+        counterparty_trust = {
+            "trusted": rep.is_trusted,
+            "sybil_ring_detected": rep.trust_tier == "Ring Anomaly Detected",
+            "reliability_pct": rep.reliability_pct,
+            "trust_tier": rep.trust_tier,
+            "assessment_summary": rep.assessment_summary,
+        }
+
+        # Build rounds 1..4
+        rounds_map: Dict[int, Dict[str, Any]] = {}
+        for r_num in range(1, 5):
+            rounds_map[r_num] = {
+                "n": r_num,
+                "buyer_offer_usd": None,
+                "seller_offer_usd": None,
+                "buyer_action": None,
+                "seller_action": None,
+                "my_private_thought": None,
+                "public_messages": {"buyer": None, "seller": None},
+            }
+
+        max_round_seen = 0
+        for turn in self.history:
+            r = turn.round_number
+            if 1 <= r <= 4:
+                if r > max_round_seen:
+                    max_round_seen = r
+                target_round = rounds_map[r]
+                if turn.speaker_wallet_id == self.buyer_wallet_id:
+                    target_round["buyer_offer_usd"] = turn.offer_usd
+                    target_round["buyer_action"] = turn.action
+                    target_round["public_messages"]["buyer"] = turn.public_message
+                    if is_buyer:
+                        target_round["my_private_thought"] = turn.private_thought
+                elif turn.speaker_wallet_id == self.seller_wallet_id:
+                    target_round["seller_offer_usd"] = turn.offer_usd
+                    target_round["seller_action"] = turn.action
+                    target_round["public_messages"]["seller"] = turn.public_message
+                    if is_seller:
+                        target_round["my_private_thought"] = turn.private_thought
+
+        rounds_list = [rounds_map[r] for r in range(1, max_round_seen + 1)] if max_round_seen > 0 else []
+
+        settlement_steps: List[Dict[str, Any]] = []
+        if self.status in (SessionStatus.SETTLING, SessionStatus.SETTLED, SessionStatus.FAILED):
+            step_defs = [
+                (1, "create_swap_offer"),
+                (2, "accept_swap_offer"),
+                (3, "accept_swap_request"),
+                (4, "complete_swap_proposal"),
+                (5, "process_swap_completion"),
+                (6, "broadcast_swap_completion"),
+                (7, "accept_swap_transfers"),
+            ]
+            for idx, name in step_defs:
+                if self.status == SessionStatus.SETTLED:
+                    st = "done"
+                elif self.status == SessionStatus.FAILED:
+                    if idx < self.settlement_step:
+                        st = "done"
+                    elif idx == self.settlement_step:
+                        st = "failed"
+                    else:
+                        st = "pending"
+                elif self.status == SessionStatus.SETTLING:
+                    if idx < self.settlement_step:
+                        st = "done"
+                    elif idx == self.settlement_step:
+                        st = "running"
+                    else:
+                        st = "pending"
+                else:
+                    st = "pending"
+                settlement_steps.append({
+                    "index": idx,
+                    "name": name,
+                    "status": st,
+                })
+
+        failure = None
+        if self.status == SessionStatus.FAILED and self.error_message:
+            failure = {"code": "settlement_error", "message": self.error_message}
+
+        return {
+            "session_id": self.session_id,
+            "state": self.status,
+            "my_role": my_role,
+            "counterparty_address": counterparty_address,
+            "asset": {
+                "asset_id": self.asset_id,
+                "ticker": self.asset_ticker,
+                "schema": "NIA",
+                "precision": 0,
+            },
+            "rgb_amount": self.asset_amount,
+            "agreed_price_usd": self.agreed_price_usd,
+            "created_at": self.created_at_unix,
+            "updated_at": self.updated_at_unix,
+            "payment_asset": {
+                "asset_id": self.payment_asset_id,
+                "ticker": self.payment_ticker,
+                "schema": "NIA",
+                "precision": 0,
+            },
+            "counterparty_trust": counterparty_trust,
+            "rounds": rounds_list,
+            "thinking": self.thinking,
+            "gate": self.gate,
+            "terms": self.terms,
+            "terms_hash": self.terms_hash,
+            "buyer_signed": self.buyer_signed,
+            "seller_signed": self.seller_signed,
+            "settlement_steps": settlement_steps,
+            "txid": self.txid,
+            "failure": failure,
+        }
+
+    def to_summary(self, viewer_wallet_id: Optional[str] = None) -> Dict[str, Any]:
+        """Produce SessionSummary item for GET /api/sessions."""
+        is_buyer = viewer_wallet_id == self.buyer_wallet_id
+        is_seller = viewer_wallet_id == self.seller_wallet_id
+        my_role = "buyer" if is_buyer else ("seller" if is_seller else "buyer")
+        counterparty_address = self.seller_address if is_buyer else self.buyer_address
+        return {
+            "session_id": self.session_id,
+            "state": self.status,
+            "my_role": my_role,
+            "counterparty_address": counterparty_address,
+            "asset": {
+                "asset_id": self.asset_id,
+                "ticker": self.asset_ticker,
+                "schema": "NIA",
+                "precision": 0,
+            },
+            "rgb_amount": self.asset_amount,
+            "agreed_price_usd": self.agreed_price_usd,
+            "created_at": self.created_at_unix,
+            "updated_at": self.updated_at_unix,
+        }
+
+
 
 class SessionStore:
     """Thread-safe in-memory store for MwM negotiation and swap sessions."""
@@ -124,12 +284,14 @@ class SessionStore:
         seller_min_reserve_usd: int,
         expiry_seconds: int = 3600,
         network_fee_sat: int = 2_000,
+        initial_status: str = SessionStatus.NEGOTIATING,
+        initial_gate: Optional[Dict[str, Any]] = None,
     ) -> Session:
         with self._lock:
             now = int(time.time())
             session = Session(
                 session_id=session_id,
-                status=SessionStatus.NEGOTIATING,
+                status=initial_status,
                 asset_id=asset_id,
                 asset_ticker=asset_ticker,
                 asset_amount=asset_amount,
@@ -144,10 +306,21 @@ class SessionStore:
                 seller_min_reserve_usd=seller_min_reserve_usd,
                 network_fee_sat=network_fee_sat,
                 expiry_unix=now + expiry_seconds,
+                gate=initial_gate,
                 created_at_unix=now,
+                updated_at_unix=now,
             )
             self._sessions[session_id] = session
             return session
+
+    def list_sessions_for(self, wallet_id: str) -> List[Session]:
+        with self._lock:
+            res: List[Session] = []
+            for s in self._sessions.values():
+                if wallet_id in (s.buyer_wallet_id, s.seller_wallet_id, s.buyer_address, s.seller_address):
+                    res.append(s)
+            res.sort(key=lambda x: x.created_at_unix, reverse=True)
+            return res
 
     def get_session(self, session_id: str) -> Optional[Session]:
         with self._lock:
@@ -179,6 +352,12 @@ class SessionStore:
             session.terms = canonical_terms.model_dump()
             session.terms_hash = terms_hash
             session.expiry_unix = canonical_terms.expiry_unix
+            session.gate = {
+                "passed": True,
+                "trust_tier": "High Authenticity",
+                "reasons": [],
+            }
+            session.updated_at_unix = int(time.time())
             return session
 
     def sign_session(self, session_id: str, wallet_id: str, signed_hash: str) -> Session:
@@ -206,6 +385,8 @@ class SessionStore:
             else:
                 raise ValueError(f"Wallet {wallet_id} is not an authorized party for session {session_id}")
 
+            session.updated_at_unix = int(time.time())
+
             # If both have signed with the valid matching hash -> transition to SETTLING
             if session.buyer_signed and session.seller_signed:
                 session.status = SessionStatus.SETTLING
@@ -221,6 +402,7 @@ class SessionStore:
             if session.status in (SessionStatus.SETTLING, SessionStatus.SETTLED):
                 raise ValueError(f"Cannot cancel session {session_id} in state {session.status}")
             session.status = SessionStatus.CANCELLED_BY_USER
+            session.updated_at_unix = int(time.time())
             logger.info(f"Session {session_id} cancelled by {cancelled_by}")
             return session
 
@@ -230,6 +412,7 @@ class SessionStore:
                 session = self._sessions[session_id]
                 session.settlement_step = step
                 session.settlement_message = message
+                session.updated_at_unix = int(time.time())
 
     def set_settled(self, session_id: str, txid: str) -> Session:
         with self._lock:
@@ -238,6 +421,7 @@ class SessionStore:
             session.txid = txid
             session.settlement_step = 7
             session.settlement_message = f"Atomic swap broadcast and settled successfully (txid: {txid})."
+            session.updated_at_unix = int(time.time())
             logger.info(f"Session {session_id} -> SETTLED (txid: {txid})")
             return session
 
@@ -246,14 +430,21 @@ class SessionStore:
             session = self._sessions[session_id]
             session.status = SessionStatus.FAILED
             session.error_message = error_message
+            session.updated_at_unix = int(time.time())
             logger.error(f"Session {session_id} -> FAILED: {error_message}")
             return session
 
-    def set_blocked(self, session_id: str, reason: str) -> Session:
+    def set_blocked(self, session_id: str, reason: str, trust_tier: str = "High Authenticity") -> Session:
         with self._lock:
             session = self._sessions[session_id]
             session.status = SessionStatus.BLOCKED_BY_GATE
             session.error_message = reason
+            session.gate = {
+                "passed": False,
+                "trust_tier": trust_tier,
+                "reasons": [reason],
+            }
+            session.updated_at_unix = int(time.time())
             logger.warning(f"Session {session_id} -> BLOCKED_BY_GATE: {reason}")
             return session
 

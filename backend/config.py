@@ -6,6 +6,7 @@ Zero hardcoded personal paths.
 
 import os
 from pathlib import Path
+from typing import Optional
 from pydantic import BaseModel, Field
 
 # Root repository directory
@@ -43,11 +44,13 @@ class Settings(BaseModel):
     DEMO_ASSET_NAME: str = "Pepe RGB"
     DEMO_ASSET_SUPPLY: int = 1_000_000
     DEMO_ASSET_PRECISION: int = 0
+    DEMO_ASSET_ID: Optional[str] = None
 
     PAYMENT_ASSET_TICKER: str = "USDT"
     PAYMENT_ASSET_NAME: str = "Tether USD Test"
     PAYMENT_ASSET_SUPPLY: int = 10_000
     PAYMENT_ASSET_PRECISION: int = 0
+    PAYMENT_ASSET_ID: Optional[str] = None
 
     # Demo Target Economy
     DEMO_SELLER_ASK_USD: int = 150

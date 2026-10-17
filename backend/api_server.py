@@ -258,7 +258,7 @@ def get_wallet(wallet_id: str):
         balances = {
             "wallet_id": wallet_id,
             "address": wallet_state_manager._addresses.get(wallet_id, ""),
-            "btc_sats": 100_000_000,
+            "btc_sats": 0,
             "assets": [],
         }
 
@@ -525,6 +525,13 @@ def finalize_agreement(session_id: str, agreed_price_usd: int) -> None:
 
 # ── Background On-Chain Settlement Runner ───────────────────────────
 
+def _btc_sats(wallet_id: str) -> Optional[int]:
+    try:
+        return wallet_mgr.get_balances(wallet_id)["btc_sats"]
+    except Exception as exc:
+        logger.warning(f"Could not read BTC balance of {wallet_id}: {exc}")
+        return None
+
 def run_settlement_worker(session_id: str) -> None:
     """Executes the 7-step atomic swap on Bitcoin regtest once both parties sign."""
     session = session_store.get_session(session_id)
@@ -578,6 +585,8 @@ def run_settlement_worker(session_id: str) -> None:
             payment_ticker=session.payment_ticker,
             payment_amount=terms.payment_amount,
             agreed_price_usd=terms.agreed_price_usd,
+            buyer_btc_sats=_btc_sats(session.buyer_wallet_id),
+            seller_btc_sats=_btc_sats(session.seller_wallet_id),
         )
         logger.info(f"Session {session_id} successfully settled and confirmed. txid={txid}")
     except Exception as exc:

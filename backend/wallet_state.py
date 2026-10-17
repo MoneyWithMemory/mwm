@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from backend.config import settings
 from backend.market import market_manager
+from backend.seed import SEED_WALLETS
 
 logger = logging.getLogger("mwm.wallet_state")
 
@@ -118,7 +119,7 @@ class WalletStateManager:
         self._history["wallet_a"] = [
             HistoryPoint(
                 t=seed_time,
-                balances={"btc": 100_000_000, "rgb:usdt_nia": 10_000, "rgb:pepe_nia": 0},
+                balances={"btc": SEED_WALLETS["wallet_a"].initial_btc_sats, "rgb:usdt_nia": 10_000, "rgb:pepe_nia": 0},
                 total_usd=10_000.0,
             )
         ]
@@ -141,7 +142,7 @@ class WalletStateManager:
         self._history["wallet_b"] = [
             HistoryPoint(
                 t=seed_time,
-                balances={"btc": 100_000_000, "rgb:pepe_nia": 1_000_000, "rgb:usdt_nia": 0},
+                balances={"btc": SEED_WALLETS["wallet_b"].initial_btc_sats, "rgb:pepe_nia": 1_000_000, "rgb:usdt_nia": 0},
                 total_usd=0.0,
             )
         ]
@@ -164,7 +165,7 @@ class WalletStateManager:
         self._history["wallet_sybil"] = [
             HistoryPoint(
                 t=seed_time,
-                balances={"btc": 50_000_000, "rgb:pepe_nia": 0, "rgb:usdt_nia": 0},
+                balances={"btc": SEED_WALLETS["wallet_sybil"].initial_btc_sats, "rgb:pepe_nia": 0, "rgb:usdt_nia": 0},
                 total_usd=0.0,
             )
         ]
@@ -177,11 +178,14 @@ class WalletStateManager:
 
         # Update initial seed points with real asset IDs and BTC valuation at sats_per_usd
         sats_per_usd = settings.SATS_PER_USD or 1000
+        btc_a = SEED_WALLETS["wallet_a"].initial_btc_sats
+        btc_b = SEED_WALLETS["wallet_b"].initial_btc_sats
+        btc_sybil = SEED_WALLETS["wallet_sybil"].initial_btc_sats
         self._history["wallet_a"] = [
             HistoryPoint(
                 t=int(time.time()) - 3600,
-                balances={"btc": 100_000_000, usdt_id: 10_000, pepe_id: 0},
-                total_usd=round(100_000_000 / sats_per_usd + 10_000.0, 2),
+                balances={"btc": btc_a, usdt_id: 10_000, pepe_id: 0},
+                total_usd=round(btc_a / sats_per_usd + 10_000.0, 2),
             )
         ]
         self._cost_basis["wallet_a"] = {"btc": None, usdt_id: 1.0, pepe_id: None}
@@ -189,8 +193,8 @@ class WalletStateManager:
         self._history["wallet_b"] = [
             HistoryPoint(
                 t=int(time.time()) - 3600,
-                balances={"btc": 100_000_000, pepe_id: 1_000_000, usdt_id: 0},
-                total_usd=round(100_000_000 / sats_per_usd + 0.0, 2),
+                balances={"btc": btc_b, pepe_id: 1_000_000, usdt_id: 0},
+                total_usd=round(btc_b / sats_per_usd + 0.0, 2),
             )
         ]
         self._cost_basis["wallet_b"] = {"btc": None, usdt_id: 1.0, pepe_id: None}
@@ -198,8 +202,8 @@ class WalletStateManager:
         self._history["wallet_sybil"] = [
             HistoryPoint(
                 t=int(time.time()) - 3600,
-                balances={"btc": 50_000_000, pepe_id: 0, usdt_id: 0},
-                total_usd=round(50_000_000 / sats_per_usd + 0.0, 2),
+                balances={"btc": btc_sybil, pepe_id: 0, usdt_id: 0},
+                total_usd=round(btc_sybil / sats_per_usd + 0.0, 2),
             )
         ]
         self._cost_basis["wallet_sybil"] = {"btc": None, usdt_id: 1.0, pepe_id: None}
@@ -279,6 +283,8 @@ class WalletStateManager:
         payment_ticker: str,
         payment_amount: int,
         agreed_price_usd: int,
+        buyer_btc_sats: Optional[int] = None,
+        seller_btc_sats: Optional[int] = None,
     ) -> None:
         now = int(time.time())
         buyer_addr = self._addresses.get(buyer_wallet_id, "buyer_address")
@@ -361,7 +367,7 @@ class WalletStateManager:
         if buyer_wallet_id in self._history and self._history[buyer_wallet_id]:
             prev_hp = self._history[buyer_wallet_id][-1]
             b_balances = dict(prev_hp.balances)
-            b_balances["btc"] = b_balances.get("btc", 100_000_000)
+            b_balances["btc"] = buyer_btc_sats if buyer_btc_sats is not None else b_balances.get("btc", 0)
             b_balances[payment_asset_id] = max(0, b_balances.get(payment_asset_id, 0) - payment_amount)
             b_balances[asset_id] = b_balances.get(asset_id, 0) + asset_amount
             btc_usd = float(b_balances["btc"]) / float(sats_per_usd)
@@ -377,7 +383,7 @@ class WalletStateManager:
         if seller_wallet_id in self._history and self._history[seller_wallet_id]:
             prev_hp = self._history[seller_wallet_id][-1]
             s_balances = dict(prev_hp.balances)
-            s_balances["btc"] = s_balances.get("btc", 100_000_000)
+            s_balances["btc"] = seller_btc_sats if seller_btc_sats is not None else s_balances.get("btc", 0)
             s_balances[payment_asset_id] = s_balances.get(payment_asset_id, 0) + payment_amount
             s_balances[asset_id] = max(0, s_balances.get(asset_id, 0) - asset_amount)
             btc_usd = float(s_balances["btc"]) / float(sats_per_usd)
@@ -399,7 +405,7 @@ class WalletStateManager:
 
         # Build assets list
         assets: List[AssetBalance] = []
-        btc_sats = balance_data.get("btc_sats", 100_000_000)
+        btc_sats = balance_data.get("btc_sats", 0)
         assets.append(AssetBalance(
             asset_id="btc",
             ticker="BTC",

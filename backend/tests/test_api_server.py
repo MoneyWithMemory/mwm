@@ -76,11 +76,12 @@ def test_wallets_list_and_details():
     assert "btc" in wa["avg_cost_basis"]
     assert wa["agent_profile"]["buyer_max_ceiling_usd"] == 135
 
-    # Check Wallet B total_usd includes BTC at sats_per_usd (100,000 USD)
+    # Wallet B history starts from the seeded 0.01 BTC (1,000 USD at 1,000 sats/USD)
     resp_b = client.get("/api/wallets/wallet_b")
     assert resp_b.status_code == 200
     wb = resp_b.json()
-    assert wb["history_points"][0]["total_usd"] == 100_000.0
+    assert wb["history_points"][0]["balances"]["btc"] == 1_000_000
+    assert wb["history_points"][0]["total_usd"] == 1_000.0
 
 def test_put_agent_profile_seller_desk():
     """Verify PUT /api/wallets/{id}/agent_profile updates seller desk settings."""

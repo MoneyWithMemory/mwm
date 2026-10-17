@@ -38,6 +38,12 @@ WALLET_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 # Global lock to serialize rgb_lib / SQLite calls across concurrent web threads
 SWAP_GLOBAL_LOCK = threading.Lock()
 
+# Bitcoin the swap takes from a leg's RGB inputs (the patched rgb-lib adds no other inputs):
+# the RGB output it receives into, plus the network fee on the taker's side.
+SWAP_RGB_OUTPUT_SAT = 1_000
+# Bitcoin on the output that receives an isolated allocation; enough for the taker's share.
+ISOLATION_UTXO_SAT = 10_000
+
 class SecurityViolationError(RuntimeError):
     """Raised when signature verification or terms hash validation fails."""
     pass
@@ -270,30 +276,80 @@ class RgbSwapEngine:
             }
 
     @staticmethod
-    def _selected_amount(wallet: rgb_lib.Wallet, online: Any, asset_id: str, amount: int) -> Optional[int]:
-        """
-        Mirrors rgb-lib's select_rgb_inputs for a swap leg: UTXOs sorted by the sum of their
-        allocations, taken whole until `amount` is covered. Returns the amount those inputs
-        carry (None if insufficient). Swap transitions have no RGB change output, so anything
-        above `amount` would make the transition invalid.
-        """
-        def alloc_amount(a: Any) -> int:
-            return getattr(a.assignment, "amount", 0) or 0
+    def _alloc_amount(allocation: Any) -> int:
+        return getattr(allocation.assignment, "amount", 0) or 0
 
-        eligible = [
+    @classmethod
+    def _eligible_unspents(cls, wallet: rgb_lib.Wallet, online: Any) -> List[Any]:
+        """UTXOs rgb-lib may spend as swap inputs: settled, with no pending receive."""
+        return [
             u for u in wallet.list_unspents(online, False, False)
             if u.utxo.exists and u.pending_blinded == 0 and all(a.settled for a in u.rgb_allocations)
         ]
-        eligible.sort(key=lambda u: sum(alloc_amount(a) for a in u.rgb_allocations))
+
+    @classmethod
+    def _select_inputs(cls, wallet: rgb_lib.Wallet, online: Any, asset_id: str, amount: int) -> Optional[List[Any]]:
+        """
+        Mirrors rgb-lib's select_rgb_inputs for a swap leg: UTXOs sorted by the sum of their
+        allocations, taken whole until `amount` is covered. Returns those UTXOs (None if
+        insufficient).
+        """
+        eligible = cls._eligible_unspents(wallet, online)
+        eligible.sort(key=lambda u: sum(cls._alloc_amount(a) for a in u.rgb_allocations))
+        selected: List[Any] = []
         collected = 0
         for u in eligible:
-            got = sum(alloc_amount(a) for a in u.rgb_allocations if a.asset_id == asset_id)
+            got = sum(cls._alloc_amount(a) for a in u.rgb_allocations if a.asset_id == asset_id)
             if got == 0:
                 continue
+            selected.append(u)
             collected += got
             if collected >= amount:
-                return collected
+                return selected
         return None
+
+    @classmethod
+    def _selected_amount(cls, wallet: rgb_lib.Wallet, online: Any, asset_id: str, amount: int) -> Optional[int]:
+        """
+        The amount the inputs selected for a swap leg carry (None if insufficient). Swap
+        transitions have no RGB change output, so anything above `amount` would make the
+        transition invalid.
+        """
+        selected = cls._select_inputs(wallet, online, asset_id, amount)
+        if selected is None:
+            return None
+        return sum(cls._alloc_amount(a) for u in selected for a in u.rgb_allocations if a.asset_id == asset_id)
+
+    @classmethod
+    def _selection_fits(cls, wallet: rgb_lib.Wallet, online: Any, asset_id: str, amount: int, min_btc_sat: int) -> bool:
+        """The leg's inputs carry exactly `amount`, nothing of other assets, and enough bitcoin."""
+        selected = cls._select_inputs(wallet, online, asset_id, amount)
+        if selected is None:
+            return False
+        carried = sum(cls._alloc_amount(a) for u in selected for a in u.rgb_allocations if a.asset_id == asset_id)
+        only_this_asset = all(a.asset_id == asset_id for u in selected for a in u.rgb_allocations)
+        btc = sum(int(u.utxo.btc_amount) for u in selected)
+        return carried == amount and only_this_asset and btc >= min_btc_sat
+
+    @classmethod
+    def _eligible_amount(cls, wallet: rgb_lib.Wallet, online: Any, asset_id: str) -> int:
+        return sum(
+            cls._alloc_amount(a)
+            for u in cls._eligible_unspents(wallet, online)
+            for a in u.rgb_allocations
+            if a.asset_id == asset_id
+        )
+
+    def _ensure_free_utxos(self, wallet: rgb_lib.Wallet, online: Any, count: int) -> None:
+        """At least `count` empty colorable UTXOs, so a blind receive never shares one."""
+        free = [
+            u for u in wallet.list_unspents(online, False, False)
+            if u.utxo.exists and u.utxo.colorable and not u.rgb_allocations and u.pending_blinded == 0
+        ]
+        if len(free) >= count:
+            return
+        wallet.create_utxos(online, False, count - len(free), ISOLATION_UTXO_SAT, FEE_RATE, False)
+        regtest.mine(1)
 
     def _ensure_isolated_allocation(
         self,
@@ -302,38 +358,82 @@ class RgbSwapEngine:
         asset_id: str,
         exact_amount: int,
         party: str,
+        min_btc_sat: int = SWAP_RGB_OUTPUT_SAT,
     ) -> None:
         """
-        Ensures the inputs rgb-lib will select for this leg carry exactly `exact_amount`,
-        splitting the allocation with a self-send if needed. Raises before anything is
-        swapped if an exact selection is still impossible, so no funds can be destroyed.
+        Ensures the inputs rgb-lib selects for this leg carry exactly `exact_amount` of the
+        asset, nothing else, and at least `min_btc_sat` of bitcoin, for any part of the balance.
+
+        rgb-lib takes whole UTXOs, smallest first, and only settled allocations. So the whole
+        balance is self-sent in two parts: exactly `exact_amount` to a new output carrying
+        ISOLATION_UTXO_SAT (a witness receive), and the rest to a blind receive with no asset
+        ID. A refresh filtered on the asset settles the send and the first receive only; the
+        rest stays pending (unselectable) until the post-swap refresh, or _settle_parked if the
+        swap stops earlier. Raises before anything is swapped if the selection is still not
+        exact, so no funds can be destroyed.
         """
-        if self._selected_amount(wallet, online, asset_id, exact_amount) == exact_amount:
+        # Start from a settled wallet: allocations of pending transfers would skew the mirror.
+        wallet.refresh(online, None, [], False)
+        if self._selection_fits(wallet, online, asset_id, exact_amount, min_btc_sat):
             logger.info(f"{party}: inputs already carry exactly {exact_amount} {asset_id}.")
             return
 
-        logger.info(f"{party}: preparing isolated allocation of {exact_amount} {asset_id} via self-send...")
+        total = self._eligible_amount(wallet, online, asset_id)
+        if total < exact_amount:
+            raise RgbSwapEngineError(
+                f"The {party} holds only {total} settled {asset_id}, below {exact_amount}; settlement refused before any transfer."
+            )
+        rest = total - exact_amount
+        logger.info(f"{party}: isolating {exact_amount} {asset_id} on a new output (rest {rest} held back)...")
         transport = self.proxy_url.replace("http://", "rpc://").replace("https://", "rpcs://")
-        rcv = wallet.blind_receive(None, rgb_lib.Assignment.FUNGIBLE(exact_amount), None, [transport], 1)
-        recipient = rgb_lib.Recipient(
-            recipient_id=rcv.recipient_id,
-            witness_data=None,
-            assignment=rgb_lib.Assignment.FUNGIBLE(exact_amount),
+        assignment = rgb_lib.Assignment.FUNGIBLE(exact_amount)
+        exact_rcv = wallet.witness_receive(asset_id, assignment, None, [transport], 1)
+        recipients = [rgb_lib.Recipient(
+            recipient_id=exact_rcv.recipient_id,
+            witness_data=rgb_lib.WitnessData(amount_sat=ISOLATION_UTXO_SAT, blinding=None),
+            assignment=assignment,
             transport_endpoints=[transport],
-        )
-        wallet.send(online, {asset_id: [recipient]}, True, FEE_RATE, 1, None)
+        )]
+        if rest:
+            self._ensure_free_utxos(wallet, online, 1)
+            rest_assignment = rgb_lib.Assignment.FUNGIBLE(rest)
+            rest_rcv = wallet.blind_receive(None, rest_assignment, None, [transport], 1)
+            recipients.append(rgb_lib.Recipient(
+                recipient_id=rest_rcv.recipient_id,
+                witness_data=None,
+                assignment=rest_assignment,
+                transport_endpoints=[transport],
+            ))
+        wallet.send(online, {asset_id: recipients}, True, FEE_RATE, 1, None)
         regtest.mine(2)
-        wallet.refresh(online, None, [], False)
+        wallet.refresh(online, asset_id, [], False)
         regtest.mine(1)
         wallet.refresh(online, asset_id, [], False)
 
-        selected = self._selected_amount(wallet, online, asset_id, exact_amount)
-        if selected != exact_amount:
+        if not self._selection_fits(wallet, online, asset_id, exact_amount, min_btc_sat):
+            selected = self._selected_amount(wallet, online, asset_id, exact_amount)
             raise RgbSwapEngineError(
                 f"The {party}'s allocations of {asset_id} cannot be selected as exactly {exact_amount} "
                 f"(rgb-lib would spend {selected}); settlement refused before any transfer."
             )
         logger.info(f"{party}: isolated settled allocation of {exact_amount} {asset_id} ready.")
+
+    @staticmethod
+    def _settle_parked(wallets: List[Tuple[rgb_lib.Wallet, Any]]) -> List[str]:
+        """Completes every pending transfer (parked excess included); returns the errors."""
+        errors: List[str] = []
+        for round_ in range(2):
+            for wallet, online in wallets:
+                try:
+                    wallet.refresh(online, None, [], False)
+                except Exception as exc:
+                    errors.append(str(exc))
+            if round_ == 0:
+                try:
+                    regtest.mine(1)
+                except Exception as exc:
+                    errors.append(str(exc))
+        return errors
 
     def execute_atomic_swap(
         self,
@@ -378,89 +478,15 @@ class RgbSwapEngine:
             if self.wallet_mgr.get_spendable(taker_wallet_id, canonical_terms.payment_asset_id) < canonical_terms.payment_amount:
                 raise RgbSwapEngineError("The buyer's balance does not cover the agreed price; settlement refused before any transfer.")
 
-            # Both legs must select inputs carrying exactly their amount: otherwise the buyer's leg
-            # fails at step 5 (InvalidConsignment) and the seller's surplus would be destroyed.
-            self._ensure_isolated_allocation(
-                wallet=taker_wallet,
-                online=taker_online,
-                asset_id=canonical_terms.payment_asset_id,
-                exact_amount=canonical_terms.payment_amount,
-                party="buyer",
-            )
-            self._ensure_isolated_allocation(
-                wallet=maker_wallet,
-                online=maker_online,
-                asset_id=canonical_terms.asset_id,
-                exact_amount=canonical_terms.rgb_amount,
-                party="seller",
-            )
-
-            # Legs definition:
-            # Maker (Seller) gives PEPE-RGB, receives USDT-RGB
-            maker_gives = rgb_lib.OnchainSwapLeg(
-                kind=rgb_lib.OnchainSwapLegKind.RGB,
-                asset_id=canonical_terms.asset_id,
-                amount=canonical_terms.rgb_amount,
-            )
-            maker_receives = rgb_lib.OnchainSwapLeg(
-                kind=rgb_lib.OnchainSwapLegKind.RGB,
-                asset_id=canonical_terms.payment_asset_id,
-                amount=canonical_terms.payment_amount,
-            )
-
-            # Stage 1: Maker create_swap_offer
-            report(1, "Maker: creating swap offer...")
-            offer = maker_wallet.create_swap_offer(
-                maker_gives=maker_gives,
-                maker_receives=maker_receives,
-                network_fee_sat=canonical_terms.network_fee_sat,
-                expiration_timestamp=canonical_terms.expiry_unix,
-                proxy_url=self.proxy_url,
-            )
-
-            # Stage 2: Taker accept_swap_offer
-            report(2, "Taker: accepting swap offer and verifying terms...")
-            request = taker_wallet.accept_swap_offer(
-                online=taker_online,
-                offer=offer,
-                min_confirmations=0,
-                skip_sync=False,
-            )
-
-            # Stage 3: Maker accept_swap_request
-            report(3, "Maker: generating and signing swap proposal...")
-            proposal = maker_wallet.accept_swap_request(
-                online=maker_online,
-                request=request,
-                min_confirmations=0,
-                skip_sync=False,
-            )
-
-            # Stage 4: Taker complete_swap_proposal (pre-signing consignment check)
-            report(4, "Taker: validating consignment and completing proposal...")
-            completion = taker_wallet.complete_swap_proposal(
-                online=taker_online,
-                proposal=proposal,
-                min_confirmations=0,
-                skip_sync=False,
-            )
-
-            # Stage 5: Maker process_swap_completion
-            report(5, "Maker: processing swap completion PSBT...")
-            finalized = maker_wallet.process_swap_completion(
-                online=maker_online,
-                completion=completion,
-            )
-
-            # Stage 6: Maker broadcast_swap_completion + Regtest Mine
-            report(6, "Maker: broadcasting on-chain swap transaction...")
-            txid = maker_wallet.broadcast_swap_completion(
-                online=maker_online,
-                completion=finalized,
-            )
-            if txid_callback:
-                txid_callback(txid)
-            report(6, f"Transaction broadcast confirmed (txid: {txid}). Mining blocks...")
+            try:
+                txid, finalized = self._isolate_and_broadcast(
+                    canonical_terms, maker_wallet, maker_online, taker_wallet, taker_online, report, txid_callback,
+                )
+            except Exception:
+                # Nothing was swapped: settle any excess parked by the isolation step.
+                for err in self._settle_parked([(taker_wallet, taker_online), (maker_wallet, maker_online)]):
+                    logger.warning(f"Refresh after a failed settlement: {err}")
+                raise
 
             # The swap is on-chain from here: run every finalization call even if one fails,
             # so one side's error does not skip the other side's accept.
@@ -473,6 +499,13 @@ class RgbSwapEngine:
                     logger.error(f"Post-broadcast step '{label}' failed (txid {txid}): {exc}")
                     post_errors.append(f"{label}: {exc}")
 
+            # Only the broadcasting wallet (the maker) marks its swap inputs as spent. The taker
+            # broadcasts the same transaction too (a no-op on-chain), or its spent RGB inputs would
+            # stay unspent in its database and break its next transfer.
+            attempt("taker broadcast_swap_completion", lambda: taker_wallet.broadcast_swap_completion(
+                online=taker_online,
+                completion=finalized,
+            ))
             attempt("mine", lambda: regtest.mine(2))
 
             # Stage 7: Atomically accept swap transfers & refresh on both sides
@@ -491,14 +524,12 @@ class RgbSwapEngine:
             ))
             attempt("mine", lambda: regtest.mine(1))
 
-            # Refresh both wallets to transition incoming allocations to SETTLED
-            attempt("taker refresh", lambda: taker_wallet.refresh(taker_online, None, [], False))
-            attempt("mine", lambda: regtest.mine(1))
-            attempt("taker refresh", lambda: taker_wallet.refresh(taker_online, canonical_terms.asset_id, [], False))
-
-            attempt("maker refresh", lambda: maker_wallet.refresh(maker_online, None, [], False))
-            attempt("mine", lambda: regtest.mine(1))
-            attempt("maker refresh", lambda: maker_wallet.refresh(maker_online, canonical_terms.payment_asset_id, [], False))
+            # Refresh both wallets twice, a block apart: incoming allocations (the swap's and any
+            # parked excess) reach SETTLED on every asset.
+            post_errors.extend(
+                f"refresh: {err}"
+                for err in self._settle_parked([(taker_wallet, taker_online), (maker_wallet, maker_online)])
+            )
 
             if post_errors:
                 raise RgbSwapEngineError(
@@ -507,6 +538,104 @@ class RgbSwapEngine:
 
             report(7, "Settlement complete: both assets transitioned to SETTLED status.")
             return txid
+
+    def _isolate_and_broadcast(
+        self,
+        canonical_terms: CanonicalSwapTerms,
+        maker_wallet: rgb_lib.Wallet,
+        maker_online: Any,
+        taker_wallet: rgb_lib.Wallet,
+        taker_online: Any,
+        report: Callable[[int, str], None],
+        txid_callback: Optional[Callable[[str], None]],
+    ) -> Tuple[str, Any]:
+        """Isolates both legs and runs stages 1-6; returns the broadcast txid and the finalized completion."""
+        # Both legs must select inputs carrying exactly their amount: otherwise the buyer's leg
+        # fails at step 5 (InvalidConsignment) and the seller's surplus would be destroyed.
+        self._ensure_isolated_allocation(
+            wallet=taker_wallet,
+            online=taker_online,
+            asset_id=canonical_terms.payment_asset_id,
+            exact_amount=canonical_terms.payment_amount,
+            party="buyer",
+            min_btc_sat=SWAP_RGB_OUTPUT_SAT + canonical_terms.network_fee_sat,
+        )
+        self._ensure_isolated_allocation(
+            wallet=maker_wallet,
+            online=maker_online,
+            asset_id=canonical_terms.asset_id,
+            exact_amount=canonical_terms.rgb_amount,
+            party="seller",
+            min_btc_sat=SWAP_RGB_OUTPUT_SAT,
+        )
+
+        # Legs definition:
+        # Maker (Seller) gives PEPE-RGB, receives USDT-RGB
+        maker_gives = rgb_lib.OnchainSwapLeg(
+            kind=rgb_lib.OnchainSwapLegKind.RGB,
+            asset_id=canonical_terms.asset_id,
+            amount=canonical_terms.rgb_amount,
+        )
+        maker_receives = rgb_lib.OnchainSwapLeg(
+            kind=rgb_lib.OnchainSwapLegKind.RGB,
+            asset_id=canonical_terms.payment_asset_id,
+            amount=canonical_terms.payment_amount,
+        )
+
+        # Stage 1: Maker create_swap_offer
+        report(1, "Maker: creating swap offer...")
+        offer = maker_wallet.create_swap_offer(
+            maker_gives=maker_gives,
+            maker_receives=maker_receives,
+            network_fee_sat=canonical_terms.network_fee_sat,
+            expiration_timestamp=canonical_terms.expiry_unix,
+            proxy_url=self.proxy_url,
+        )
+
+        # Stage 2: Taker accept_swap_offer
+        report(2, "Taker: accepting swap offer and verifying terms...")
+        request = taker_wallet.accept_swap_offer(
+            online=taker_online,
+            offer=offer,
+            min_confirmations=0,
+            skip_sync=False,
+        )
+
+        # Stage 3: Maker accept_swap_request
+        report(3, "Maker: generating and signing swap proposal...")
+        proposal = maker_wallet.accept_swap_request(
+            online=maker_online,
+            request=request,
+            min_confirmations=0,
+            skip_sync=False,
+        )
+
+        # Stage 4: Taker complete_swap_proposal (pre-signing consignment check)
+        report(4, "Taker: validating consignment and completing proposal...")
+        completion = taker_wallet.complete_swap_proposal(
+            online=taker_online,
+            proposal=proposal,
+            min_confirmations=0,
+            skip_sync=False,
+        )
+
+        # Stage 5: Maker process_swap_completion
+        report(5, "Maker: processing swap completion PSBT...")
+        finalized = maker_wallet.process_swap_completion(
+            online=maker_online,
+            completion=completion,
+        )
+
+        # Stage 6: Maker broadcast_swap_completion + Regtest Mine
+        report(6, "Maker: broadcasting on-chain swap transaction...")
+        txid = maker_wallet.broadcast_swap_completion(
+            online=maker_online,
+            completion=finalized,
+        )
+        if txid_callback:
+            txid_callback(txid)
+        report(6, f"Transaction broadcast confirmed (txid: {txid}). Mining blocks...")
+        return txid, finalized
 
 # Global engine instance
 swap_engine = RgbSwapEngine()

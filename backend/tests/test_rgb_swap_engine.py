@@ -202,9 +202,9 @@ def test_engine_enforces_double_signature_and_hash_security():
         )
 
 
-def _unspent(*allocs, exists=True, pending_blinded=0):
+def _unspent(*allocs, exists=True, pending_blinded=0, btc=10_000, colorable=True):
     return SimpleNamespace(
-        utxo=SimpleNamespace(exists=exists),
+        utxo=SimpleNamespace(exists=exists, btc_amount=str(btc), colorable=colorable),
         pending_blinded=pending_blinded,
         rgb_allocations=[
             SimpleNamespace(asset_id=aid, settled=settled, assignment=SimpleNamespace(amount=amt))
@@ -387,3 +387,113 @@ def test_needs_my_signature_follows_each_side():
     assert session.to_summary("wallet_a")["needs_my_signature"] is False
     assert session.to_summary("wallet_b")["needs_my_signature"] is True
     assert session.to_summary("wallet_sybil")["needs_my_signature"] is False
+
+
+class _SelfSendWallet(_FakeWallet):
+    """
+    The asset sits on one small-BTC UTXO, as after receiving it in a swap. After a self-send, a
+    refresh filtered on the asset settles the witness receive (a new 10k-sat output) and the
+    send; the blind receive with no asset ID stays pending.
+    """
+
+    def __init__(self, asset_id, amount, free_utxos=1):
+        super().__init__([_unspent((asset_id, amount, True), btc=847)] + [_unspent() for _ in range(free_utxos)])
+        self.asset_id = asset_id
+        self.receives = []
+        self.sent = None
+        self.refreshes = []
+        self.created = 0
+
+    def create_utxos(self, online, up_to, num, size, fee_rate, skip_sync):
+        self.created += num
+        self.unspents += [_unspent(btc=size) for _ in range(num)]
+
+    def witness_receive(self, asset_id, assignment, expiration, transports, min_confirmations):
+        self.receives.append(("witness", asset_id, assignment.amount))
+        return SimpleNamespace(recipient_id="wvout:fake")
+
+    def blind_receive(self, asset_id, assignment, expiration, transports, min_confirmations):
+        self.receives.append(("blind", asset_id, assignment.amount))
+        return SimpleNamespace(recipient_id="utxob:fake")
+
+    def send(self, online, recipient_map, donation, fee_rate, min_confirmations, expiration):
+        self.sent = [(r.witness_data.amount_sat if r.witness_data else None, r.assignment.amount) for r in recipient_map[self.asset_id]]
+
+    def refresh(self, online, asset_id, filters, skip_sync):
+        self.refreshes.append(asset_id)
+        if self.sent and asset_id == self.asset_id:
+            (btc, exact), *held = self.sent
+            self.unspents = [_unspent((self.asset_id, exact, True), btc=btc)] + [_unspent(pending_blinded=1) for _ in held]
+        return {}
+
+
+@pytest.mark.parametrize("part,free_utxos", [(300_000, 1), (500_000, 1), (700_000, 0), (999_999, 1), (1_000_000, 0)])
+def test_isolation_puts_exactly_the_part_on_a_new_output(monkeypatch, part, free_utxos):
+    monkeypatch.setattr("backend.rgb_swap_engine.regtest.mine", lambda n=1: None)
+    wallet = _SelfSendWallet("pepe", 1_000_000, free_utxos=free_utxos)
+    engine = RgbSwapEngine(wallet_mgr=object())
+    engine._ensure_isolated_allocation(
+        wallet=wallet, online=None, asset_id="pepe", exact_amount=part, party="buyer", min_btc_sat=3_000,
+    )
+    # A smallest-first selection could not isolate a part above half, and the 847-sat UTXO could
+    # not pay the taker's 3,000 sats even for the whole balance: the part moves to a new output.
+    rest = 1_000_000 - part
+    assert wallet.receives == [("witness", "pepe", part)] + ([("blind", None, rest)] if rest else [])
+    assert wallet.sent[0] == (10_000, part)
+    assert RgbSwapEngine._selection_fits(wallet, None, "pepe", part, 3_000)
+    # A full refresh first, then only refreshes filtered on the asset (the blind receive waits).
+    assert wallet.refreshes == [None, "pepe", "pepe"]
+    assert wallet.created == (1 if rest and free_utxos == 0 else 0)
+
+
+def test_isolation_skips_a_selection_that_already_fits(monkeypatch):
+    wallet = _SelfSendWallet("pepe", 1_000_000)
+    wallet.unspents[0] = _unspent(("pepe", 1_000_000, True), btc=10_000)
+    RgbSwapEngine(wallet_mgr=object())._ensure_isolated_allocation(
+        wallet=wallet, online=None, asset_id="pepe", exact_amount=1_000_000, party="seller", min_btc_sat=1_000,
+    )
+    assert wallet.receives == [] and wallet.sent is None
+
+
+def test_failed_swap_settles_any_parked_excess(monkeypatch):
+    monkeypatch.setattr("backend.rgb_swap_engine.regtest.mine", lambda n=1: None)
+
+    class FailingWallet:
+        def __init__(self):
+            self.refreshes = []
+
+        def create_swap_offer(self, **kwargs):
+            raise RuntimeError("proxy unreachable")
+
+        def refresh(self, online, asset_id, filters, skip_sync):
+            self.refreshes.append((asset_id, filters))
+
+    maker, taker = FailingWallet(), FailingWallet()
+
+    class FakeMgr:
+        def get_or_create_wallet(self, wallet_id):
+            return (maker if wallet_id == "wallet_b" else taker), None, "bcrt1qfake"
+
+        def get_spendable(self, wallet_id, asset_id):
+            return 10**9
+
+    engine = RgbSwapEngine(wallet_mgr=FakeMgr())
+    engine._ensure_isolated_allocation = lambda **kw: None
+    terms = CanonicalSwapTerms(
+        session_id="sess_fail",
+        asset_id="rgb:pepe_asset",
+        rgb_amount=500_000,
+        payment_asset_id="rgb:usdt_asset",
+        payment_amount=75,
+        agreed_price_usd=75,
+        network_fee_sat=2000,
+        buyer_address="bcrt1qbuyer",
+        seller_address="bcrt1qseller",
+        expiry_unix=int(time.time()) + 3600,
+    )
+    h = compute_terms_hash(terms)
+    with pytest.raises(RuntimeError, match="proxy unreachable"):
+        engine.execute_atomic_swap(
+            canonical_terms=terms, buyer_signed=True, seller_signed=True, buyer_signed_hash=h, seller_signed_hash=h,
+        )
+    assert maker.refreshes == [(None, []), (None, [])] and taker.refreshes == [(None, []), (None, [])]

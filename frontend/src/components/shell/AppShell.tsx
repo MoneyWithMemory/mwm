@@ -31,7 +31,16 @@ export function AppShell() {
     <MotionConfig reducedMotion={MOTION_CONFIG.reducedMotion}>
       <OverlayLayer className="ui-shell app-backdrop flex h-dvh flex-col pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]">
         <ToastProvider>
-          <div className={cn('mx-auto flex min-h-0 w-full flex-1 flex-col', split ? 'max-w-6xl px-4' : wide ? 'max-w-[800px] px-4' : 'max-w-[480px]')}>
+          <div
+            className={cn(
+              'mx-auto flex min-h-0 w-full flex-1 flex-col',
+              split
+                ? 'max-w-[872px] px-4'
+                : wide
+                  ? 'max-w-[1440px] px-4 xl:px-6 2xl:px-8'
+                  : 'max-w-[480px]',
+            )}
+          >
             <header className={cn('flex items-center gap-3 py-2', wide ? 'h-14' : 'px-3')}>
               {wide && <span className="badge-nowrap text-sm font-semibold tracking-tight">MwM Wallet</span>}
               {wide && !split && <span className="h-4 w-px bg-separator" aria-hidden="true" />}
@@ -42,7 +51,7 @@ export function AppShell() {
               </div>
             </header>
 
-            <main className={cn('flex min-h-0 flex-1 flex-col overflow-hidden', wide && 'pb-4')}>
+            <main className={cn('flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden', wide && 'pb-4')}>
               <AnimatePresence mode="wait" initial={false}>
                 <motion.div
                   key={split ? 'split' : walletId}
@@ -50,7 +59,7 @@ export function AppShell() {
                   initial="initial"
                   animate="animate"
                   exit="exit"
-                  className="flex min-h-0 flex-1 flex-col"
+                  className="flex min-h-0 min-w-0 flex-1 flex-col"
                 >
                   {split ? <SplitView /> : <WalletPane walletId={walletId} nav={wide ? 'side' : 'bottom'} />}
                 </motion.div>

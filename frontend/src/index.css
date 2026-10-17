@@ -128,7 +128,7 @@
   --blur-medium: 3px;      /* page slide, text reveal */
   --blur-large: 8px;       /* success check */
   /* Floating tab bar (BottomNav island): its height and the gap below it */
-  --island-height: 3.75rem;  /* 48px items + 6px padding top and bottom */
+  --island-height: 4.25rem;  /* 48px items + 6px padding + raised center button headroom */
   --island-gap: max(env(safe-area-inset-bottom), 12px);
 }
 
@@ -245,6 +245,46 @@
     transform: translateY(1.5rem);
     opacity: 0;
     pointer-events: none;
+  }
+
+  /*
+   * BottomNav island hit targets:
+   * Extends clickable areas with ::before so 100% of the island pill (corners,
+   * padding, and gaps between buttons) activates the nearest item with zero dead zones.
+   */
+  .nav-island-btn {
+    position: relative;
+    min-height: 48px;
+    min-width: 44px;
+  }
+
+  .nav-island-btn::before {
+    content: "";
+    position: absolute;
+    top: -8px;
+    bottom: -8px;
+    left: -2px;
+    right: -2px;
+    z-index: 2;
+  }
+
+  .nav-island-btn:first-child::before {
+    left: -8px;
+    border-top-left-radius: 9999px;
+    border-bottom-left-radius: 9999px;
+  }
+
+  .nav-island-btn:last-child::before {
+    right: -8px;
+    border-top-right-radius: 9999px;
+    border-bottom-right-radius: 9999px;
+  }
+
+  .nav-island-btn-center::before {
+    top: -16px;
+    bottom: -8px;
+    left: -2px;
+    right: -2px;
   }
 
   /* Keeps the last row of a pane reachable above the island. */

@@ -1,7 +1,6 @@
 import type { Contact } from '@/api'
 import { Avatar, Button, TrustBadge } from '@/components/ui'
 import { shortAddress } from '@/lib/format'
-import { reliabilityText } from './reliability'
 
 interface ContactRowProps {
   contact: Contact
@@ -23,8 +22,8 @@ export function ContactRow({ contact, onOpen, onTrade }: ContactRowProps) {
         <Avatar seed={contact.address} label={contact.alias ?? undefined} size="lg" />
         <span className="flex min-w-0 flex-1 flex-col gap-1">
           <span className="truncate text-sm font-semibold">{name}</span>
-          <TrustBadge tier={contact.trust.trust_tier} size="sm" className="self-start" />
-          <span className="amount text-xs text-hint">{reliabilityText(contact)}</span>
+          {/* Inside the row's button the badge cannot hold a (?): its title explains it on hover. */}
+          <TrustBadge tier={contact.trust.trust_tier} reliabilityPct={contact.trust.reliability_pct} size="sm" className="self-start" />
         </span>
       </button>
       <Button size="sm" variant="secondary" trailingArrow onClick={onTrade}>

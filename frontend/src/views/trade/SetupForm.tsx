@@ -61,7 +61,7 @@ function OfferSummary({ contact, desk }: { contact: Contact; desk: PublicDesk })
           <Avatar seed={contact.address} label={contact.alias ?? undefined} size="lg" />
           <div className="flex min-w-0 flex-1 flex-col gap-1">
             <span className="truncate text-sm font-semibold">{contact.alias ?? shortAddress(contact.address)}</span>
-            <TrustBadge tier={contact.trust.trust_tier} reliabilityPct={contact.trust.reliability_pct} size="sm" className="self-start" />
+            <TrustBadge tier={contact.trust.trust_tier} reliabilityPct={contact.trust.reliability_pct} size="sm" explain className="self-start" />
           </div>
         </div>
         <div className="flex items-center justify-between gap-3 rounded-control bg-surface-muted/60 p-3">

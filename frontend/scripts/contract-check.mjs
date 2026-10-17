@@ -142,6 +142,13 @@ const ACTIVITY = {
   session_id: nullable(isStr),
   status: oneOf('pending', 'confirmed'),
 }
+const TRUST = {
+  trusted: isBool,
+  sybil_ring_detected: isBool,
+  reliability_pct: nullable(isNum),
+  trust_tier: oneOf(...TRUST_TIERS),
+  assessment_summary: isStr,
+}
 const WALLET_STATE = {
   ...WALLET_SUMMARY,
   assets: Array.isArray,
@@ -150,13 +157,7 @@ const WALLET_STATE = {
   activity: Array.isArray,
   local_aliases: isObj,
   agent_profile: PROFILE,
-}
-const TRUST = {
-  trusted: isBool,
-  sybil_ring_detected: isBool,
-  reliability_pct: nullable(isNum),
-  trust_tier: oneOf(...TRUST_TIERS),
-  assessment_summary: isStr,
+  trust: TRUST,
 }
 const DESK = { asset: ASSET_REF, offered_amount: isInt, asking_price_usd: isNum, allow_partial: isBool }
 const CONTACT = { address: isStr, alias: nullable(isStr), trust: TRUST, desk: maybe(DESK) }

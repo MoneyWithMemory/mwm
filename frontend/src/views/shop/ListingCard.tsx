@@ -64,7 +64,7 @@ export function ListingCard({ listing, onEditOffer, onSellTo }: ListingCardProps
         <Avatar seed={listing.owner_address} label={listing.owner_alias ?? undefined} size="sm" />
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="truncate text-[13px] font-medium text-fg">{name}</span>
-          <TrustBadge variant="inline" tier={listing.trust.trust_tier} reliabilityPct={listing.trust.reliability_pct} className="self-start" />
+          <TrustBadge variant="inline" tier={listing.trust.trust_tier} reliabilityPct={listing.trust.reliability_pct} explain className="self-start" />
         </div>
         <Badge className="shrink-0">{selling ? 'For sale' : 'Wanted'}</Badge>
       </div>

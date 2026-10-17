@@ -6,6 +6,7 @@ import { useWalletContext } from '@/lib/navigation'
 import { AddContactSheet } from './AddContactSheet'
 import { ContactRow } from './ContactRow'
 import { ContactSheet } from './ContactSheet'
+import { ProfileCard } from './ProfileCard'
 
 function ContactsSkeleton() {
   return (
@@ -73,6 +74,7 @@ export function ContactsView() {
           Add
         </Button>
       </header>
+      <ProfileCard walletId={walletId} />
       {body}
       <AddContactSheet open={addOpen} onClose={() => setAddOpen(false)} />
       {current && selected && (

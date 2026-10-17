@@ -2,6 +2,7 @@ import { Ban, CircleAlert, Scale, ShieldAlert, TimerOff, type LucideIcon } from 
 import type { SessionView } from '@/api'
 import { Button, Card, CardContent, TrustBadge } from '@/components/ui'
 import { useWalletContext } from '@/lib/navigation'
+import { withTrustLabels } from '@/lib/trust'
 import { isNoOverlap } from '../shared/sessionState'
 import { TxidRow } from './TxidRow'
 
@@ -69,13 +70,13 @@ export function TerminalNotice({ session }: { session: SessionView }) {
           </div>
         )}
         {session.state === 'BLOCKED_BY_GATE' && !noOverlap && (
-          <TrustBadge tier={session.counterparty_trust.trust_tier} reliabilityPct={session.counterparty_trust.reliability_pct} />
+          <TrustBadge tier={session.counterparty_trust.trust_tier} reliabilityPct={session.counterparty_trust.reliability_pct} explain />
         )}
         {reasons.length > 0 && (
           <ul className="flex flex-col gap-1 text-sm">
             {reasons.map((reason) => (
               <li key={reason} className="select-text">
-                {reason}
+                {withTrustLabels(reason)}
               </li>
             ))}
           </ul>

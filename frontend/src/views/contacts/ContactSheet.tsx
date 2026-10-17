@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Contact } from '@/api'
 import { Avatar, Button, CopyButton, Sheet, TrustBadge } from '@/components/ui'
 import { formatAssetAmount, formatUsd, shortAddress } from '@/lib/format'
+import { trustExplanation } from '@/lib/trust'
 import { RenameSheet } from '../shared/RenameSheet'
 import { reliabilityText } from './reliability'
 
@@ -33,7 +34,7 @@ export function ContactSheet({ contact, open, walletId, onClose, onTrade }: Cont
 
           <section className="flex flex-col gap-1">
             <h3 className="text-xs font-medium text-hint">Assessment</h3>
-            <p className="select-text text-sm leading-relaxed">{contact.trust.assessment_summary}</p>
+            <p className="select-text text-sm leading-relaxed">{trustExplanation(contact.trust.trust_tier)}</p>
           </section>
 
           <section className="flex flex-col gap-1">

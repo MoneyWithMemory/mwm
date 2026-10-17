@@ -121,6 +121,7 @@ Seeded wallets:
 - `history_points` is oldest first: one seed point, then a new point after every completed settlement.
 - `activity` is newest first, with one item per asset movement. A swap produces two items (one `out`, one `in`) that share `session_id` and `txid`. `kind` is `swap`, `receive` or `issue`; `status` is `pending` or `confirmed`.
 - `local_aliases` holds the wallet's private No-KYC labels (address → name).
+- `trust` is the wallet's own `TrustAudit`, the same one counterparties get in their contacts; the Contacts tab shows it as the owner's reliability.
 - `agent_profile` is the owner's desk and agent settings. It contains secrets (`secret_min_reserve_usd`, `buyer_max_ceiling_usd`), which must never appear in any session payload.
 
 ### POST /api/wallets/create

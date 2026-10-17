@@ -213,6 +213,7 @@ function walletState(w: MockWallet): WalletState {
     activity: w.activity,
     local_aliases: w.local_aliases,
     agent_profile: w.agent_profile,
+    trust: trustFor(w.summary.address),
   }
 }
 
@@ -291,11 +292,10 @@ function block(s: MockSession, reasons: string[]) {
   setState(s, 'BLOCKED_BY_GATE')
 }
 
-function trustReasons(address: string): string[] {
+/** As api_server.create_session: one reason per side whose trust check fails, naming only its tier. */
+function trustReasons(address: string, who: 'Counterparty' | 'Buyer'): string[] {
   const trust = trustFor(address)
-  if (trust.sybil_ring_detected) return ['Ring Anomaly Detected: this address trades inside a closed cluster of related wallets.']
-  if (!trust.trusted) return ['Unverified counterparty: not enough validated history yet.']
-  return []
+  return trust.trusted ? [] : [`${who} trust check failed: ${trust.trust_tier}`]
 }
 
 /** As api_server._lot_prices: unit prices of the lot times the amount; the reserve rounds up. */
@@ -430,7 +430,7 @@ async function runGate(s: MockSession) {
   const buyer = walletOrThrow(s.buyerId)
   const seller = walletOrThrow(s.sellerId as WalletId)
   const paymentAmount = price * 10 ** s.paymentAsset.precision
-  const reasons = [...trustReasons(s.sellerAddress), ...trustReasons(buyer.summary.address)]
+  const reasons = [...trustReasons(s.sellerAddress, 'Counterparty'), ...trustReasons(buyer.summary.address, 'Buyer')]
 
   if (price > s.ceilingUsd) reasons.push('Agreed price is above the buyer ceiling.')
   if (price < s.reserveUsd) reasons.push('Agreed price is below the seller reserve.')
@@ -656,7 +656,7 @@ export const mockEngine = {
     }
 
     // Layer-0 gate before any negotiation: rings and unverified addresses never reach the agents.
-    const trustBlock = [...trustReasons(body.seller_address), ...trustReasons(buyer.summary.address)]
+    const trustBlock = [...trustReasons(body.seller_address, 'Counterparty'), ...trustReasons(buyer.summary.address, 'Buyer')]
     if (trustBlock.length > 0 || !seller) {
       sessions.set(s.id, s)
       block(s, trustBlock.length > 0 ? trustBlock : ['Counterparty has no active desk.'])

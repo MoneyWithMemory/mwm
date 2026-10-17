@@ -119,6 +119,8 @@ export interface WalletState extends WalletSummary {
   /** Private No-KYC labels, local to this wallet: address -> name. */
   local_aliases: Record<string, string>
   agent_profile: AgentProfile
+  /** The wallet's own trust, as counterparties see it in their contacts. Absent from older backends. */
+  trust?: TrustAudit
 }
 
 // ── Trust (Layer-0 memory graph) ───────────────────────────────────

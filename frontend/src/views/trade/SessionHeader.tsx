@@ -26,7 +26,7 @@ export function SessionHeader({ session, name, alias }: { session: SessionView; 
             {formatAssetAmount(session.rgb_amount, session.asset.precision, session.asset.ticker)}
           </span>
         </div>
-        <TrustBadge tier={trust.trust_tier} reliabilityPct={trust.reliability_pct} size="sm" />
+        <TrustBadge tier={trust.trust_tier} reliabilityPct={trust.reliability_pct} size="sm" explain />
       </div>
     </header>
   )

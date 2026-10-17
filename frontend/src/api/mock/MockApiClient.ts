@@ -1,9 +1,12 @@
 import { ApiError, ERROR_CODES, type ApiClient, type RequestOptions } from '../client'
 import type {
+  AgentSearchRequest,
   CreateSessionRequest,
   CreateWalletRequest,
+  CreateWantRequest,
   SessionId,
   SetAliasRequest,
+  ShopQuery,
   UpdateAgentProfileRequest,
   WalletId,
 } from '../types'
@@ -85,5 +88,21 @@ export class MockApiClient implements ApiClient {
 
   cancel(sessionId: SessionId, walletId: WalletId, opts?: RequestOptions) {
     return call(() => mockEngine.cancel(sessionId, walletId), opts)
+  }
+
+  getShop(walletId: WalletId, query?: ShopQuery, opts?: RequestOptions) {
+    return call(() => mockEngine.getShop(walletId, query), opts)
+  }
+
+  createWant(body: CreateWantRequest, opts?: RequestOptions) {
+    return call(() => mockEngine.createWant(body), opts)
+  }
+
+  closeListing(walletId: WalletId, listingId: string, opts?: RequestOptions) {
+    return call(() => mockEngine.closeListing(walletId, listingId), opts)
+  }
+
+  agentSearch(body: AgentSearchRequest, opts?: RequestOptions) {
+    return call(() => mockEngine.agentSearch(body), opts)
   }
 }

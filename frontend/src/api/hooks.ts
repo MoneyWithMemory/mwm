@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useEffectEvent, useState } from 'react'
 import { api } from './api'
 import { toApiError, type ApiError } from './client'
-import type { SessionId, WalletId } from './types'
+import type { SessionId, ShopQuery, WalletId } from './types'
 
 /** Polling intervals (ms). Negotiation turns take a few seconds; settlement steps faster. */
 export const POLL_MS = {
@@ -9,6 +9,7 @@ export const POLL_MS = {
   sessions: 1500,
   wallet: 1500,
   contacts: 5000,
+  shop: 4000,
   health: 5000,
   market: 10_000,
   wallets: 10_000,
@@ -132,6 +133,12 @@ export function useSession(sessionId: SessionId | null, walletId: WalletId | nul
   return usePoll(key, (signal) => api.getSession(sessionId as SessionId, walletId as WalletId, { signal }), POLL_MS.session)
 }
 
+/** Public Shop listings as seen by walletId: active Seller Desks plus open requests. */
+export function useShop(walletId: WalletId | null, query: ShopQuery = {}) {
+  const key = walletId && `shop:${walletId}:${query.kind ?? ''}:${query.asset_id ?? ''}:${query.q ?? ''}`
+  return usePoll(key, (signal) => api.getShop(walletId as WalletId, query, { signal }), POLL_MS.shop)
+}
+
 // ── Mutations ──────────────────────────────────────────────────────
 
 export interface MutationState<A extends unknown[], R> {
@@ -176,6 +183,9 @@ const cancel = (...args: Parameters<typeof api.cancel>) => api.cancel(...args)
 const setAlias = (...args: Parameters<typeof api.setAlias>) => api.setAlias(...args)
 const updateAgentProfile = (...args: Parameters<typeof api.updateAgentProfile>) => api.updateAgentProfile(...args)
 const createWallet = (...args: Parameters<typeof api.createWallet>) => api.createWallet(...args)
+const createWant = (...args: Parameters<typeof api.createWant>) => api.createWant(...args)
+const closeListing = (...args: Parameters<typeof api.closeListing>) => api.closeListing(...args)
+const agentSearch = (...args: Parameters<typeof api.agentSearch>) => api.agentSearch(...args)
 
 export const useCreateSession = () => useMutation(createSession)
 export const useSign = () => useMutation(sign)
@@ -183,3 +193,6 @@ export const useCancel = () => useMutation(cancel)
 export const useSetAlias = () => useMutation(setAlias)
 export const useUpdateAgentProfile = () => useMutation(updateAgentProfile)
 export const useCreateWallet = () => useMutation(createWallet)
+export const useCreateWant = () => useMutation(createWant)
+export const useCloseListing = () => useMutation(closeListing)
+export const useAgentSearch = () => useMutation(agentSearch)

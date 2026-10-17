@@ -7,11 +7,14 @@ import {
   type AgentAction,
   type AgentProfile,
   type AssetBalance,
+  type AgentSearchRequest,
+  type AgentSearchResult,
   type AssetRef,
   type CanonicalSwapTerms,
   type Contact,
   type CreateSessionRequest,
   type CreateWalletRequest,
+  type CreateWantRequest,
   type Health,
   type Market,
   type PublicDesk,
@@ -22,6 +25,8 @@ import {
   type SessionView,
   type SetAliasRequest,
   type SettlementStep,
+  type ShopListing,
+  type ShopQuery,
   type UpdateAgentProfileRequest,
   type WalletId,
   type WalletState,
@@ -34,10 +39,12 @@ import {
   EXTERNAL_CONTACTS,
   createEmptyWallet,
   createSeedWallets,
+  createSeedWants,
   randomHex,
   totalUsd,
   trustFor,
   type MockWallet,
+  type MockWant,
 } from './seed'
 import { canonicalJson, sha256Hex, sha256HexSync } from './sha256'
 
@@ -96,6 +103,7 @@ const now = () => Math.floor(Date.now() / 1000)
 
 const wallets = new Map<WalletId, MockWallet>(createSeedWallets(now()).map((w) => [w.summary.wallet_id, w]))
 const sessions = new Map<SessionId, MockSession>()
+const wants = new Map<string, MockWant>(createSeedWants(now()).map((w) => [w.id, w]))
 let pepePriceUsd: number | null = null
 let createdWallets = 0
 
@@ -122,6 +130,49 @@ function publicDesk(address: string): PublicDesk | null {
   const asset = ASSET_LIST.find((a) => a.asset_id === profile?.offered_asset_id)
   if (!profile?.seller_active || !asset) return null
   return { asset, offered_amount: profile.offered_amount, asking_price_usd: profile.asking_price_usd }
+}
+
+// ── Shop ───────────────────────────────────────────────────────────
+
+const REGTEST_ADDRESS = /^bcrt1[0-9a-z]{20,90}$/i
+
+function wantListing(want: MockWant, viewer: MockWallet): ShopListing {
+  return {
+    listing_id: want.id,
+    kind: 'want',
+    owner_address: want.ownerAddress,
+    owner_alias: viewer.local_aliases[want.ownerAddress] ?? null,
+    is_mine: want.ownerAddress === viewer.summary.address,
+    asset: want.asset,
+    amount: want.amount,
+    price_usd: want.targetUsd,
+    note: want.note,
+    trust: trustFor(want.ownerAddress),
+    created_at: want.createdAt,
+  }
+}
+
+/** Active Seller Desks, public fields only. */
+function sellListings(viewer: MockWallet): ShopListing[] {
+  const listings: ShopListing[] = []
+  for (const owner of wallets.values()) {
+    const desk = publicDesk(owner.summary.address)
+    if (!desk) continue
+    listings.push({
+      listing_id: `desk_${owner.summary.wallet_id}`,
+      kind: 'sell',
+      owner_address: owner.summary.address,
+      owner_alias: viewer.local_aliases[owner.summary.address] ?? null,
+      is_mine: owner.summary.wallet_id === viewer.summary.wallet_id,
+      asset: desk.asset,
+      amount: desk.offered_amount,
+      price_usd: desk.asking_price_usd,
+      note: null,
+      trust: trustFor(owner.summary.address),
+      created_at: null,
+    })
+  }
+  return listings
 }
 
 function sessionOrThrow(sessionId: SessionId): MockSession {
@@ -499,7 +550,11 @@ export const mockEngine = {
   setAlias(walletId: WalletId, body: SetAliasRequest): Record<string, string> {
     const wallet = walletOrThrow(walletId)
     const name = body.name.trim()
-    if (name) wallet.local_aliases[body.address] = name
+    if (name) {
+      if (!REGTEST_ADDRESS.test(body.address)) throw badRequest('invalid_address', 'Enter a valid regtest address (bcrt1…)')
+      if (body.address === wallet.summary.address) throw badRequest('own_address', 'That is your own address')
+      wallet.local_aliases[body.address] = name
+    }
     else delete wallet.local_aliases[body.address]
     return wallet.local_aliases
   },
@@ -519,7 +574,10 @@ export const mockEngine = {
 
   getContacts(walletId: WalletId): Contact[] {
     const wallet = walletOrThrow(walletId)
-    const addresses = [...wallets.values()].map((w) => w.summary.address).concat(EXTERNAL_CONTACTS)
+    // Wallets and the demo's external addresses, plus every address this wallet has named.
+    const addresses = [
+      ...new Set([...wallets.values()].map((w) => w.summary.address).concat(EXTERNAL_CONTACTS, Object.keys(wallet.local_aliases))),
+    ]
     return addresses
       .filter((address) => address !== wallet.summary.address)
       .map((address) => ({ address, alias: wallet.local_aliases[address] ?? null, trust: trustFor(address), desk: publicDesk(address) }))
@@ -612,6 +670,74 @@ export const mockEngine = {
     touch(s)
     if (s.buyerSigned && s.sellerSigned) runSettlement(s)
     return sessionView(s, role)
+  },
+
+  getShop(walletId: WalletId, query: ShopQuery = {}): ShopListing[] {
+    const viewer = walletOrThrow(walletId)
+    const text = query.q?.trim().toLowerCase()
+    const open = [...wants.values()].filter((w) => !w.closed).sort((a, b) => b.createdAt - a.createdAt)
+    return [...sellListings(viewer), ...open.map((w) => wantListing(w, viewer))].filter((l) => {
+      if (query.kind && l.kind !== query.kind) return false
+      if (query.asset_id && l.asset.asset_id !== query.asset_id) return false
+      if (!text) return true
+      return [l.owner_alias, l.owner_address, l.asset.ticker, l.note].some((field) => field?.toLowerCase().includes(text))
+    })
+  },
+
+  createWant(body: CreateWantRequest): ShopListing {
+    const owner = walletOrThrow(body.wallet_id)
+    const asset = ASSET_LIST.find((a) => a.asset_id === body.asset_id)
+    if (!asset || asset.schema === 'BTC') throw badRequest('invalid_asset', 'Unknown RGB asset')
+    if (!Number.isInteger(body.amount) || body.amount <= 0) throw badRequest('invalid_amount', 'Amount must be a positive integer')
+    if (!(body.target_usd > 0)) throw badRequest('invalid_price', 'The target price must be greater than 0')
+    const want: MockWant = {
+      id: `want_${randomHex(4)}`,
+      ownerAddress: owner.summary.address,
+      asset,
+      amount: body.amount,
+      targetUsd: body.target_usd,
+      note: body.note?.trim().slice(0, 140) || null,
+      createdAt: now(),
+      closed: false,
+    }
+    wants.set(want.id, want)
+    return wantListing(want, owner)
+  },
+
+  closeListing(walletId: WalletId, listingId: string): ShopListing {
+    const viewer = walletOrThrow(walletId)
+    if (listingId.startsWith('desk_')) throw badRequest('desk_listing', 'Turn off your Seller Desk to remove this listing')
+    const want = wants.get(listingId)
+    if (!want || want.closed) throw notFound('listing_not_found', `No open listing ${listingId}`)
+    if (want.ownerAddress !== viewer.summary.address) throw new ApiError('forbidden', 'This listing is not yours', 403)
+    want.closed = true
+    return wantListing(want, viewer)
+  },
+
+  /**
+   * The buyer's agent shops for the cheapest fitting Seller Desk and opens a session with it.
+   * Agents skip owners flagged as a ring, so the demo's tempting Sybil offer is not picked.
+   */
+  agentSearch(body: AgentSearchRequest): AgentSearchResult {
+    const buyer = walletOrThrow(body.buyer_wallet_id)
+    const priceFor = (l: ShopListing) => (l.price_usd * body.rgb_amount) / l.amount
+    const fits = sellListings(buyer)
+      .filter((l) => !l.is_mine && l.asset.asset_id === body.asset_id && l.amount >= body.rgb_amount)
+      .filter((l) => l.trust.trust_tier !== 'Ring Anomaly Detected')
+      .filter((l) => priceFor(l) <= body.buyer_max_ceiling_usd * 1.5)
+      .sort((a, b) => priceFor(a) - priceFor(b))
+    const best = fits[0]
+    if (!best) throw notFound('no_match', 'No matching listing right now')
+    const session = mockEngine.createSession({
+      buyer_wallet_id: body.buyer_wallet_id,
+      seller_address: best.owner_address,
+      asset_id: body.asset_id,
+      rgb_amount: body.rgb_amount,
+      buyer_max_ceiling_usd: body.buyer_max_ceiling_usd,
+      buyer_target_usd: body.buyer_target_usd,
+      buyer_ai_prompt: body.buyer_ai_prompt,
+    })
+    return { listing: best, session }
   },
 
   cancel(sessionId: SessionId, walletId: WalletId): SessionView {

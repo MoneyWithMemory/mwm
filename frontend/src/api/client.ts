@@ -1,7 +1,10 @@
 import type {
   AgentProfile,
+  AgentSearchRequest,
+  AgentSearchResult,
   Contact,
   CreateSessionRequest,
+  CreateWantRequest,
   CreateWalletRequest,
   Health,
   Market,
@@ -9,6 +12,8 @@ import type {
   SessionSummary,
   SessionView,
   SetAliasRequest,
+  ShopListing,
+  ShopQuery,
   UpdateAgentProfileRequest,
   WalletId,
   WalletState,
@@ -35,6 +40,10 @@ export interface ApiClient {
   /** termsHash: the terms_hash shown to the user when they approved. */
   sign(sessionId: SessionId, walletId: WalletId, termsHash: string, opts?: RequestOptions): Promise<SessionView>
   cancel(sessionId: SessionId, walletId: WalletId, opts?: RequestOptions): Promise<SessionView>
+  getShop(walletId: WalletId, query?: ShopQuery, opts?: RequestOptions): Promise<ShopListing[]>
+  createWant(body: CreateWantRequest, opts?: RequestOptions): Promise<ShopListing>
+  closeListing(walletId: WalletId, listingId: string, opts?: RequestOptions): Promise<ShopListing>
+  agentSearch(body: AgentSearchRequest, opts?: RequestOptions): Promise<AgentSearchResult>
 }
 
 /** Client-side codes; the backend may send others in ApiErrorBody.code. */

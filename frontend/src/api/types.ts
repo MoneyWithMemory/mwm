@@ -151,6 +151,70 @@ export interface Contact {
   desk: PublicDesk | null
 }
 
+// ── Shop ───────────────────────────────────────────────────────────
+
+export type ListingKind = 'sell' | 'want'
+
+/**
+ * One public Shop entry. "sell" listings are the active Seller Desks (public part only);
+ * "want" listings are requests with a public target price. Secrets never appear here:
+ * not the seller's reserve, not the buyer's maximum budget, not any agent prompt.
+ * Agents read the same list through GET /api/shop and open a session with POST /api/sessions.
+ */
+export interface ShopListing {
+  listing_id: string
+  kind: ListingKind
+  owner_address: string
+  /** The requesting wallet's local alias for the owner, if any. */
+  owner_alias: string | null
+  /** True for the requesting wallet's own listings. */
+  is_mine: boolean
+  asset: AssetRef
+  /** Lot size in atomic units. */
+  amount: number
+  /** Public price in USD for the whole lot: the ask for "sell", the target for "want". */
+  price_usd: number
+  note: string | null
+  trust: TrustAudit
+  /** null for Seller Desks, which are live rather than posted. */
+  created_at: number | null
+}
+
+/** GET /api/shop?wallet_id=&kind=&asset_id=&q= */
+export interface ShopQuery {
+  kind?: ListingKind
+  asset_id?: AssetId
+  /** Free text over owner alias or address, ticker and note. */
+  q?: string
+}
+
+/** POST /api/shop/wants */
+export interface CreateWantRequest {
+  wallet_id: WalletId
+  asset_id: AssetId
+  amount: number
+  target_usd: number
+  note?: string
+}
+
+/**
+ * POST /api/shop/agent_search. The buyer's agent looks for the best matching "sell" listing
+ * and opens a session with it. 404 no_match when nothing fits right now.
+ */
+export interface AgentSearchRequest {
+  buyer_wallet_id: WalletId
+  asset_id: AssetId
+  rgb_amount: number
+  buyer_max_ceiling_usd: number
+  buyer_target_usd: number
+  buyer_ai_prompt: string
+}
+
+export interface AgentSearchResult {
+  listing: ShopListing
+  session: SessionView
+}
+
 // ── Sessions ───────────────────────────────────────────────────────
 
 export type SessionState =
@@ -298,7 +362,7 @@ export interface SignRequest {
   terms_hash: string
 }
 
-/** PUT /api/wallets/{id}/aliases */
+/** PUT /api/wallets/{id}/aliases. A non-empty name also adds the address to the wallet's contacts. */
 export interface SetAliasRequest {
   address: string
   name: string

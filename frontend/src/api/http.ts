@@ -1,9 +1,12 @@
 import { ApiError, ERROR_CODES, type ApiClient, type RequestOptions } from './client'
 import type {
   AgentProfile,
+  AgentSearchRequest,
+  AgentSearchResult,
   ApiErrorBody,
   Contact,
   CreateSessionRequest,
+  CreateWantRequest,
   CreateWalletRequest,
   Health,
   Market,
@@ -11,6 +14,8 @@ import type {
   SessionSummary,
   SessionView,
   SetAliasRequest,
+  ShopListing,
+  ShopQuery,
   SignRequest,
   UpdateAgentProfileRequest,
   WalletId,
@@ -132,5 +137,23 @@ export class HttpApiClient implements ApiClient {
 
   cancel(sessionId: SessionId, walletId: WalletId, opts?: RequestOptions) {
     return this.request<SessionView>('POST', `/sessions/${enc(sessionId)}/cancel`, { ...opts, body: { wallet_id: walletId } })
+  }
+
+  getShop(walletId: WalletId, query: ShopQuery = {}, opts?: RequestOptions) {
+    const params = new URLSearchParams({ wallet_id: walletId })
+    for (const [key, value] of Object.entries(query)) if (value) params.set(key, value)
+    return this.request<ShopListing[]>('GET', `/shop?${params}`, opts)
+  }
+
+  createWant(body: CreateWantRequest, opts?: RequestOptions) {
+    return this.request<ShopListing>('POST', '/shop/wants', { ...opts, body })
+  }
+
+  closeListing(walletId: WalletId, listingId: string, opts?: RequestOptions) {
+    return this.request<ShopListing>('POST', `/shop/${enc(listingId)}/close`, { ...opts, body: { wallet_id: walletId } })
+  }
+
+  agentSearch(body: AgentSearchRequest, opts?: RequestOptions) {
+    return this.request<AgentSearchResult>('POST', '/shop/agent_search', { ...opts, body })
   }
 }

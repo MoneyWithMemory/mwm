@@ -356,3 +356,41 @@ export function createSeedWallets(now: number): MockWallet[] {
 
 /** Addresses shown in every wallet's contacts besides the other wallets. */
 export const EXTERNAL_CONTACTS = [ADDRESSES.newcomer]
+
+/** A public request in the Shop. The target is public; the buyer's maximum budget never is. */
+export interface MockWant {
+  id: string
+  ownerAddress: string
+  asset: AssetRef
+  amount: number
+  targetUsd: number
+  note: string | null
+  createdAt: number
+  closed: boolean
+}
+
+/** Open requests that exist before anyone does anything: one external, one from Wallet A. */
+export function createSeedWants(now: number): MockWant[] {
+  return [
+    {
+      id: 'want_seed_1',
+      ownerAddress: ADDRESSES.newcomer,
+      asset: ASSETS.pepe,
+      amount: 250_000,
+      targetUsd: 55,
+      note: 'Looking for a clean lot. Can pay in USDT today.',
+      createdAt: now - 5 * 3600,
+      closed: false,
+    },
+    {
+      id: 'want_seed_2',
+      ownerAddress: ADDRESSES.a,
+      asset: ASSETS.pepe,
+      amount: 500_000,
+      targetUsd: 70,
+      note: 'A smaller lot is fine too.',
+      createdAt: now - 26 * 3600,
+      closed: false,
+    },
+  ]
+}

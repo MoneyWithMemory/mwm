@@ -18,6 +18,10 @@ export const POLL_MS = {
 // Every successful mutation refreshes all mounted polls, so both panes update at once.
 const refreshers = new Set<() => void>()
 
+// Last good value per key, shared by every poll: a view mounted again (e.g. Back to Deals)
+// shows it at once and refreshes in the background, instead of a skeleton.
+const lastValues = new Map<string, unknown>()
+
 export function invalidateAll(): void {
   refreshers.forEach((refresh) => refresh())
 }
@@ -26,7 +30,7 @@ export interface PollState<T> {
   /** Last good value; kept on refetch and on error so the UI never flickers. */
   data: T | undefined
   error: ApiError | null
-  /** True only until the first response (or error) for the current key. */
+  /** True only until the first response (or error) for the current key, unless a value is cached. */
   loading: boolean
   refresh: () => void
 }
@@ -64,12 +68,14 @@ export function usePoll<T>(key: string | null, fetcher: (signal: AbortSignal) =>
       fetchLatest(current.signal)
         .then(
           (data) => {
-            if (!current.signal.aborted) setSnap({ key, data, error: null })
+            if (current.signal.aborted) return
+            lastValues.set(key, data)
+            setSnap({ key, data, error: null })
           },
           (err: unknown) => {
             if (current.signal.aborted) return
             const error = toApiError(err)
-            setSnap((s) => ({ key, data: s.key === key ? s.data : undefined, error }))
+            setSnap((s) => ({ key, data: s.key === key ? s.data : (lastValues.get(key) as T | undefined), error }))
           },
         )
         .finally(() => {
@@ -92,7 +98,8 @@ export function usePoll<T>(key: string | null, fetcher: (signal: AbortSignal) =>
     }
   }, [key, intervalMs, tick])
 
-  const current = snap.key === key ? snap : undefined
+  const cached = key !== null && lastValues.has(key) ? { key, data: lastValues.get(key) as T, error: null } : undefined
+  const current = snap.key === key ? snap : cached
   return {
     data: current?.data,
     error: current?.error ?? null,

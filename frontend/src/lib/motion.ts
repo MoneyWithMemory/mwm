@@ -124,11 +124,12 @@ export const fade: Variants = {
 }
 
 /**
- * View change inside a WalletPane. Ends with filter: none so the page does not
- * stay a containing block for absolutely positioned descendants.
+ * View change inside a WalletPane; `custom` is the direction: 1 going deeper (the new view
+ * comes from the right), -1 going back (it comes from the left). Ends with filter: none so
+ * the page does not stay a containing block for absolutely positioned descendants.
  */
 export const pageSlide: Variants = {
-  initial: { opacity: 0, x: DIST.base, filter: 'blur(3px)' },
+  initial: (direction: number) => ({ opacity: 0, x: direction * DIST.base, filter: 'blur(3px)' }),
   animate: { opacity: 1, x: 0, filter: 'blur(0px)', transition: open, transitionEnd: { filter: 'none' } },
-  exit: { opacity: 0, x: -DIST.base, filter: 'blur(3px)', transition: close },
+  exit: (direction: number) => ({ opacity: 0, x: -direction * DIST.base, filter: 'blur(3px)', transition: close }),
 }

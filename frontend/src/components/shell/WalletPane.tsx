@@ -67,6 +67,11 @@ export function WalletPane({ walletId, nav = 'bottom', autoHideIsland = true }: 
 
   const current = stack[stack.length - 1]
   const viewKey = `${stack.length}:${current.view}`
+  // Back slides the other way: derived once per view change, so it holds for the whole exit.
+  const [slide, setSlide] = useState({ key: viewKey, depth: stack.length, direction: 1 })
+  if (slide.key !== viewKey) {
+    setSlide({ key: viewKey, depth: stack.length, direction: stack.length < slide.depth ? -1 : 1 })
+  }
 
   // The island hides while scrolling down and returns on scroll up or at the end of the
   // content. Tied to the view key, so a new view always starts with the island visible.
@@ -92,9 +97,10 @@ export function WalletPane({ walletId, nav = 'bottom', autoHideIsland = true }: 
         {nav === 'side' && <SideNav />}
         {/* Sheets and modals cover the content area only, never the sidebar. */}
         <OverlayLayer className="flex min-h-0 min-w-0 flex-1 flex-col" role="region" aria-label={`Wallet ${walletId}`}>
-          <AnimatePresence mode="wait" initial={false}>
+          <AnimatePresence mode="popLayout" initial={false} custom={slide.direction}>
             <motion.div
               key={viewKey}
+              custom={slide.direction}
               variants={pageSlide}
               initial="initial"
               animate="animate"

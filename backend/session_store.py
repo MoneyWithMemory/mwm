@@ -49,10 +49,14 @@ class Session(BaseModel):
     buyer_address: str
     seller_address: str
 
+    # Public list price for this amount: the desk's asking price, pro rata when the lot is partial.
     asking_price_usd: int
     buyer_max_budget_usd: int
     buyer_target_usd: int = 120
     seller_min_reserve_usd: int
+    # Each owner's strategy for their own agent, fixed when the session starts.
+    buyer_ai_prompt: str = ""
+    seller_ai_prompt: str = ""
     network_fee_sat: int = 2_000
     expiry_unix: int
 
@@ -137,9 +141,10 @@ class Session(BaseModel):
             "assessment_summary": rep.assessment_summary,
         }
 
-        # Build rounds 1..4
+        # One entry per round played, up to the round cap.
+        max_round_seen = max((t.round_number for t in self.history), default=0)
         rounds_map: Dict[int, Dict[str, Any]] = {}
-        for r_num in range(1, 5):
+        for r_num in range(1, max_round_seen + 1):
             rounds_map[r_num] = {
                 "n": r_num,
                 "buyer_offer_usd": None,
@@ -150,12 +155,9 @@ class Session(BaseModel):
                 "public_messages": {"buyer": None, "seller": None},
             }
 
-        max_round_seen = 0
         for turn in self.history:
             r = turn.round_number
-            if 1 <= r <= 4:
-                if r > max_round_seen:
-                    max_round_seen = r
+            if r >= 1:
                 target_round = rounds_map[r]
                 if turn.speaker_wallet_id == self.buyer_wallet_id:
                     target_round["buyer_offer_usd"] = turn.offer_usd
@@ -170,7 +172,7 @@ class Session(BaseModel):
                     if is_seller:
                         target_round["my_private_thought"] = turn.private_thought
 
-        rounds_list = [rounds_map[r] for r in range(1, max_round_seen + 1)] if max_round_seen > 0 else []
+        rounds_list = [rounds_map[r] for r in range(1, max_round_seen + 1)]
 
         settlement_steps: List[Dict[str, Any]] = []
         if self.status in (SessionStatus.SETTLING, SessionStatus.SETTLED, SessionStatus.FAILED):
@@ -225,6 +227,7 @@ class Session(BaseModel):
             },
             "rgb_amount": self.asset_amount,
             "agreed_price_usd": self.agreed_price_usd,
+            "list_price_usd": self.asking_price_usd,
             "created_at": self.created_at_unix,
             "updated_at": self.updated_at_unix,
             "payment_asset": {
@@ -301,6 +304,8 @@ class SessionStore:
         network_fee_sat: int = 2_000,
         initial_status: str = SessionStatus.NEGOTIATING,
         initial_gate: Optional[Dict[str, Any]] = None,
+        buyer_ai_prompt: str = "",
+        seller_ai_prompt: str = "",
     ) -> Session:
         with self._lock:
             now = int(time.time())
@@ -320,6 +325,8 @@ class SessionStore:
                 buyer_max_budget_usd=buyer_max_budget_usd,
                 buyer_target_usd=buyer_target_usd,
                 seller_min_reserve_usd=seller_min_reserve_usd,
+                buyer_ai_prompt=buyer_ai_prompt,
+                seller_ai_prompt=seller_ai_prompt,
                 network_fee_sat=network_fee_sat,
                 expiry_unix=now + expiry_seconds,
                 gate=initial_gate,

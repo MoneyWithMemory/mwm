@@ -4,6 +4,7 @@ Maintains agent profiles, local address aliases, transaction activity, and balan
 Follows the exact contract defined in frontend/src/api/types.ts.
 """
 
+import math
 import time
 import uuid
 import logging
@@ -112,7 +113,7 @@ class WalletStateManager:
             seller_ai_prompt="",
             buyer_max_ceiling_usd=135,
             buyer_target_usd=120,
-            buyer_ai_prompt="You are an autonomous buyer agent on Bitcoin regtest. Minimize acquisition cost of PEPE-RGB while closing efficiently.",
+            buyer_ai_prompt="",
         )
         self._aliases["wallet_a"] = {}
         self._activities["wallet_a"] = []
@@ -132,7 +133,7 @@ class WalletStateManager:
             offered_amount=1_000_000,
             asking_price_usd=150,
             secret_min_reserve_usd=110,
-            seller_ai_prompt="You are an autonomous seller agent on Bitcoin regtest. Protect liquidity and preserve margin above your 110 USD reserve.",
+            seller_ai_prompt="",
             buyer_max_ceiling_usd=140,
             buyer_target_usd=120,
             buyer_ai_prompt="",
@@ -155,7 +156,7 @@ class WalletStateManager:
             offered_amount=500_000,
             asking_price_usd=80,
             secret_min_reserve_usd=50,
-            seller_ai_prompt="Cluster node agent.",
+            seller_ai_prompt="",
             buyer_max_ceiling_usd=90,
             buyer_target_usd=60,
             buyer_ai_prompt="",
@@ -259,6 +260,29 @@ class WalletStateManager:
         self._profiles[wallet_id] = updated
         logger.info(f"Updated AgentProfile for {wallet_id}: {updates}")
         return updated
+
+    def consume_lot(self, wallet_id: str, asset_id: str, amount: int) -> None:
+        """
+        After a sale from the Seller Desk, the lot shrinks by the amount sold and keeps its unit
+        prices (asking price and reserve scale with it). A sold-out desk switches off.
+        """
+        profile = self._profiles.get(wallet_id)
+        if not profile or profile.offered_asset_id != asset_id or profile.offered_amount <= 0:
+            return
+        lot = profile.offered_amount
+        left = max(lot - amount, 0)
+        if left == 0:
+            profile.seller_active = False
+            profile.offered_amount = 0
+        else:
+            share = left / lot
+            profile.offered_amount = left
+            profile.asking_price_usd = max(1, int(math.floor(profile.asking_price_usd * share + 0.5)))
+            profile.secret_min_reserve_usd = min(
+                int(math.floor(profile.secret_min_reserve_usd * share + 0.5)),
+                profile.asking_price_usd,
+            )
+        logger.info(f"{wallet_id}: desk lot {lot} -> {profile.offered_amount} after a sale of {amount}")
 
     def get_aliases(self, wallet_id: str) -> Dict[str, str]:
         return self._aliases.get(wallet_id, {})

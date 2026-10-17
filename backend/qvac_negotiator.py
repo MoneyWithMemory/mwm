@@ -26,6 +26,9 @@ logger = logging.getLogger("mwm.qvac")
 MIN_STEP_USD = 2
 MIN_STEP_SHARE = 0.15
 
+# Longest owner strategy passed to the agent (the frontend caps the field at the same length).
+PROMPT_MAX_LENGTH = 500
+
 def min_step(previous_offer: int, counter_offer: Optional[int]) -> int:
     if counter_offer is None:
         return MIN_STEP_USD
@@ -60,6 +63,8 @@ class NegotiationContext(BaseModel):
     max_rounds: int = Field(default_factory=lambda: settings.NEGOTIATION_MAX_ROUNDS)
     # The seller's public asking price for the lot: the seller defends it, the buyer works it down.
     list_price_usd: Optional[int] = None
+    # The owner's strategy for this agent (a preset or their own words), at most PROMPT_MAX_LENGTH.
+    owner_instructions: str = ""
 
 def leak_guard(public_message: str, secret_limit_usd: int) -> Tuple[bool, str]:
     """
@@ -227,6 +232,13 @@ def build_system_prompt(ctx: NegotiationContext) -> str:
         f"Your CONFIDENTIAL RESERVE (absolute minimum price) is {ctx.secret_limit_usd} {ctx.payment_ticker}. NEVER GO BELOW IT."
     )
 
+    instructions = " ".join(ctx.owner_instructions.split())[:PROMPT_MAX_LENGTH]
+    owner_rule = (
+        f"\n   - Your owner's strategy, which sets your pace within the rules above: \"{instructions}\""
+        if instructions
+        else ""
+    )
+
     return f"""You are {ctx.wallet_label}, an elite autonomous trading agent executing an on-chain RGB peer-to-peer swap.
 Role: {role_desc}.
 Counterparty: {ctx.counterparty_label}.
@@ -239,14 +251,14 @@ CRITICAL RULES:
 2. Strategy: this is round {ctx.round_number} of at most {ctx.max_rounds}. The negotiation ends without a deal after round {ctx.max_rounds}, or earlier if both sides stop moving.
    - For Buyer:
      * Round 1: open well below the list price, near your target valuation ({target_usd} {ctx.payment_ticker}). NEVER open at your ceiling {ctx.secret_limit_usd}!
-     * Following rounds: concede gradually (+2 to +5 {ctx.payment_ticker} per round); each new offer must be higher than your previous one. Do NOT jump to your ceiling.
+     * Following rounds: concede gradually (by default +2 to +5 {ctx.payment_ticker} per round); each new offer must be higher than your previous one. Do NOT jump to your ceiling.
      * Before round {closing_round}, never ACCEPT an ask far above your own last offer: counter with a small step instead.
      * From round {closing_round}: work to close: ACCEPT the seller's ask if it is within your ceiling, otherwise make your best closing offer.
    - For Seller:
      * Round 1: open at your list price ({list_price} {ctx.payment_ticker}).
-     * Following rounds: concede gradually towards the buyer (-3 to -8 {ctx.payment_ticker} per round); each new offer must be lower than your previous one. Aim to finish as near to your list price as the buyer allows.
+     * Following rounds: concede gradually towards the buyer (by default -3 to -8 {ctx.payment_ticker} per round); each new offer must be lower than your previous one. Aim to finish as near to your list price as the buyer allows.
      * Before round {closing_round}, never ACCEPT a bid far below your own last offer: counter with a small step instead.
-     * From round {closing_round}: work to close: ACCEPT the buyer's bid if it is at or above your reserve {ctx.secret_limit_usd}, otherwise make your best closing offer.
+     * From round {closing_round}: work to close: ACCEPT the buyer's bid if it is at or above your reserve {ctx.secret_limit_usd}, otherwise make your best closing offer.{owner_rule}
 3. You must output ONLY a valid JSON object matching this exact structure:
 {{
   "private_thought": "<1-2 sentences of cold strategic assessment: estimated counterparty stance and rationale>",

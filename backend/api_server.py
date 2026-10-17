@@ -24,6 +24,7 @@ Key Endpoints:
 - POST /api/shop/agent_search
 """
 
+import math
 import time
 import uuid
 import logging
@@ -418,6 +419,8 @@ def run_negotiation_loop(session_id: str) -> None:
 
     max_rounds = settings.NEGOTIATION_MAX_ROUNDS
     offers_per_round: List[Tuple[int, int]] = []
+    buyer_label = wallet_state_manager._labels.get(session.buyer_wallet_id, "Buyer")
+    seller_label = wallet_state_manager._labels.get(session.seller_wallet_id, "Seller")
     logger.info(f"Starting autonomous negotiation loop for session {session_id} (max {max_rounds} rounds)...")
 
     for r_num in range(1, max_rounds + 1):
@@ -444,11 +447,12 @@ def run_negotiation_loop(session_id: str) -> None:
             round_number=r_num,
             max_rounds=max_rounds,
             list_price_usd=session.asking_price_usd,
+            owner_instructions=session.buyer_ai_prompt,
             role="buyer",
             wallet_id=session.buyer_wallet_id,
-            wallet_label="Wallet A",
+            wallet_label=buyer_label,
             counterparty_wallet_id=session.seller_wallet_id,
-            counterparty_label="Wallet B",
+            counterparty_label=seller_label,
             asset_ticker=session.asset_ticker,
             asset_amount=session.asset_amount,
             payment_ticker=session.payment_ticker,
@@ -491,11 +495,12 @@ def run_negotiation_loop(session_id: str) -> None:
             round_number=r_num,
             max_rounds=max_rounds,
             list_price_usd=session.asking_price_usd,
+            owner_instructions=session.seller_ai_prompt,
             role="seller",
             wallet_id=session.seller_wallet_id,
-            wallet_label="Wallet B",
+            wallet_label=seller_label,
             counterparty_wallet_id=session.buyer_wallet_id,
-            counterparty_label="Wallet A",
+            counterparty_label=buyer_label,
             asset_ticker=session.asset_ticker,
             asset_amount=session.asset_amount,
             payment_ticker=session.payment_ticker,
@@ -647,6 +652,7 @@ def run_settlement_worker(session_id: str) -> None:
             txid_callback=lambda txid: session_store.set_txid(session_id, txid),
         )
         session_store.set_settled(session_id, txid)
+        wallet_state_manager.consume_lot(session.seller_wallet_id, session.asset_id, terms.rgb_amount)
 
         # Record trade in Layer-0 memory graph
         memory_graph.record_trade(
@@ -688,6 +694,34 @@ def run_settlement_worker(session_id: str) -> None:
 # ── Sessions Endpoints ──────────────────────────────────────────────
 
 NO_OVERLAP_REASON = "No deal possible: the buyer's maximum is below the seller's minimum."
+
+def _round_half_up(value: float) -> int:
+    return int(math.floor(value + 0.5))
+
+def _lot_prices(profile: AgentProfile, amount: int) -> Tuple[int, int]:
+    """
+    List price and secret reserve for `amount` units of a desk's lot, at the lot's unit prices:
+    the list price rounded half up, the reserve rounded up so it never drops below the seller's.
+    The whole lot (or an empty desk) keeps the desk's own prices.
+    """
+    lot = profile.offered_amount
+    if lot <= 0 or amount >= lot:
+        return profile.asking_price_usd, profile.secret_min_reserve_usd
+    list_price = _round_half_up(profile.asking_price_usd * amount / lot)
+    reserve = math.ceil(profile.secret_min_reserve_usd * amount / lot)
+    return list_price, min(reserve, list_price)
+
+def _min_lot_amount(profile: AgentProfile) -> int:
+    """Smallest part of a lot worth at least 1 unit of the payment asset at the list price."""
+    if profile.asking_price_usd <= 0:
+        return profile.offered_amount
+    return max(1, math.ceil(profile.offered_amount / profile.asking_price_usd))
+
+def _asset_ticker(asset_id: str) -> str:
+    return next(
+        (a.ticker for a in market_manager.get_market().assets if a.asset_id == asset_id),
+        settings.DEMO_ASSET_TICKER,
+    )
 
 def _spendable(wallet_id: str, asset_id: str) -> int:
     try:
@@ -748,12 +782,14 @@ def create_session(req: CreateSessionRequest):
         or "rgb:IWq5H3Er-Mpe5VLG-6P91nnY-pwK0_EY-7FJUG1i-IWp8RuM"
     )
     seller_profile = wallet_state_manager.get_profile(seller_wid) if seller_wid else None
+    # Buying part of a lot: list price and reserve scale with the amount (same unit prices).
+    list_price, reserve = _lot_prices(seller_profile, req.rgb_amount) if seller_profile else (0, 0)
 
     def new_session(status_: str, gate_info: Optional[Dict[str, Any]] = None):
         return session_store.create_session(
             session_id=session_id,
             asset_id=req.asset_id,
-            asset_ticker=settings.DEMO_ASSET_TICKER,
+            asset_ticker=_asset_ticker(req.asset_id),
             asset_amount=req.rgb_amount,
             payment_asset_id=resolved_payment_asset_id,
             payment_ticker=settings.PAYMENT_ASSET_TICKER,
@@ -761,14 +797,16 @@ def create_session(req: CreateSessionRequest):
             seller_wallet_id=seller_wid or req.seller_address,
             buyer_address=buyer_addr,
             seller_address=req.seller_address,
-            asking_price_usd=seller_profile.asking_price_usd if seller_profile else 0,
+            asking_price_usd=list_price,
             buyer_max_budget_usd=req.buyer_max_ceiling_usd,
             buyer_target_usd=req.buyer_target_usd,
-            seller_min_reserve_usd=seller_profile.secret_min_reserve_usd if seller_profile else 0,
+            seller_min_reserve_usd=reserve,
             network_fee_sat=2_000,
             expiry_seconds=600,
             initial_status=status_,
             initial_gate=gate_info,
+            buyer_ai_prompt=req.buyer_ai_prompt,
+            seller_ai_prompt=seller_profile.seller_ai_prompt if seller_profile else "",
         )
 
     # 3. Layer-0 trust gate on both parties: rings, Unverified wallets and unknown
@@ -797,6 +835,17 @@ def create_session(req: CreateSessionRequest):
             status_code=409,
             detail={"code": "seller_desk_inactive", "message": "The counterparty is not selling this asset"},
         )
+    if req.rgb_amount > seller_profile.offered_amount:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "exceeds_lot", "message": f"The seller offers at most {seller_profile.offered_amount}"},
+        )
+    min_amount = _min_lot_amount(seller_profile)
+    if req.rgb_amount < min_amount:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "amount_too_small", "message": f"Buy at least {min_amount}: a smaller part costs less than 1 {settings.PAYMENT_ASSET_TICKER}"},
+        )
     if _spendable(seller_wid, req.asset_id) < req.rgb_amount:
         raise HTTPException(
             status_code=409,
@@ -808,9 +857,9 @@ def create_session(req: CreateSessionRequest):
             detail={"code": "insufficient_funds", "message": "USDT balance is below the ceiling"},
         )
 
-    # 5. Pre-negotiation: if the buyer's maximum is below the seller's minimum no deal is possible,
-    # so the agents never talk. The reason reveals only that, never either number.
-    if req.buyer_max_ceiling_usd < seller_profile.secret_min_reserve_usd:
+    # 5. Pre-negotiation: if the buyer's maximum is below the seller's minimum (for this amount)
+    # no deal is possible, so the agents never talk. The reason reveals only that, never a number.
+    if req.buyer_max_ceiling_usd < reserve:
         session = new_session(
             SessionStatus.BLOCKED_BY_GATE,
             {"passed": False, "trust_tier": seller_tier, "reasons": [NO_OVERLAP_REASON]},
@@ -1081,15 +1130,16 @@ def close_listing(listing_id: str, req: CloseListingRequest):
         raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "This listing is not yours"})
     return _want_listing(shop_store.close(listing_id), req.wallet_id)
 
-def _desk_floor(listing: Dict[str, Any]) -> int:
-    """The desk owner's secret reserve; used server-side only, never returned."""
-    return wallet_state_manager.get_profile(listing["listing_id"][len("desk_"):]).secret_min_reserve_usd
+def _desk_profile(listing: Dict[str, Any]) -> AgentProfile:
+    """The desk owner's profile, secret reserve included; used server-side only, never returned."""
+    return wallet_state_manager.get_profile(listing["listing_id"][len("desk_"):])
 
 @app.post("/api/shop/agent_search")
 def agent_search(req: AgentSearchRequest):
     """
-    The buyer's agent picks the cheapest fitting Seller Desk and opens a session. Rings are skipped,
-    and so are desks whose secret floor is above the buyer's maximum (no deal would be possible).
+    The buyer's agent picks the cheapest fitting Seller Desk (by unit price, a part of a larger lot
+    included) and opens a session. Rings are skipped, and so are desks whose secret floor for this
+    amount is above the buyer's maximum (no deal would be possible).
     """
     _require_wallet(req.buyer_wallet_id)
 
@@ -1103,7 +1153,8 @@ def agent_search(req: AgentSearchRequest):
         and l["amount"] >= req.rgb_amount
         and l["trust"]["trust_tier"] != TrustTier.RING_ANOMALY
         and price_for(l) <= 1.5 * req.buyer_max_ceiling_usd
-        and _desk_floor(l) <= req.buyer_max_ceiling_usd
+        and req.rgb_amount >= _min_lot_amount(_desk_profile(l))
+        and _lot_prices(_desk_profile(l), req.rgb_amount)[1] <= req.buyer_max_ceiling_usd
     ]
     if not fits:
         raise HTTPException(status_code=404, detail={"code": "no_match", "message": "No matching listing right now"})

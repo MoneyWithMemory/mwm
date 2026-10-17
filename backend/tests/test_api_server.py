@@ -501,9 +501,12 @@ def test_agent_search_skips_rings_and_opens_a_session(monkeypatch):
     assert body["session"]["counterparty_address"] == body["listing"]["owner_address"]
 
     assert client.post("/api/shop/agent_search", json={**req, "asset_id": "rgb:other"}).json()["code"] == "no_match"
-    # Wallet B's floor above the buyer's maximum: no desk can close, so no session is opened.
+    # Wallet B's floor for half the lot (140 * 0.5 = 70) above the buyer's maximum: no desk can
+    # close, so no session is opened. Just above it, the half lot is negotiated at half the price.
     _reset_desk(asking=150, reserve=140)
-    assert client.post("/api/shop/agent_search", json={**req, "buyer_max_ceiling_usd": 130}).json()["code"] == "no_match"
+    assert client.post("/api/shop/agent_search", json={**req, "buyer_max_ceiling_usd": 65, "buyer_target_usd": 60}).json()["code"] == "no_match"
+    body = client.post("/api/shop/agent_search", json={**req, "buyer_max_ceiling_usd": 75, "buyer_target_usd": 60}).json()
+    assert (body["session"]["state"], body["session"]["list_price_usd"]) == ("NEGOTIATING", 75)
     _reset_desk()
     assert client.post("/api/shop/agent_search", json={**req, "rgb_amount": 5_000_000}).json()["code"] == "no_match"
     resp = client.post("/api/shop/agent_search", json={**req, "buyer_max_ceiling_usd": 40, "buyer_target_usd": 30})
@@ -577,3 +580,83 @@ def test_agent_profile_rejects_inconsistent_limits():
     assert (resp.status_code, resp.json()["code"]) == (400, "invalid_profile")
     profile = client.get("/api/wallets/wallet_b").json()["agent_profile"]
     assert profile["secret_min_reserve_usd"] == 110  # rejected updates change nothing
+
+
+def test_partial_lot_is_priced_pro_rata(monkeypatch):
+    _fund_wallets(monkeypatch)
+    _reset_desk(asking=150, reserve=110)
+    wallets = client.get("/api/wallets").json()
+    seller_addr = next(w["address"] for w in wallets if w["wallet_id"] == "wallet_b")
+
+    # Half the lot: list price 75, reserve 55. A maximum of 60 can close, 50 cannot.
+    half = client.post("/api/sessions", json=_session_request(seller_addr, rgb_amount=500_000, buyer_max_ceiling_usd=60, buyer_target_usd=50)).json()
+    assert (half["state"], half["list_price_usd"], half["rgb_amount"]) == ("NEGOTIATING", 75, 500_000)
+    client.post(f"/api/sessions/{half['session_id']}/cancel", json={"wallet_id": "wallet_a"})
+    low = client.post("/api/sessions", json=_session_request(seller_addr, rgb_amount=500_000, buyer_max_ceiling_usd=50, buyer_target_usd=40)).json()
+    assert low["state"] == "BLOCKED_BY_GATE"
+    assert low["gate"]["reasons"] == ["No deal possible: the buyer's maximum is below the seller's minimum."]
+
+    resp = client.post("/api/sessions", json=_session_request(seller_addr, rgb_amount=1_000_001))
+    assert (resp.status_code, resp.json()["code"]) == (409, "exceeds_lot")
+    # The smallest part is worth 1 USDT at the list price: ceil(1,000,000 / 150) = 6,667.
+    resp = client.post("/api/sessions", json=_session_request(seller_addr, rgb_amount=6_666, buyer_max_ceiling_usd=5, buyer_target_usd=1))
+    assert (resp.status_code, resp.json()["code"]) == (400, "amount_too_small")
+    smallest = client.post("/api/sessions", json=_session_request(seller_addr, rgb_amount=6_667, buyer_max_ceiling_usd=5, buyer_target_usd=1)).json()
+    assert (smallest["state"], smallest["list_price_usd"]) == ("NEGOTIATING", 1)
+    client.post(f"/api/sessions/{smallest['session_id']}/cancel", json={"wallet_id": "wallet_a"})
+
+
+def test_session_view_shows_every_round(monkeypatch):
+    from backend.qvac_negotiator import NegotiationTurn
+
+    _fund_wallets(monkeypatch)
+    monkeypatch.setattr("backend.api_server.settings.NEGOTIATION_MAX_ROUNDS", 6)
+    contexts = []
+
+    def moving_but_never_crossing(ctx):
+        contexts.append(ctx)
+        offer = 100 + ctx.round_number if ctx.role == "buyer" else 200 - ctx.round_number
+        return NegotiationTurn(
+            speaker_wallet_id=ctx.wallet_id, speaker_label=ctx.wallet_label, action="OFFER",
+            offer_usd=offer, public_message="Moving.", private_thought="Moving.", round_number=ctx.round_number,
+        )
+
+    monkeypatch.setattr("backend.api_server.negotiator.generate_turn", moving_but_never_crossing)
+    _reset_desk()
+    client.put("/api/wallets/wallet_b/agent_profile", json={"seller_ai_prompt": "Defend the list price."})
+    wallets = client.get("/api/wallets").json()
+    seller_addr = next(w["address"] for w in wallets if w["wallet_id"] == "wallet_b")
+    sess_id = client.post("/api/sessions", json=_session_request(seller_addr, buyer_ai_prompt="Raise slowly.")).json()["session_id"]
+
+    final = None
+    for _ in range(150):
+        time.sleep(0.1)
+        final = client.get(f"/api/sessions/{sess_id}?wallet_id=wallet_a").json()
+        if final["state"] == "BLOCKED_BY_GATE":
+            break
+    assert [r["n"] for r in final["rounds"]] == [1, 2, 3, 4, 5, 6]
+    assert final["rounds"][5]["buyer_offer_usd"] == 106 and final["rounds"][5]["seller_offer_usd"] == 194
+    # Each agent gets its owner's strategy and the real wallet names.
+    # (Sessions left over from other tests share the queue: look at this one only.)
+    buyer_ctx = next(c for c in contexts if c.session_id == sess_id and c.role == "buyer")
+    seller_ctx = next(c for c in contexts if c.session_id == sess_id and c.role == "seller")
+    assert (buyer_ctx.owner_instructions, buyer_ctx.wallet_label, buyer_ctx.counterparty_label) == ("Raise slowly.", "Wallet A", "Wallet B")
+    assert (seller_ctx.owner_instructions, seller_ctx.wallet_label) == ("Defend the list price.", "Wallet B")
+    client.put("/api/wallets/wallet_b/agent_profile", json={"seller_ai_prompt": ""})
+
+
+def test_a_sale_shrinks_the_desk_lot():
+    from backend.wallet_state import wallet_state_manager
+
+    _reset_desk(asking=150, reserve=110)
+    asset = _desk_asset()
+    wallet_state_manager.consume_lot("wallet_b", "rgb:other", 400_000)  # another asset: untouched
+    wallet_state_manager.consume_lot("wallet_b", asset, 400_000)
+    profile = client.get("/api/wallets/wallet_b").json()["agent_profile"]
+    assert (profile["offered_amount"], profile["asking_price_usd"], profile["secret_min_reserve_usd"]) == (600_000, 90, 66)
+    assert profile["seller_active"] is True
+    wallet_state_manager.consume_lot("wallet_b", asset, 600_000)
+    profile = client.get("/api/wallets/wallet_b").json()["agent_profile"]
+    assert (profile["seller_active"], profile["offered_amount"]) == (False, 0)
+    assert "desk_wallet_b" not in [l["listing_id"] for l in client.get("/api/shop?wallet_id=wallet_a").json()]
+    _reset_desk()

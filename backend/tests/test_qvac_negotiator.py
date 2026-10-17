@@ -216,3 +216,61 @@ def test_full_four_round_mock_negotiation_convergence():
     for turn in history:
         assert str(seller_reserve) not in turn.public_message or "reserve" not in turn.public_message.lower()
         assert str(buyer_budget) not in turn.public_message or "budget" not in turn.public_message.lower()
+
+
+def test_coerce_offer_usd():
+    from backend.qvac_negotiator import coerce_offer_usd
+
+    assert coerce_offer_usd(130) == 130
+    assert coerce_offer_usd(129.6) == 130
+    assert coerce_offer_usd("$130") == 130
+    assert coerce_offer_usd("130 USDT") == 130
+    for bad in (None, True, "", "about 130", "130-140", 0, -5):
+        assert coerce_offer_usd(bad) is None
+
+
+def test_accept_is_recorded_at_the_counterparty_price():
+    # Buyer says ACCEPT with its own lower number: the round must show the seller's ask.
+    assert rationality_guard("buyer", "ACCEPT", 120, 135, 115, 128, 115, 3) == ("ACCEPT", 128)
+    # Buyer cannot accept an ask above its ceiling: the ACCEPT becomes an OFFER.
+    assert rationality_guard("buyer", "ACCEPT", 120, 135, 115, 140, 115, 3) == ("OFFER", 120)
+    # Seller cannot accept a bid below its reserve.
+    assert rationality_guard("seller", "ACCEPT", 130, 110, 100, 135, 135, 3) == ("OFFER", 130)
+
+
+def test_seller_closes_an_in_range_bid_on_the_final_turn():
+    assert rationality_guard("seller", "OFFER", 128, 110, 124, 132, 132, 4) == ("ACCEPT", 124)
+    assert rationality_guard("seller", "OFFER", 128, 110, 124, 132, 132, 3) == ("OFFER", 128)
+    assert rationality_guard("seller", "OFFER", 128, 110, 105, 132, 132, 4) == ("OFFER", 128)
+
+
+def test_missing_offer_from_model_never_publishes_the_secret(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            content = '{"private_thought": "x", "action": "OFFER", "public_message": "Let us talk."}'
+            return {"choices": [{"message": {"content": content}}]}
+
+    monkeypatch.setattr("backend.qvac_negotiator.requests.post", lambda *a, **kw: FakeResponse())
+    live = QvacNegotiator()
+    live.use_mock = False
+    ctx = NegotiationContext(
+        session_id="test_missing_offer",
+        round_number=1,
+        role="buyer",
+        wallet_id="wallet_a",
+        wallet_label="Wallet A",
+        counterparty_wallet_id="wallet_b",
+        counterparty_label="Wallet B",
+        asset_ticker="PEPE",
+        asset_amount=1_000_000,
+        payment_ticker="USDT",
+        secret_limit_usd=135,
+        buyer_target_usd=120,
+        current_ask_usd=150,
+    )
+    turn = live.generate_turn(ctx)
+    assert turn.offer_usd != 135
+    assert turn.action == "OFFER"

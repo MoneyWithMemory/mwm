@@ -88,9 +88,10 @@ def rationality_guard(
     - Seller never asks < min_reserve; asks must be monotonic non-increasing; if ask <= current_bid -> ACCEPT.
     - Intermediate rounds (1-3) cannot REJECT; only OFFER or ACCEPT.
     """
-    action = raw_action.upper()
-    if action not in ("OFFER", "ACCEPT"):
-        action = "OFFER"
+    # An ACCEPT is only honoured when it closes the deal at the counterparty's price
+    # (contract: the accepting side's offer field holds the agreed price).
+    wants_accept = raw_action.upper() == "ACCEPT"
+    action = "OFFER"
 
     offer = raw_offer_usd
 
@@ -126,7 +127,33 @@ def rationality_guard(
             action = "ACCEPT"
             offer = current_bid_usd
 
+    if action != "ACCEPT":
+        if role == "buyer":
+            can_accept = current_ask_usd is not None and current_ask_usd <= secret_limit_usd
+            counter_price = current_ask_usd
+        else:
+            can_accept = current_bid_usd is not None and current_bid_usd >= secret_limit_usd
+            counter_price = current_bid_usd
+        # The seller's round-4 turn is the last one: walking away from a bid at or above
+        # the reserve would end in "No agreement" with nothing gained.
+        final_turn = role == "seller" and round_number >= 4
+        if can_accept and (wants_accept or final_turn):
+            action = "ACCEPT"
+            offer = counter_price
+
     return action, offer
+
+def coerce_offer_usd(value: Any) -> Optional[int]:
+    """Integer USD price from model output (130, 130.0, "130", "$130", "130 USDT"); None if unusable."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(round(value)) if value > 0 else None
+    match = re.fullmatch(r"\s*\$?\s*(\d+(?:\.\d+)?)\s*(?:usdt|usd)?\s*", str(value), flags=re.IGNORECASE)
+    if not match:
+        return None
+    offer = int(round(float(match.group(1))))
+    return offer if offer > 0 else None
 
 def parse_llm_json_response(raw_text: str) -> Dict[str, Any]:
     """Robustly extract the JSON payload, stripping <think> blocks and code fences."""
@@ -338,9 +365,14 @@ class QvacNegotiator:
                 logger.warning(f"QVAC live call failed ({exc}). Falling back to internal mock.")
                 raw_result = mock_negotiate(ctx)
 
-        # 1. Extract values with fallbacks
+        # 1. Extract values. A missing or unparseable offer must never default to the secret
+        # limit (that would publish it as the offer): fall back to the mock turn instead.
+        offer_candidate = coerce_offer_usd(raw_result.get("offer_usd"))
+        if offer_candidate is None:
+            logger.warning(f"Model returned no usable offer_usd ({raw_result.get('offer_usd')!r}); using the mock turn.")
+            raw_result = mock_negotiate(ctx)
+            offer_candidate = int(raw_result["offer_usd"])
         action_candidate = str(raw_result.get("action", "OFFER"))
-        offer_candidate = int(raw_result.get("offer_usd", ctx.secret_limit_usd))
         thought_candidate = str(raw_result.get("private_thought", "Strategic concession calculation."))
         message_candidate = str(raw_result.get("public_message", f"I propose {offer_candidate} {ctx.payment_ticker}."))
 

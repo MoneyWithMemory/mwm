@@ -1,13 +1,12 @@
 import { useState } from 'react'
 import { useMarket, useWallet } from '@/api'
+import { AmountCountUp, ErrorState } from '@/components/ui'
 import { useWalletContext } from '@/lib/navigation'
 import { ActivityList } from './ActivityList'
 import { AssetList } from './AssetList'
 import { BalanceChart } from './BalanceChart'
-import { CountUpUsd } from './CountUpUsd'
 import { ReceiveSheet } from './ReceiveSheet'
 import { RenameSheet } from './RenameSheet'
-import { StateMessage } from './StateMessage'
 import { WalletActions } from './WalletActions'
 import { WalletSkeleton } from './WalletSkeleton'
 import { totalValueUsd } from './valuation'
@@ -25,18 +24,10 @@ export function WalletView() {
     return (
       <div className="flex flex-col justify-start p-4">
         {wallet.error ? (
-          <StateMessage
+          <ErrorState
             title="Couldn't load your wallet"
-            body="Check your connection and try again."
-            action={
-              <button
-                type="button"
-                className="pressable rounded-control bg-accent px-4 py-2 text-sm font-semibold text-on-accent"
-                onClick={wallet.refresh}
-              >
-                Retry
-              </button>
-            }
+            message="Check your connection and try again."
+            onRetry={wallet.refresh}
           />
         ) : (
           <WalletSkeleton />
@@ -51,8 +42,8 @@ export function WalletView() {
     <div className="flex flex-col justify-start gap-5 p-4">
       <header className="flex flex-col gap-1">
         <p className="text-sm text-hint">{state.label}</p>
-        <p className="text-hero font-semibold">
-          {market.data ? <CountUpUsd value={total} /> : <span className="amount text-hint">—</span>}
+        <p className="text-hero">
+          {market.data ? <AmountCountUp value={total} prefix="$" /> : <span className="amount text-hint">—</span>}
         </p>
         <p className="text-xs text-hint">Total balance</p>
       </header>

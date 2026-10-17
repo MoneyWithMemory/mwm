@@ -1,9 +1,9 @@
 import { motion } from 'motion/react'
-import { useId, useMemo, useState, type PointerEvent } from 'react'
+import { useMemo, useState, type PointerEvent } from 'react'
 import type { AssetBalance, HistoryPoint } from '@/api'
-import { cn } from '@/lib/cn'
+import { SegmentedControl } from '@/components/ui'
 import { formatUsd } from '@/lib/format'
-import { DUR, EASE_OUT, SPRING_TABS } from '@/lib/motion'
+import { DUR, EASE_OUT } from '@/lib/motion'
 import { formatBalance } from './valuation'
 
 const W = 320
@@ -57,7 +57,6 @@ interface BalanceChartProps {
 }
 
 export function BalanceChart({ walletId, points, assets }: BalanceChartProps) {
-  const pillId = useId()
   const [selected, setSelected] = useState(COMBINED)
   const [hover, setHover] = useState<number | null>(null)
 
@@ -143,36 +142,16 @@ export function BalanceChart({ walletId, points, assets }: BalanceChartProps) {
         />
       </svg>
 
-      <div className="flex gap-1 rounded-control bg-surface-muted p-1" role="tablist" aria-label="Chart series">
-        {series.map((s) => {
-          const isActive = s.key === active.key
-          return (
-            <button
-              key={s.key}
-              type="button"
-              role="tab"
-              aria-selected={isActive}
-              className={cn(
-                'pressable pressable-flat badge-nowrap relative flex-1 rounded-[calc(var(--radius-control)-4px)] px-2 py-1.5 text-xs font-medium',
-                isActive ? 'text-fg' : 'text-hint',
-              )}
-              onClick={() => {
-                setSelected(s.key)
-                setHover(null)
-              }}
-            >
-              {isActive && (
-                <motion.span
-                  layoutId={`chart-series-${pillId}-${walletId}`}
-                  className="absolute inset-0 rounded-[calc(var(--radius-control)-4px)] bg-surface shadow-card"
-                  transition={SPRING_TABS}
-                />
-              )}
-              <span className="relative">{s.label}</span>
-            </button>
-          )
-        })}
-      </div>
+      <SegmentedControl
+        fullWidth
+        layoutId={`chart-series-${walletId}`}
+        options={series.map((s) => ({ value: s.key, label: s.label }))}
+        value={active.key}
+        onChange={(key) => {
+          setSelected(key)
+          setHover(null)
+        }}
+      />
     </section>
   )
 }

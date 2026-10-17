@@ -1,6 +1,6 @@
 import type { AssetBalance, Market } from '@/api'
+import { AssetBadge } from '@/components/ui'
 import { formatUsd } from '@/lib/format'
-import { AssetDot } from './AssetDot'
 import { assetValueUsd, formatBalance } from './valuation'
 
 interface AssetListProps {
@@ -19,7 +19,7 @@ export function AssetList({ assets, costBasis, market }: AssetListProps) {
           const basis = costBasis[asset.asset_id]
           return (
             <li key={asset.asset_id} className="flex items-center gap-3 p-3">
-              <AssetDot ticker={asset.ticker} />
+              <AssetBadge ticker={asset.ticker} asset_id={asset.asset_id} size="lg" />
               <div className="flex min-w-0 flex-1 flex-col">
                 <span className="badge-nowrap text-sm font-semibold">{asset.ticker}</span>
                 <span className="amount text-xs text-hint">

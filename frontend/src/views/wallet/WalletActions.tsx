@@ -1,4 +1,5 @@
 import { ArrowLeftRight, QrCode, Store, type LucideIcon } from 'lucide-react'
+import { IconButton } from '@/components/ui'
 
 interface WalletActionsProps {
   onReceive: () => void
@@ -8,12 +9,12 @@ interface WalletActionsProps {
 
 function Action({ icon: Icon, label, onClick }: { icon: LucideIcon; label: string; onClick: () => void }) {
   return (
-    <button type="button" className="group flex flex-col items-center gap-2" onClick={onClick}>
-      <span className="pressable flex size-14 items-center justify-center rounded-full bg-accent text-on-accent">
-        <Icon size={22} aria-hidden="true" />
-      </span>
+    <div className="flex flex-col items-center gap-2">
+      <IconButton variant="primary" size="lg" aria-label={label} onClick={onClick}>
+        <Icon size={20} aria-hidden="true" />
+      </IconButton>
       <span className="badge-nowrap text-xs font-medium">{label}</span>
-    </button>
+    </div>
   )
 }
 

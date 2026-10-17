@@ -1,6 +1,5 @@
 import { QRCodeSVG } from 'qrcode.react'
-import { Sheet } from '@/components/ui'
-import { CopyIconButton } from './CopyIconButton'
+import { CopyButton, Sheet } from '@/components/ui'
 
 interface ReceiveSheetProps {
   open: boolean
@@ -17,7 +16,7 @@ export function ReceiveSheet({ open, onClose, address }: ReceiveSheetProps) {
         </div>
         <div className="flex w-full items-center gap-2 rounded-control bg-surface-muted py-2 pr-2 pl-3">
           <span className="select-text min-w-0 flex-1 break-all text-xs">{address}</span>
-          <CopyIconButton value={address} label="Copy address" />
+          <CopyButton text={address} size="md" />
         </div>
         <p className="text-xs text-hint">Only send regtest assets to this address.</p>
       </div>

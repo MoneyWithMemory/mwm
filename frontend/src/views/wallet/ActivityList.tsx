@@ -1,8 +1,8 @@
 import { ArrowDownLeft, ArrowUpRight, Pencil } from 'lucide-react'
 import type { ActivityItem } from '@/api'
+import { EmptyState, IconButton } from '@/components/ui'
 import { cn } from '@/lib/cn'
 import { shortAddress } from '@/lib/format'
-import { StateMessage } from './StateMessage'
 import { formatBalance } from './valuation'
 
 const dateFormat = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' })
@@ -24,7 +24,11 @@ export function ActivityList({ items, aliases, onRename }: ActivityListProps) {
     <section className="flex flex-col gap-2" aria-label="Transactions">
       <h2 className="px-1 text-sm font-semibold text-hint">Transactions</h2>
       {items.length === 0 ? (
-        <StateMessage title="No transactions yet" body="Your activity will show up here once you receive or trade." />
+        <EmptyState
+          className="rounded-card bg-surface shadow-card"
+          title="No transactions yet"
+          description="Your activity will show up here once you receive or trade."
+        />
       ) : (
         <ul className="flex flex-col divide-y divide-separator rounded-card bg-surface shadow-card">
           {items.map((item) => {
@@ -47,14 +51,9 @@ export function ActivityList({ items, aliases, onRename }: ActivityListProps) {
                   <span className="flex items-center gap-1 text-xs text-hint">
                     <span className="select-text truncate">{name}</span>
                     {address && (
-                      <button
-                        type="button"
-                        className="pressable-icon pressable-flat -m-1 shrink-0 rounded-full p-1"
-                        onClick={() => onRename(address)}
-                        aria-label={`Rename ${name}`}
-                      >
+                      <IconButton size="sm" aria-label={`Rename ${name}`} onClick={() => onRename(address)}>
                         <Pencil size={13} aria-hidden="true" />
-                      </button>
+                      </IconButton>
                     )}
                   </span>
                 </div>

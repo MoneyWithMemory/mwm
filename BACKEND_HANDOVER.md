@@ -141,13 +141,17 @@ Negoziazione AI, doppia firma delle parti e regolamento RGB a 7 step su regtest:
 
 Dopo un `--e2e` Wallet B non ha più PEPE (sono passati a Wallet A) e Wallet A ha meno di 10.000 USDT. Se riavvii il server senza reset, `setup_demo_environment` emette nuovi PEPE e USDT con nuovi asset id: i saldi restano divisi tra asset vecchi e nuovi e l'API mostra solo quelli nuovi. Un riavvio senza swap invece riusa gli stessi asset.
 
-Per ripartire da zero:
+Per ripartire da zero c'è un comando unico:
 ```bash
-# 1. ferma il server (Ctrl+C nel terminale di uvicorn)
-./scripts/regtest.sh reset
-rm -rf "${MWM_DATA_DIR:-$HOME/.mwm/data}"
-./scripts/regtest.sh start
-# 4. riavvia il server (Passo 4)
+./scripts/demo_reset.sh            # reset completo: chain nuova, wallet nuovi, nuovi asset id
+./scripts/demo_reset.sh --restart  # solo riavvio del backend: chain e wallet restano
+```
+Lo script ferma il backend in ascolto sulla porta 8000 (solo se è `uvicorn backend.api_server:app`), nel reset completo esegue `regtest.sh reset` e cancella `${MWM_DATA_DIR:-$HOME/.mwm/data}`, avvia regtest e poi il backend in background con il log in `~/.mwm/logs/backend.log`. Aspetta `Demo environment ready` e stampa health, asset id, saldi e il valore di `VITE_API_TARGET` per il frontend (`VITE_API_MODE=http`). Le variabili `QVAC_*` passano al backend.
+
+Per seguire una prova dal terminale, in sola lettura:
+```bash
+.venv/bin/python scripts/watch_demo.py   # una riga per ogni cambio: sessioni, round, firme, passi dello swap, saldi
+tail -f ~/.mwm/logs/backend.log          # dettaglio del backend: turni QVAC e i 7 passi rgb-lib
 ```
 * `reset` cancella container e volumi (chain nuova). Cancella sempre anche il data dir, perché i wallet che contiene fanno riferimento alla chain precedente. `~/.mwm/qvac.key` non viene toccato.
 * Al riavvio il backend crea wallet nuovi (nuove mnemonic e nuovi indirizzi), li finanzia ed emette gli asset demo.

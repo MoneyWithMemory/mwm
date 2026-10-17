@@ -335,3 +335,30 @@ def test_wallet_ids_cannot_escape_data_dir(tmp_path):
             mgr.get_wallet_dir(bad)
     assert mgr.get_wallet_dir("wallet_1a2b3c4d").parent == tmp_path / "data"
     assert not (tmp_path / "escaped").exists()
+
+
+def test_demo_funding_is_idempotent_across_restarts(monkeypatch, tmp_path):
+    import rgb_lib
+    from backend import rgb_swap_engine as engine_mod
+
+    sent = []
+    monkeypatch.setattr(engine_mod.regtest, "send_to_address", lambda address, amount: sent.append(amount))
+    monkeypatch.setattr(engine_mod.regtest, "mine", lambda blocks=1: None)
+
+    class FakeBtcWallet:
+        def __init__(self, sats):
+            self.sats = sats
+
+        def get_btc_balance(self, online, skip_sync):
+            return SimpleNamespace(vanilla=SimpleNamespace(future=self.sats), colored=SimpleNamespace(future=0))
+
+        def create_utxos(self, online, up_to, num, size, fee_rate, skip_sync):
+            assert up_to is True
+            raise rgb_lib.RgbLibError.AllocationsAlreadyAvailable()
+
+    mgr = WalletManager(data_root=str(tmp_path / "data"))
+    for sats, expect_send in ((0, True), (499_999, True), (999_735, False)):
+        sent.clear()
+        monkeypatch.setattr(mgr, "get_or_create_wallet", lambda wid, s=sats: (FakeBtcWallet(s), None, "bcrt1qfake"))
+        mgr.fund_and_create_utxos("wallet_a", "0.01000000", 5, 10_000, min_btc_sats=500_000)
+        assert bool(sent) is expect_send

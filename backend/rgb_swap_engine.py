@@ -172,11 +172,26 @@ class WalletManager:
         except Exception:
             return 0
 
-    def fund_and_create_utxos(self, wallet_id: str, btc_amount: str = "1.0", utxo_count: int = 5, size_sat: int = 10_000) -> None:
-        """Ensure wallet has BTC and colored UTXOs for RGB allocations."""
+    def fund_and_create_utxos(
+        self,
+        wallet_id: str,
+        btc_amount: str = "1.0",
+        utxo_count: int = 5,
+        size_sat: int = 10_000,
+        min_btc_sats: int = 0,
+    ) -> None:
+        """
+        Ensure wallet has BTC and colored UTXOs for RGB allocations. Idempotent across
+        restarts: BTC is sent only below min_btc_sats, and UTXOs are topped up to utxo_count.
+        """
         wallet, online, address = self.get_or_create_wallet(wallet_id)
-        regtest.send_to_address(address, btc_amount)
-        wallet.create_utxos(online, False, utxo_count, size_sat, FEE_RATE, False)
+        btc = wallet.get_btc_balance(online, False)
+        if btc.vanilla.future + btc.colored.future < min_btc_sats:
+            regtest.send_to_address(address, btc_amount)
+        try:
+            wallet.create_utxos(online, True, utxo_count, size_sat, FEE_RATE, False)
+        except rgb_lib.RgbLibError.AllocationsAlreadyAvailable:
+            logger.info(f"{wallet_id}: colorable UTXOs already available, none created.")
         regtest.mine(2)
 
     def issue_nia(self, wallet_id: str, ticker: str, name: str, supply: int) -> str:
@@ -212,8 +227,10 @@ class RgbSwapEngine:
             logger.info("Setting up demo wallets and RGB assets...")
             # 1. Wallets setup (BTC amount from seed.py, sats -> BTC string)
             for wid in ("wallet_b", "wallet_a"):
-                btc = f"{SEED_WALLETS[wid].initial_btc_sats / 100_000_000:.8f}"
-                self.wallet_mgr.fund_and_create_utxos(wid, btc, 5, 10_000)
+                sats = SEED_WALLETS[wid].initial_btc_sats
+                btc = f"{sats / 100_000_000:.8f}"
+                # Top up only when below half the seed, so restarts don't keep adding 0.01 BTC.
+                self.wallet_mgr.fund_and_create_utxos(wid, btc, 5, 10_000, min_btc_sats=sats // 2)
 
             # 2. Check if Wallet B already has PEPE
             b_balances = self.wallet_mgr.get_balances("wallet_b")

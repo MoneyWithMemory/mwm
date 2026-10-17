@@ -191,7 +191,11 @@ def get_health() -> HealthResponse:
         qvac_ok = True
     else:
         try:
-            r = requests.get(f"{settings.QVAC_BASE_URL.rstrip('/')}/models", timeout=2.0)
+            headers = {}
+            api_key = settings.get_api_key()
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            r = requests.get(f"{settings.QVAC_BASE_URL.rstrip('/')}/models", headers=headers, timeout=2.0)
             qvac_ok = r.status_code == 200
         except Exception:
             qvac_ok = False

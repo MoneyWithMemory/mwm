@@ -17,7 +17,7 @@ export function SessionHeader({ session, name, alias }: { session: SessionView; 
             <ArrowLeft size={18} aria-hidden="true" />
           </IconButton>
         )}
-        <h1 className="flex-1 text-lg font-semibold">P2P Trade</h1>
+        <h1 className="flex-1 text-lg font-semibold">Deal</h1>
         <Badge variant={SESSION_STATE_VARIANT[session.state]}>{SESSION_STATE_LABEL[session.state]}</Badge>
       </div>
       <div className="flex items-center gap-3 rounded-card bg-surface p-3 shadow-card">

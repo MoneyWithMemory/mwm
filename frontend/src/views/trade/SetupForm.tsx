@@ -108,7 +108,7 @@ export function SetupForm({ wallet, contacts, market, initialAddress, onCreated 
           </IconButton>
         )}
         <div className="flex flex-col">
-          <h1 className="text-lg font-semibold">P2P Trade</h1>
+          <h1 className="text-lg font-semibold">New deal</h1>
           <p className="text-sm text-hint">Your local agent negotiates for you.</p>
         </div>
       </header>

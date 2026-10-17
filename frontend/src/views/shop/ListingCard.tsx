@@ -6,7 +6,8 @@ import { formatAssetAmount, formatUsd, shortAddress } from '@/lib/format'
 import { useWalletContext } from '@/lib/navigation'
 import { unitPriceText } from './unitPrice'
 
-export function ListingCard({ listing }: { listing: ShopListing }) {
+/** onSell opens the Sell tab: the way to answer a request, or to edit your own offer. */
+export function ListingCard({ listing, onSell }: { listing: ShopListing; onSell?: () => void }) {
   const { walletId, navigate } = useWalletContext()
   const close = useCloseListing()
   const selling = listing.kind === 'sell'
@@ -53,14 +54,14 @@ export function ListingCard({ listing }: { listing: ShopListing }) {
             Buy
           </Button>
         )}
-        {selling && listing.is_mine && (
-          <Button fullWidth variant="secondary" onClick={() => navigate('seller-desk')}>
-            Manage in Seller Desk
+        {selling && listing.is_mine && onSell && (
+          <Button fullWidth variant="secondary" onClick={onSell}>
+            Edit my offer
           </Button>
         )}
-        {!selling && !listing.is_mine && (
-          <Button fullWidth variant="secondary" onClick={() => navigate('seller-desk')}>
-            Set up my Seller Desk
+        {!selling && !listing.is_mine && onSell && (
+          <Button fullWidth variant="secondary" onClick={onSell}>
+            Sell to them
           </Button>
         )}
         {!selling && listing.is_mine && (

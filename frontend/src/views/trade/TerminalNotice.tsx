@@ -65,8 +65,8 @@ export function TerminalNotice({ session }: { session: SessionView }) {
           <Button variant="secondary" fullWidth onClick={() => reset('wallet')}>
             Back to Wallet
           </Button>
-          <Button fullWidth onClick={() => reset('trade')}>
-            New trade
+          <Button fullWidth onClick={() => reset('shop')}>
+            Find another deal
           </Button>
         </div>
       </CardContent>

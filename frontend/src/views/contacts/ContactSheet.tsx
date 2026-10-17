@@ -59,7 +59,7 @@ export function ContactSheet({ contact, open, walletId, onClose, onTrade }: Cont
               Rename
             </Button>
             <Button fullWidth trailingArrow onClick={onTrade}>
-              Trade
+              Buy
             </Button>
           </div>
         </div>

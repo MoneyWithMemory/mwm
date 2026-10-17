@@ -28,7 +28,7 @@ export function ContactRow({ contact, onOpen, onTrade }: ContactRowProps) {
         </span>
       </button>
       <Button size="sm" variant="secondary" trailingArrow onClick={onTrade}>
-        Trade
+        Buy
       </Button>
     </li>
   )

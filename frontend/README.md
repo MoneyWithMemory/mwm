@@ -20,6 +20,8 @@ Set in `frontend/.env.local` (git-ignored):
 
 The browser always calls same-origin `/api/...`; Vite proxies it to `VITE_API_TARGET`, so no CORS setup is needed.
 
+To keep the mock as the default and switch to the real backend only on demand, put the two variables in `frontend/.env.lan.local` (also git-ignored) and run `npm run dev -- --mode lan`.
+
 ## Layout
 
 - `src/views/**`: the four pane views (Wallet, Trade, Seller Desk, Contacts) and the split view.

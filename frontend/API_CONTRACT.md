@@ -22,10 +22,11 @@ Every non-2xx response has this body:
 
 | Status | Codes |
 |---|---|
-| 400 | `invalid_asset`, `invalid_amount`, `invalid_limits`, `invalid_label`, `invalid_profile`, `self_trade` |
+| 400 | `invalid_asset`, `invalid_amount`, `invalid_limits`, `invalid_label`, `invalid_profile`, `self_trade`, `sign_error`, `wallet_creation_failed` |
 | 403 | `forbidden` (the wallet is not part of the session) |
 | 404 | `wallet_not_found`, `session_not_found` |
 | 409 | `seller_desk_inactive`, `insufficient_funds`, `not_awaiting_signatures`, `terms_hash_mismatch`, `already_signed`, `expired`, `not_cancellable` |
+| 500 | `internal_server_error` |
 
 The UI shows `message` to the user, so write it in plain English.
 
@@ -61,13 +62,15 @@ Reports whether the backend's dependencies are reachable.
 - **USDT-RGB:** always 1.00 (`fixed_peg`).
 - **PEPE:** `null` until its first settlement; after that, the last settlement price divided by the lot size (`p2p_negotiation`).
 
+Each asset also carries its `precision` (the same value as in `AssetRef`), so a buyer that does not hold the asset yet can convert the typed amount into atomic units.
+
 ```json
 {
   "mode": "fixed_simulated",
   "sats_per_usd": 1000,
   "assets": [
-    { "asset_id": "rgb:Cfkujjki-...", "ticker": "USDT", "price_usd": 1, "source": "fixed_peg" },
-    { "asset_id": "rgb:NEiuTRxB-...", "ticker": "PEPE", "price_usd": null, "source": "p2p_negotiation" }
+    { "asset_id": "rgb:Cfkujjki-...", "ticker": "USDT", "precision": 0, "price_usd": 1, "source": "fixed_peg" },
+    { "asset_id": "rgb:NEiuTRxB-...", "ticker": "PEPE", "precision": 0, "price_usd": null, "source": "p2p_negotiation" }
   ]
 }
 ```
@@ -148,7 +151,7 @@ The negotiator re-reads the seller's profile every round, so a price changed liv
 
 ### GET /api/wallets/{id}/contacts
 
-Every known address except the wallet's own, with this wallet's alias and the trust audit:
+Every known address except the wallet's own, with this wallet's alias, the trust audit and the public part of its Seller Desk:
 
 ```json
 [{
@@ -160,12 +163,18 @@ Every known address except the wallet's own, with this wallet's alias and the tr
     "reliability_pct": 14,
     "trust_tier": "Ring Anomaly Detected",
     "assessment_summary": "Volume stays inside a closed cluster of related wallets trading with each other."
+  },
+  "desk": {
+    "asset": { "asset_id": "rgb:NEiuTRxB-...", "ticker": "PEPE", "schema": "NIA", "precision": 0 },
+    "offered_amount": 500000,
+    "asking_price_usd": 90
   }
 }]
 ```
 
 - `trust_tier` is one of `High Authenticity`, `Ring Anomaly Detected` or `Unverified`.
 - `reliability_pct: null` means Unverified (cold start).
+- `desk` is `null` unless the address has `seller_active: true` and an `offered_asset_id`. It carries only `asset`, `offered_amount` (atomic units) and `asking_price_usd`: **never `secret_min_reserve_usd` or `seller_ai_prompt`**. It is shown regardless of trust; the gate still blocks rings and Unverified addresses when the session is created.
 - **No exposed field ever carries loop percentages or raw trade counts**, and that includes `assessment_summary` and `gate.reasons`.
 
 ### POST /api/sessions
@@ -346,4 +355,5 @@ On 2026-10-17 the backend (`backend/api_server.py`) confirmed and implemented th
 
 ## Open points
 
+- **Added on 2026-10-17, not in the backend yet:** `precision` on every `GET /api/market` asset, and `desk` on every `GET /api/wallets/{id}/contacts` item.
 - **Secrets in `GET /api/wallets/{id}`:** the response includes the owner's secrets and there is no auth. That is acceptable for the regtest demo on a LAN, as long as the README states it.

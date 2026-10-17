@@ -33,6 +33,8 @@ export type PriceSource = 'fixed_peg' | 'p2p_negotiation'
 export interface AssetPrice {
   asset_id: AssetId
   ticker: string
+  /** Same as AssetRef.precision, so a buyer can convert amounts before holding the asset. */
+  precision: number
   /** USD per display unit; null until the asset has a price (e.g. PEPE before its first trade). */
   price_usd: number | null
   source: PriceSource
@@ -131,12 +133,22 @@ export interface TrustAudit {
   assessment_summary: string
 }
 
+/** Public part of a Seller Desk. Never carries the secret reserve or the seller prompt. */
+export interface PublicDesk {
+  asset: AssetRef
+  /** Lot size in atomic units. */
+  offered_amount: number
+  asking_price_usd: number
+}
+
 /** GET /api/wallets/{id}/contacts item. */
 export interface Contact {
   address: string
   /** This wallet's local alias for the address, if any. */
   alias: string | null
   trust: TrustAudit
+  /** The address's active Seller Desk; null when it is not selling (trust is checked separately, at session creation). */
+  desk: PublicDesk | null
 }
 
 // ── Sessions ───────────────────────────────────────────────────────

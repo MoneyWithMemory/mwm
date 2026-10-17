@@ -89,7 +89,7 @@ QVAC_BASE_URL=http://127.0.0.1:11435/v1 \
 Senza QVAC metti `QVAC_MOCK=1` al posto di `QVAC_BASE_URL=...`.
 
 All'avvio (lifespan → `RgbSwapEngine.setup_demo_environment`) il backend prepara da solo la demo. `backend/seed.py` contiene solo i parametri dei wallet seed e non va eseguito.
-* Finanzia Wallet A e Wallet B con `initial_btc_sats` di `backend/seed.py` (1.000.000 sats = 0,01 BTC ciascuno) e crea su entrambi 5 UTXO colorabili da 10.000 sats.
+* Finanzia Wallet A, Wallet B e Sybil con `initial_btc_sats` di `backend/seed.py` (1.000.000 sats = 0,01 BTC per A e B, 500.000 per Sybil) e crea su ciascuno 5 UTXO colorabili da 10.000 sats.
 * Emette 1.000.000 PEPE su Wallet B (se B non ne ha già almeno 1.000.000) e 10.000 USDT su Wallet A (se A non ne ha già almeno 10.000 spendibili).
 * Precarica nello Shop le due richieste demo del mock del frontend (`want_seed_1`, `want_seed_2`).
 

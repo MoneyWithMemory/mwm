@@ -217,8 +217,8 @@ class RgbSwapEngine:
     def setup_demo_environment(self) -> Dict[str, str]:
         """
         Initialize Wallet A (Buyer) and Wallet B (Seller) for demo:
-        - Funds both with BTC on regtest
-        - Creates colorable UTXOs on both
+        - Funds Wallet A, Wallet B and Sybil with their seed.py BTC on regtest
+        - Creates colorable UTXOs on each
         - Issues 1,000,000 PEPE on Wallet B (Seller)
         - Issues 10,000 USDT on Wallet A (Buyer)
         Returns {'pepe_asset_id': ..., 'usdt_asset_id': ...}.
@@ -226,7 +226,7 @@ class RgbSwapEngine:
         with SWAP_GLOBAL_LOCK:
             logger.info("Setting up demo wallets and RGB assets...")
             # 1. Wallets setup (BTC amount from seed.py, sats -> BTC string)
-            for wid in ("wallet_b", "wallet_a"):
+            for wid in ("wallet_b", "wallet_a", "wallet_sybil"):
                 sats = SEED_WALLETS[wid].initial_btc_sats
                 btc = f"{sats / 100_000_000:.8f}"
                 # Top up only when below half the seed, so restarts don't keep adding 0.01 BTC.

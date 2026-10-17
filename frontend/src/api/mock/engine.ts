@@ -14,6 +14,7 @@ import {
   type CreateWalletRequest,
   type Health,
   type Market,
+  type PublicDesk,
   type Role,
   type SessionId,
   type SessionState,
@@ -113,6 +114,14 @@ function walletOrThrow(walletId: WalletId): MockWallet {
 function walletByAddress(address: string): MockWallet | undefined {
   for (const wallet of wallets.values()) if (wallet.summary.address === address) return wallet
   return undefined
+}
+
+/** Only the public fields of an active desk: the reserve and the prompt stay private. */
+function publicDesk(address: string): PublicDesk | null {
+  const profile = walletByAddress(address)?.agent_profile
+  const asset = ASSET_LIST.find((a) => a.asset_id === profile?.offered_asset_id)
+  if (!profile?.seller_active || !asset) return null
+  return { asset, offered_amount: profile.offered_amount, asking_price_usd: profile.asking_price_usd }
 }
 
 function sessionOrThrow(sessionId: SessionId): MockSession {
@@ -458,8 +467,8 @@ export const mockEngine = {
       mode: 'fixed_simulated',
       sats_per_usd: ECONOMY.satsPerUsd,
       assets: [
-        { asset_id: ASSETS.usdt.asset_id, ticker: ASSETS.usdt.ticker, price_usd: 1, source: 'fixed_peg' },
-        { asset_id: ASSETS.pepe.asset_id, ticker: ASSETS.pepe.ticker, price_usd: pepePriceUsd, source: 'p2p_negotiation' },
+        { asset_id: ASSETS.usdt.asset_id, ticker: ASSETS.usdt.ticker, precision: ASSETS.usdt.precision, price_usd: 1, source: 'fixed_peg' },
+        { asset_id: ASSETS.pepe.asset_id, ticker: ASSETS.pepe.ticker, precision: ASSETS.pepe.precision, price_usd: pepePriceUsd, source: 'p2p_negotiation' },
       ],
     }
   },
@@ -513,7 +522,7 @@ export const mockEngine = {
     const addresses = [...wallets.values()].map((w) => w.summary.address).concat(EXTERNAL_CONTACTS)
     return addresses
       .filter((address) => address !== wallet.summary.address)
-      .map((address) => ({ address, alias: wallet.local_aliases[address] ?? null, trust: trustFor(address) }))
+      .map((address) => ({ address, alias: wallet.local_aliases[address] ?? null, trust: trustFor(address), desk: publicDesk(address) }))
   },
 
   createSession(body: CreateSessionRequest): SessionView {

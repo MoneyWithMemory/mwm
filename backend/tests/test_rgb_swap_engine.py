@@ -362,3 +362,14 @@ def test_demo_funding_is_idempotent_across_restarts(monkeypatch, tmp_path):
         monkeypatch.setattr(mgr, "get_or_create_wallet", lambda wid, s=sats: (FakeBtcWallet(s), None, "bcrt1qfake"))
         mgr.fund_and_create_utxos("wallet_a", "0.01000000", 5, 10_000, min_btc_sats=500_000)
         assert bool(sent) is expect_send
+
+
+def test_thinking_is_null_outside_negotiation():
+    store = SessionStore()
+    _awaiting_session(store, "sess_think")
+    session = store.get_session("sess_think")
+    session.thinking = "seller"
+    assert session.to_session_view("wallet_a")["thinking"] == "seller"
+    store.cancel_session("sess_think", cancelled_by="wallet_a")
+    session.thinking = "seller"  # an agent turn that was in flight sets it after the cancel
+    assert session.to_session_view("wallet_a")["thinking"] is None

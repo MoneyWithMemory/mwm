@@ -225,7 +225,8 @@ class Session(BaseModel):
             },
             "counterparty_trust": counterparty_trust,
             "rounds": rounds_list,
-            "thinking": self.thinking,
+            # The negotiation thread may set thinking after a cancel; it only means something while negotiating.
+            "thinking": self.thinking if self.status == SessionStatus.NEGOTIATING else None,
             "gate": self.gate,
             "terms": self.terms,
             "terms_hash": self.terms_hash,

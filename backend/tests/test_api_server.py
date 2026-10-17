@@ -397,3 +397,25 @@ def test_session_blocked_for_unknown_seller_and_untrusted_buyer(monkeypatch):
     assert sess["state"] == "BLOCKED_BY_GATE"
     assert any(r.startswith("Buyer trust check failed") for r in sess["gate"]["reasons"])
     assert sess["rounds"] == []
+
+
+def test_contacts_include_aliased_addresses():
+    client.put("/api/wallets/wallet_a/aliases", json={"address": "bcrt1q_new_friend", "name": "Friend"})
+    contacts = client.get("/api/wallets/wallet_a/contacts").json()
+    friend = next(c for c in contacts if c["address"] == "bcrt1q_new_friend")
+    assert friend["alias"] == "Friend"
+    assert friend["trust"]["trust_tier"] == "Unverified"
+    assert friend["desk"] is None
+    assert len([c for c in contacts if c["address"] == "bcrt1q_new_friend"]) == 1
+
+
+def test_new_wdk_wallet_buying_is_blocked_by_gate(monkeypatch):
+    _fund_wallets(monkeypatch, amount=0)
+    new_wallet = client.post("/api/wallets/create", json={"label": "WDK demo"}).json()
+    wallets = client.get("/api/wallets").json()
+    seller_addr = next(w["address"] for w in wallets if w["wallet_id"] == "wallet_b")
+    resp = client.post("/api/sessions", json=_session_request(seller_addr, buyer_wallet_id=new_wallet["wallet_id"]))
+    sess = resp.json()
+    assert resp.status_code == 200
+    assert sess["state"] == "BLOCKED_BY_GATE"
+    assert "Buyer trust check failed: Unverified" in sess["gate"]["reasons"]

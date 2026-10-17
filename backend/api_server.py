@@ -290,6 +290,36 @@ def update_agent_profile(wallet_id: str, req: UpdateAgentProfileRequest):
     updated_profile = wallet_state_manager.update_profile(wallet_id, updates)
     return updated_profile.model_dump()
 
+def _public_desk(wallet_id: str) -> Optional[Dict[str, Any]]:
+    """Public part of a Seller Desk (never the reserve or the prompt); None if inactive."""
+    profile = wallet_state_manager.get_profile(wallet_id)
+    if not (profile.seller_active and profile.offered_asset_id):
+        return None
+    ticker = "PEPE"
+    for ma in market_manager.get_market().assets:
+        if ma.asset_id == profile.offered_asset_id:
+            ticker = ma.ticker
+            break
+    return {
+        "asset": {
+            "asset_id": profile.offered_asset_id,
+            "ticker": ticker,
+            "schema": "NIA",
+            "precision": 0,
+        },
+        "offered_amount": profile.offered_amount,
+        "asking_price_usd": profile.asking_price_usd,
+    }
+
+def _trust_audit(rep) -> Dict[str, Any]:
+    return {
+        "trusted": rep.is_trusted,
+        "sybil_ring_detected": rep.trust_tier == TrustTier.RING_ANOMALY,
+        "reliability_pct": rep.reliability_pct,
+        "trust_tier": rep.trust_tier,
+        "assessment_summary": rep.assessment_summary,
+    }
+
 @app.get("/api/wallets/{wallet_id}/contacts")
 def get_contacts(wallet_id: str):
     contacts: List[Dict[str, Any]] = []
@@ -308,38 +338,26 @@ def get_contacts(wallet_id: str):
                 peer_addr = f"bcrt1q{peer_id[:10]}"
 
         alias = local_aliases.get(peer_addr, rep.label if rep.label != peer_id else None)
-
-        # Build public seller desk if active
-        peer_profile = wallet_state_manager.get_profile(peer_id)
-        desk = None
-        if peer_profile.seller_active and peer_profile.offered_asset_id:
-            ticker = "PEPE"
-            for ma in market_manager.get_market().assets:
-                if ma.asset_id == peer_profile.offered_asset_id:
-                    ticker = ma.ticker
-                    break
-            desk = {
-                "asset": {
-                    "asset_id": peer_profile.offered_asset_id,
-                    "ticker": ticker,
-                    "schema": "NIA",
-                    "precision": 0,
-                },
-                "offered_amount": peer_profile.offered_amount,
-                "asking_price_usd": peer_profile.asking_price_usd,
-            }
-
         contacts.append({
             "address": peer_addr,
             "alias": alias,
-            "trust": {
-                "trusted": rep.is_trusted,
-                "sybil_ring_detected": rep.trust_tier == TrustTier.RING_ANOMALY,
-                "reliability_pct": rep.reliability_pct,
-                "trust_tier": rep.trust_tier,
-                "assessment_summary": rep.assessment_summary,
-            },
-            "desk": desk,
+            "trust": _trust_audit(rep),
+            "desk": _public_desk(peer_id),
+        })
+
+    # Adding a contact is PUT aliases: aliased addresses outside the memory graph are contacts too.
+    listed = {c["address"] for c in contacts}
+    own_address = wallet_state_manager._addresses.get(wallet_id)
+    for address, name in local_aliases.items():
+        if address in listed or address == own_address:
+            continue
+        peer_id = wallet_state_manager.get_wallet_by_address(address)
+        rep = memory_graph.get_reputation(peer_id or address)
+        contacts.append({
+            "address": address,
+            "alias": name,
+            "trust": _trust_audit(rep),
+            "desk": _public_desk(peer_id) if peer_id else None,
         })
     return contacts
 

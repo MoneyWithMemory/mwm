@@ -1,6 +1,7 @@
 import { AnimatePresence, MotionConfig, motion } from 'motion/react'
 import { useState } from 'react'
 import type { WalletId } from '@/api'
+import mwmLogo from '@/assets/mwm-mark-white.svg'
 import { OverlayLayer } from '@/components/ui/OverlayLayer'
 import { ToastProvider } from '@/components/ui/Toast'
 import { cn } from '@/lib/cn'
@@ -42,8 +43,14 @@ export function AppShell() {
             )}
           >
             <header className={cn('flex items-center gap-3 py-2', wide ? 'h-14' : 'px-3')}>
-              {wide && <span className="badge-nowrap text-sm font-semibold tracking-tight">MwM Wallet</span>}
-              {wide && !split && <span className="h-4 w-px bg-separator" aria-hidden="true" />}
+              <img
+                src={mwmLogo}
+                alt="MwM Wallet"
+                className="h-[26px] w-auto shrink-0 select-none object-contain"
+                loading="eager"
+                decoding="async"
+              />
+              {wide && !split && <span className="h-4 w-px shrink-0 bg-separator" aria-hidden="true" />}
               {!split && <WalletSwitcher walletId={walletId} onSelect={setWalletId} />}
               <div className="ml-auto flex items-center gap-2">
                 <HealthDot />

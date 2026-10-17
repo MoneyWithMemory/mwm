@@ -19,7 +19,7 @@ export function SplitView() {
             <Avatar seed={wallet.id} label={wallet.label} size="sm" />
             <span className="badge-nowrap truncate">{wallet.label}</span>
           </h2>
-          <WalletPane walletId={wallet.id} />
+          <WalletPane walletId={wallet.id} autoHideIsland={false} />
         </section>
       ))}
     </div>

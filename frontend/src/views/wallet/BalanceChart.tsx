@@ -26,16 +26,25 @@ interface Coord {
   y: number
 }
 
+/** The vertical range never shrinks below this share of the value, so cents of fees stay flat. */
+const MIN_RANGE_SHARE = 0.03
+
 function toCoords(points: HistoryPoint[], values: number[]): Coord[] {
   const t0 = points[0].t
   const span = points[points.length - 1].t - t0
-  const min = Math.min(...values)
-  const max = Math.max(...values)
+  let lo = Math.min(...values)
+  let hi = Math.max(...values)
+  const minRange = Math.max(Math.abs(hi) * MIN_RANGE_SHARE, 1)
+  if (hi - lo < minRange) {
+    const mid = (hi + lo) / 2
+    lo = mid - minRange / 2
+    hi = mid + minRange / 2
+  }
   const innerW = W - PAD_X * 2
   const innerH = H - PAD_Y * 2
   return points.map((p, i) => ({
     x: PAD_X + (span > 0 ? (p.t - t0) / span : points.length > 1 ? i / (points.length - 1) : 0.5) * innerW,
-    y: max === min ? H / 2 : PAD_Y + (1 - (values[i] - min) / (max - min)) * innerH,
+    y: PAD_Y + (1 - (values[i] - lo) / (hi - lo)) * innerH,
   }))
 }
 

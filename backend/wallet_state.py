@@ -19,10 +19,11 @@ class AssetRef(BaseModel):
     model_config = {"populate_by_name": True, "protected_namespaces": ()}
     asset_id: str
     ticker: str
-    schema_type: str = Field(default="NIA", alias="schema")
+    schema_type: str = Field(default="NIA", serialization_alias="schema", alias="schema")
     precision: int
 
     def model_dump(self, *args, **kwargs) -> Dict[str, Any]:
+        kwargs.setdefault("by_alias", True)
         data = super().model_dump(*args, **kwargs)
         if "schema_type" in data:
             data["schema"] = data.pop("schema_type")
@@ -48,6 +49,11 @@ class ActivityItem(BaseModel):
     session_id: Optional[str] = None
     status: str = "confirmed"  # "pending" | "confirmed"
 
+class PublicDesk(BaseModel):
+    asset: AssetRef
+    offered_amount: int
+    asking_price_usd: int
+
 class AgentProfile(BaseModel):
     seller_active: bool
     offered_asset_id: Optional[str] = None
@@ -69,6 +75,10 @@ class WalletState(BaseModel):
     activity: List[ActivityItem]
     local_aliases: Dict[str, str]
     agent_profile: AgentProfile
+
+    def model_dump(self, *args, **kwargs) -> Dict[str, Any]:
+        kwargs.setdefault("by_alias", True)
+        return super().model_dump(*args, **kwargs)
 
 class WalletStateManager:
     """In-memory coordinator for wallet states, profiles, and history."""
@@ -108,16 +118,16 @@ class WalletStateManager:
         self._history["wallet_a"] = [
             HistoryPoint(
                 t=seed_time,
-                balances={"BTC": 100_000_000, "USDT": 10_000, "PEPE": 0},
+                balances={"btc": 100_000_000, "rgb:usdt_nia": 10_000, "rgb:pepe_nia": 0},
                 total_usd=10_000.0,
             )
         ]
-        self._cost_basis["wallet_a"] = {"USDT": 1.0, "PEPE": None, "BTC": 100_000.0}
+        self._cost_basis["wallet_a"] = {"btc": None, "rgb:usdt_nia": 1.0, "rgb:pepe_nia": None}
 
         # 2. Wallet B (Seller in demo)
         self._profiles["wallet_b"] = AgentProfile(
             seller_active=True,
-            offered_asset_id=None,
+            offered_asset_id=settings.DEMO_ASSET_ID or "rgb:pepe_nia",
             offered_amount=1_000_000,
             asking_price_usd=150,
             secret_min_reserve_usd=110,
@@ -131,16 +141,16 @@ class WalletStateManager:
         self._history["wallet_b"] = [
             HistoryPoint(
                 t=seed_time,
-                balances={"BTC": 100_000_000, "PEPE": 1_000_000, "USDT": 0},
-                total_usd=150.0,
+                balances={"btc": 100_000_000, "rgb:pepe_nia": 1_000_000, "rgb:usdt_nia": 0},
+                total_usd=0.0,
             )
         ]
-        self._cost_basis["wallet_b"] = {"USDT": 1.0, "PEPE": 0.00015, "BTC": 100_000.0}
+        self._cost_basis["wallet_b"] = {"btc": None, "rgb:usdt_nia": 1.0, "rgb:pepe_nia": None}
 
         # 3. Wallet Sybil
         self._profiles["wallet_sybil"] = AgentProfile(
             seller_active=True,
-            offered_asset_id=None,
+            offered_asset_id=settings.DEMO_ASSET_ID or "rgb:pepe_nia",
             offered_amount=500_000,
             asking_price_usd=80,
             secret_min_reserve_usd=50,
@@ -154,11 +164,44 @@ class WalletStateManager:
         self._history["wallet_sybil"] = [
             HistoryPoint(
                 t=seed_time,
-                balances={"BTC": 50_000_000, "PEPE": 0, "USDT": 0},
+                balances={"btc": 50_000_000, "rgb:pepe_nia": 0, "rgb:usdt_nia": 0},
                 total_usd=0.0,
             )
         ]
-        self._cost_basis["wallet_sybil"] = {"USDT": 1.0, "PEPE": None, "BTC": 100_000.0}
+        self._cost_basis["wallet_sybil"] = {"btc": None, "rgb:usdt_nia": 1.0, "rgb:pepe_nia": None}
+
+    def sync_demo_assets(self, pepe_id: str, usdt_id: str) -> None:
+        """Update demo asset IDs across profiles, cost basis, and history."""
+        self._profiles["wallet_b"].offered_asset_id = pepe_id
+        self._profiles["wallet_sybil"].offered_asset_id = pepe_id
+
+        # Update initial seed points with real asset IDs
+        self._history["wallet_a"] = [
+            HistoryPoint(
+                t=int(time.time()) - 3600,
+                balances={"btc": 100_000_000, usdt_id: 10_000, pepe_id: 0},
+                total_usd=10_000.0,
+            )
+        ]
+        self._cost_basis["wallet_a"] = {"btc": None, usdt_id: 1.0, pepe_id: None}
+
+        self._history["wallet_b"] = [
+            HistoryPoint(
+                t=int(time.time()) - 3600,
+                balances={"btc": 100_000_000, pepe_id: 1_000_000, usdt_id: 0},
+                total_usd=0.0,
+            )
+        ]
+        self._cost_basis["wallet_b"] = {"btc": None, usdt_id: 1.0, pepe_id: None}
+
+        self._history["wallet_sybil"] = [
+            HistoryPoint(
+                t=int(time.time()) - 3600,
+                balances={"btc": 50_000_000, pepe_id: 0, usdt_id: 0},
+                total_usd=0.0,
+            )
+        ]
+        self._cost_basis["wallet_sybil"] = {"btc": None, usdt_id: 1.0, pepe_id: None}
 
     def register_wallet(self, wallet_id: str, label: str, address: str) -> None:
         self._labels[wallet_id] = label
@@ -181,10 +224,10 @@ class WalletStateManager:
             self._activities[wallet_id] = []
         if wallet_id not in self._history:
             self._history[wallet_id] = [
-                HistoryPoint(t=int(time.time()), balances={"BTC": 0}, total_usd=0.0)
+                HistoryPoint(t=int(time.time()), balances={"btc": 0}, total_usd=0.0)
             ]
         if wallet_id not in self._cost_basis:
-            self._cost_basis[wallet_id] = {"USDT": 1.0, "PEPE": None, "BTC": 100_000.0}
+            self._cost_basis[wallet_id] = {"btc": None}
 
     def get_address_to_wallet_map(self) -> Dict[str, str]:
         """Map known addresses to wallet_ids."""
@@ -305,12 +348,17 @@ class WalletStateManager:
         market_manager.record_settlement_price(agreed_price_usd)
 
         # 4. Update avg cost basis
-        if buyer_wallet_id in self._cost_basis:
-            self._cost_basis[buyer_wallet_id][asset_id] = float(agreed_price_usd)
+        if buyer_wallet_id not in self._cost_basis:
+            self._cost_basis[buyer_wallet_id] = {}
+        self._cost_basis[buyer_wallet_id][asset_id] = float(agreed_price_usd)
 
     def assemble_wallet_state(self, wallet_id: str, balance_data: Dict[str, Any]) -> WalletState:
         address = balance_data.get("address", self._addresses.get(wallet_id, ""))
         label = self._labels.get(wallet_id, f"Wallet {wallet_id[:8]}")
+
+        pepe_id = market_manager.pepe_asset_id or settings.DEMO_ASSET_ID or "rgb:pepe_nia"
+        usdt_id = market_manager.usdt_asset_id or settings.PAYMENT_ASSET_ID or "rgb:usdt_nia"
+        demo_asset_ids = {pepe_id, usdt_id}
 
         # Build assets list
         assets: List[AssetBalance] = []
@@ -323,13 +371,15 @@ class WalletStateManager:
             amount=btc_sats,
         ))
 
-        balances_map: Dict[str, int] = {"BTC": btc_sats}
+        balances_map: Dict[str, int] = {"btc": btc_sats, usdt_id: 0, pepe_id: 0}
         for nia in balance_data.get("assets", []):
             aid = nia["asset_id"]
+            if aid not in demo_asset_ids:
+                # Filter out legacy old assets
+                continue
             ticker = nia["ticker"]
             amt = nia["settled"]
             balances_map[aid] = amt
-            balances_map[ticker] = amt
             assets.append(AssetBalance(
                 asset_id=aid,
                 ticker=ticker,
@@ -338,24 +388,40 @@ class WalletStateManager:
                 amount=amt,
             ))
 
-        # Update latest history point if needed
-        now = int(time.time())
-        history = list(self._history.get(wallet_id, []))
-        total_usd = float(balances_map.get("USDT", 0))
-        if market_manager.last_pepe_price_usd and balances_map.get("PEPE", 0) > 0:
-            total_usd += market_manager.last_pepe_price_usd
+        # Total USD: assets without price count as 0
+        total_usd = float(balances_map.get(usdt_id, 0))
+        if market_manager.last_pepe_price_usd and balances_map.get(pepe_id, 0) > 0:
+            total_usd += float(market_manager.last_pepe_price_usd)
 
-        # Ensure at least one initial history point exists
-        if not history:
-            history.append(HistoryPoint(t=now - 3600, balances=balances_map, total_usd=total_usd))
+        # Build history points with asset_id keys
+        raw_history = self._history.get(wallet_id, [])
+        history_points: List[HistoryPoint] = []
+        for hp in raw_history:
+            hp_map: Dict[str, int] = {"btc": hp.balances.get("btc", hp.balances.get("BTC", btc_sats))}
+            hp_map[usdt_id] = hp.balances.get(usdt_id, hp.balances.get("USDT", 0))
+            hp_map[pepe_id] = hp.balances.get(pepe_id, hp.balances.get("PEPE", 0))
+            hp_tot = float(hp_map[usdt_id])
+            if market_manager.last_pepe_price_usd and hp_map[pepe_id] > 0:
+                hp_tot += float(market_manager.last_pepe_price_usd)
+            history_points.append(HistoryPoint(t=hp.t, balances=hp_map, total_usd=hp_tot))
+
+        if not history_points:
+            now = int(time.time())
+            history_points.append(HistoryPoint(t=now - 3600, balances=balances_map, total_usd=total_usd))
+
+        cost_basis = {
+            "btc": None,
+            usdt_id: 1.0,
+            pepe_id: self._cost_basis.get(wallet_id, {}).get(pepe_id),
+        }
 
         return WalletState(
             wallet_id=wallet_id,
             label=label,
             address=address,
             assets=assets,
-            avg_cost_basis=self._cost_basis.get(wallet_id, {"USDT": 1.0, "PEPE": None}),
-            history_points=history,
+            avg_cost_basis=cost_basis,
+            history_points=history_points,
             activity=self._activities.get(wallet_id, []),
             local_aliases=self.get_aliases(wallet_id),
             agent_profile=self.get_profile(wallet_id),

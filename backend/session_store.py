@@ -51,6 +51,7 @@ class Session(BaseModel):
 
     asking_price_usd: int
     buyer_max_budget_usd: int
+    buyer_target_usd: int = 120
     seller_min_reserve_usd: int
     network_fee_sat: int = 2_000
     expiry_unix: int
@@ -282,6 +283,7 @@ class SessionStore:
         asking_price_usd: int,
         buyer_max_budget_usd: int,
         seller_min_reserve_usd: int,
+        buyer_target_usd: int = 120,
         expiry_seconds: int = 3600,
         network_fee_sat: int = 2_000,
         initial_status: str = SessionStatus.NEGOTIATING,
@@ -303,6 +305,7 @@ class SessionStore:
                 seller_address=seller_address,
                 asking_price_usd=asking_price_usd,
                 buyer_max_budget_usd=buyer_max_budget_usd,
+                buyer_target_usd=buyer_target_usd,
                 seller_min_reserve_usd=seller_min_reserve_usd,
                 network_fee_sat=network_fee_sat,
                 expiry_unix=now + expiry_seconds,

@@ -13,6 +13,7 @@ from backend.config import settings
 class AssetPrice(BaseModel):
     asset_id: str
     ticker: str
+    precision: int = 0
     price_usd: Optional[float]
     source: str  # "fixed_peg" | "p2p_negotiation"
 
@@ -47,12 +48,14 @@ class MarketManager:
                 AssetPrice(
                     asset_id=usdt_id,
                     ticker=settings.PAYMENT_ASSET_TICKER,
+                    precision=0,
                     price_usd=1.0,
                     source="fixed_peg",
                 ),
                 AssetPrice(
                     asset_id=pepe_id,
                     ticker=settings.DEMO_ASSET_TICKER,
+                    precision=0,
                     price_usd=self.last_pepe_price_usd,
                     source="p2p_negotiation",
                 ),

@@ -80,9 +80,10 @@ async def lifespan(app: FastAPI):
         height = regtest.get_height()
         logger.info(f"Regtest online at block height {height}. Setting up demo assets...")
         assets = rgb_engine.setup_demo_environment()
+        settings.PAYMENT_ASSET_ID = assets["usdt_asset_id"]
+        settings.DEMO_ASSET_ID = assets["pepe_asset_id"]
         market_manager.set_asset_ids(assets["pepe_asset_id"], assets["usdt_asset_id"])
-        # Update offered asset on seller profile
-        wallet_state_manager.update_profile("wallet_b", {"offered_asset_id": assets["pepe_asset_id"]})
+        wallet_state_manager.sync_demo_assets(assets["pepe_asset_id"], assets["usdt_asset_id"])
         logger.info(f"Demo environment ready: PEPE={assets['pepe_asset_id'][:12]}... USDT={assets['usdt_asset_id'][:12]}...")
     except Exception as exc:
         logger.warning(f"Demo environment setup deferred (regtest offline or starting): {exc}")
@@ -168,7 +169,7 @@ class CreateSessionRequest(BaseModel):
 
 class SignSessionRequest(BaseModel):
     wallet_id: str
-    terms_hash: Optional[str] = None
+    terms_hash: str
 
 class CancelSessionRequest(BaseModel):
     wallet_id: str
@@ -292,6 +293,27 @@ def get_contacts(wallet_id: str):
                 peer_addr = f"bcrt1q{peer_id[:10]}"
 
         alias = local_aliases.get(peer_addr, rep.label if rep.label != peer_id else None)
+
+        # Build public seller desk if active
+        peer_profile = wallet_state_manager.get_profile(peer_id)
+        desk = None
+        if peer_profile.seller_active and peer_profile.offered_asset_id:
+            ticker = "PEPE"
+            for ma in market_manager.get_market().assets:
+                if ma.asset_id == peer_profile.offered_asset_id:
+                    ticker = ma.ticker
+                    break
+            desk = {
+                "asset": {
+                    "asset_id": peer_profile.offered_asset_id,
+                    "ticker": ticker,
+                    "schema": "NIA",
+                    "precision": 0,
+                },
+                "offered_amount": peer_profile.offered_amount,
+                "asking_price_usd": peer_profile.asking_price_usd,
+            }
+
         contacts.append({
             "address": peer_addr,
             "alias": alias,
@@ -302,6 +324,7 @@ def get_contacts(wallet_id: str):
                 "trust_tier": rep.trust_tier,
                 "assessment_summary": rep.assessment_summary,
             },
+            "desk": desk,
         })
     return contacts
 
@@ -349,6 +372,7 @@ def run_negotiation_loop(session_id: str) -> None:
             asset_amount=session.asset_amount,
             payment_ticker=session.payment_ticker,
             secret_limit_usd=session.buyer_max_budget_usd,
+            buyer_target_usd=session.buyer_target_usd,
             current_bid_usd=current_bid,
             current_ask_usd=current_ask,
             your_previous_offer_usd=current_bid,
@@ -365,9 +389,10 @@ def run_negotiation_loop(session_id: str) -> None:
         session_store.record_turn(session_id, buyer_turn)
         logger.info(f"Session {session_id} [R{r_num}] Buyer: {buyer_turn.action} {buyer_turn.offer_usd} USD")
 
-        # Check if buyer accepted or crossed
-        if buyer_turn.action == "ACCEPT" or (current_ask is not None and buyer_turn.offer_usd >= current_ask):
-            agreed = current_ask if buyer_turn.action == "ACCEPT" else min(buyer_turn.offer_usd, current_ask or buyer_turn.offer_usd)
+        # Check if buyer accepted or crossed (strictly within buyer budget ceiling)
+        buyer_can_accept = current_ask is not None and current_ask <= session.buyer_max_budget_usd
+        if (buyer_turn.action == "ACCEPT" and buyer_can_accept) or (current_ask is not None and buyer_turn.offer_usd >= current_ask and current_ask <= session.buyer_max_budget_usd):
+            agreed = current_ask
             finalize_agreement(session_id, agreed)
             return
 
@@ -408,9 +433,10 @@ def run_negotiation_loop(session_id: str) -> None:
         session_store.record_turn(session_id, seller_turn)
         logger.info(f"Session {session_id} [R{r_num}] Seller: {seller_turn.action} {seller_turn.offer_usd} USD")
 
-        # Check if seller accepted or crossed
-        if seller_turn.action == "ACCEPT" or (current_bid is not None and seller_turn.offer_usd <= current_bid):
-            agreed = current_bid if seller_turn.action == "ACCEPT" else max(seller_turn.offer_usd, current_bid or seller_turn.offer_usd)
+        # Check if seller accepted or crossed (strictly above seller reserve floor)
+        seller_can_accept = current_bid is not None and current_bid >= session.seller_min_reserve_usd
+        if (seller_turn.action == "ACCEPT" and seller_can_accept) or (current_bid is not None and seller_turn.offer_usd <= current_bid and current_bid >= session.seller_min_reserve_usd):
+            agreed = current_bid
             finalize_agreement(session_id, agreed)
             return
 
@@ -424,13 +450,41 @@ def run_negotiation_loop(session_id: str) -> None:
     session_store.set_blocked(session_id, "No agreement within 4 rounds", trust_tier="High Authenticity")
 
 def finalize_agreement(session_id: str, agreed_price_usd: int) -> None:
-    """Prepares canonical terms, computes terms_hash, and moves session to AWAITING_SIGNATURES."""
+    """Prepares canonical terms, evaluates deterministic gate, and moves session to AWAITING_SIGNATURES."""
     session = session_store.get_session(session_id)
     if not session:
         return
 
     session.thinking = None
     now = int(time.time())
+
+    # Deterministic Gate Check on agreed terms
+    gate_res = evaluate_gate(
+        session_id=session_id,
+        asset_id=session.asset_id,
+        rgb_amount=session.asset_amount,
+        payment_asset_id=session.payment_asset_id,
+        payment_amount=agreed_price_usd,
+        agreed_price_usd=agreed_price_usd,
+        network_fee_sat=session.network_fee_sat,
+        buyer_address=session.buyer_address,
+        seller_address=session.seller_address,
+        expiry_unix=now + 600,
+        active_signer_address=session.buyer_address,
+        buyer_max_budget_usd=session.buyer_max_budget_usd,
+        seller_min_reserve_usd=session.seller_min_reserve_usd,
+        counterparty_wallet_id=session.seller_wallet_id,
+    )
+
+    if not gate_res.passed:
+        logger.warning(f"Session {session_id} agreement blocked by gate: {gate_res.reason}")
+        session_store.set_blocked(
+            session_id,
+            reason="Agreed price outside the secret limits",
+            trust_tier="High Authenticity",
+        )
+        return
+
     canonical_terms = CanonicalSwapTerms(
         session_id=session_id,
         asset_id=session.asset_id,
@@ -550,6 +604,12 @@ def create_session(req: CreateSessionRequest):
     seller_profile = wallet_state_manager.get_profile(seller_wid)
     seller_addr = req.seller_address
 
+    resolved_payment_asset_id = (
+        market_manager.usdt_asset_id
+        or settings.PAYMENT_ASSET_ID
+        or "rgb:IWq5H3Er-Mpe5VLG-6P91nnY-pwK0_EY-7FJUG1i-IWp8RuM"
+    )
+
     # 3. Preventive Counterparty Trust Check (Layer-0 Memory Graph)
     # If counterparty is Ring Anomaly Detected or Unverified, session is born BLOCKED_BY_GATE without QVAC!
     rep = memory_graph.get_reputation(seller_wid)
@@ -565,7 +625,7 @@ def create_session(req: CreateSessionRequest):
             asset_id=req.asset_id,
             asset_ticker=settings.DEMO_ASSET_TICKER,
             asset_amount=req.rgb_amount,
-            payment_asset_id=settings.PAYMENT_ASSET_ID or "rgb:usdt_nia",
+            payment_asset_id=resolved_payment_asset_id,
             payment_ticker=settings.PAYMENT_ASSET_TICKER,
             buyer_wallet_id=req.buyer_wallet_id,
             seller_wallet_id=seller_wid,
@@ -573,6 +633,7 @@ def create_session(req: CreateSessionRequest):
             seller_address=seller_addr,
             asking_price_usd=seller_profile.asking_price_usd,
             buyer_max_budget_usd=req.buyer_max_ceiling_usd,
+            buyer_target_usd=req.buyer_target_usd,
             seller_min_reserve_usd=seller_profile.secret_min_reserve_usd,
             network_fee_sat=2_000,
             expiry_seconds=600,
@@ -587,7 +648,7 @@ def create_session(req: CreateSessionRequest):
         asset_id=req.asset_id,
         asset_ticker=settings.DEMO_ASSET_TICKER,
         asset_amount=req.rgb_amount,
-        payment_asset_id=settings.PAYMENT_ASSET_ID or "rgb:usdt_nia",
+        payment_asset_id=resolved_payment_asset_id,
         payment_ticker=settings.PAYMENT_ASSET_TICKER,
         buyer_wallet_id=req.buyer_wallet_id,
         seller_wallet_id=seller_wid,
@@ -595,6 +656,7 @@ def create_session(req: CreateSessionRequest):
         seller_address=seller_addr,
         asking_price_usd=seller_profile.asking_price_usd,
         buyer_max_budget_usd=req.buyer_max_ceiling_usd,
+        buyer_target_usd=req.buyer_target_usd,
         seller_min_reserve_usd=seller_profile.secret_min_reserve_usd,
         network_fee_sat=2_000,
         expiry_seconds=600,
@@ -659,14 +721,13 @@ def sign_session(session_id: str, req: SignSessionRequest):
             detail={"code": "already_signed", "message": "This wallet already signed"},
         )
 
-    # Validate terms_hash: if provided by user, must match active session terms_hash
-    if req.terms_hash is not None and session.terms_hash is not None:
-        if req.terms_hash != session.terms_hash:
-            logger.warning(f"Signature mismatch on session {session_id}: expected {session.terms_hash}, got {req.terms_hash}")
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={"code": "terms_hash_mismatch", "message": "The signed terms differ from the active terms"},
-            )
+    # Validate terms_hash: mandatory, must match active session terms_hash
+    if not req.terms_hash or req.terms_hash != session.terms_hash:
+        logger.warning(f"Signature mismatch on session {session_id}: expected {session.terms_hash}, got {req.terms_hash}")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "terms_hash_mismatch", "message": "The signed terms differ from the active terms"},
+        )
 
     active_hash = session.terms_hash or ""
     try:
@@ -691,6 +752,14 @@ def cancel_session(session_id: str, req: CancelSessionRequest):
         raise HTTPException(
             status_code=404,
             detail={"code": "session_not_found", "message": f"Session {session_id} does not exist"},
+        )
+
+    is_buyer = req.wallet_id in (session.buyer_wallet_id, session.buyer_address)
+    is_seller = req.wallet_id in (session.seller_wallet_id, session.seller_address)
+    if not (is_buyer or is_seller):
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "forbidden", "message": "Wallet is not part of this session"},
         )
 
     if session.status not in (SessionStatus.NEGOTIATING, SessionStatus.AWAITING_SIGNATURES):

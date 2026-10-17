@@ -42,6 +42,7 @@ class NegotiationContext(BaseModel):
     asset_amount: int
     payment_ticker: str
     secret_limit_usd: int  # buyer max budget OR seller min reserve
+    buyer_target_usd: Optional[int] = None
     current_bid_usd: Optional[int] = None
     current_ask_usd: Optional[int] = None
     your_previous_offer_usd: Optional[int] = None
@@ -145,12 +146,15 @@ def parse_llm_json_response(raw_text: str) -> Dict[str, Any]:
 def build_system_prompt(ctx: NegotiationContext) -> str:
     """Generate professional, game-theoretic tactical instructions for local AI."""
     role_desc = "Buyer" if ctx.role == "buyer" else "Seller"
+    target_usd = ctx.buyer_target_usd or 120
     action_goal = (
         f"You want to buy {ctx.asset_amount} {ctx.asset_ticker} paying in {ctx.payment_ticker}. "
-        f"Your ABSOLUTE MAXIMUM BUDGET is {ctx.secret_limit_usd} {ctx.payment_ticker}. NEVER EXCEED IT."
+        f"Your target valuation is {target_usd} {ctx.payment_ticker}. "
+        f"Your CONFIDENTIAL CEILING (absolute maximum budget) is {ctx.secret_limit_usd} {ctx.payment_ticker}. NEVER EXCEED IT."
         if ctx.role == "buyer"
         else f"You are selling {ctx.asset_amount} {ctx.asset_ticker} for {ctx.payment_ticker}. "
-        f"Your ABSOLUTE MINIMUM RESERVE PRICE is {ctx.secret_limit_usd} {ctx.payment_ticker}. NEVER GO BELOW IT."
+        f"Your asking price is {ctx.current_ask_usd or 150} {ctx.payment_ticker}. "
+        f"Your CONFIDENTIAL RESERVE (absolute minimum price) is {ctx.secret_limit_usd} {ctx.payment_ticker}. NEVER GO BELOW IT."
     )
 
     return f"""You are {ctx.wallet_label}, an elite autonomous trading agent executing an on-chain RGB peer-to-peer swap.
@@ -163,9 +167,14 @@ Goal: {action_goal}
 CRITICAL RULES:
 1. Confidentiality: NEVER disclose your secret budget/reserve limit to the counterparty in your public_message.
 2. Strategy: This is Round {ctx.round_number} of 4.
-   - Round 1: Make a strong opening offer reflecting market conservatism.
-   - Round 2-3: Make calibrated concessions based on counterparty flexibility while protecting margin.
-   - Round 4: Final round. Make your best and final offer or ACCEPT if the price is within your acceptable range.
+   - For Buyer:
+     * Round 1: Open near your target valuation ({target_usd} {ctx.payment_ticker}, e.g. {max(target_usd - 10, 100)} to {target_usd}). NEVER open at your ceiling {ctx.secret_limit_usd}!
+     * Round 2-3: Make small, calibrated concessions (e.g. +5 to +10) towards agreement while protecting margin below ceiling {ctx.secret_limit_usd}.
+     * Round 4: Final round. Offer up to ceiling {ctx.secret_limit_usd}, or ACCEPT if seller ask is <= {ctx.secret_limit_usd}.
+   - For Seller:
+     * Round 1: Open near your asking price (e.g. 145-150 {ctx.payment_ticker}).
+     * Round 2-3: Concede gradually down towards reserve {ctx.secret_limit_usd}.
+     * Round 4: Final round. Offer final price >= reserve {ctx.secret_limit_usd}, or ACCEPT if buyer bid >= {ctx.secret_limit_usd}.
 3. You must output ONLY a valid JSON object matching this exact structure:
 {{
   "private_thought": "<1-2 sentences of cold strategic assessment: estimated counterparty stance and rationale>",
@@ -200,23 +209,24 @@ def mock_negotiate(ctx: NegotiationContext) -> Dict[str, Any]:
     Produces highly realistic, tactical turns for development and tests without requiring a running QVAC daemon.
     """
     if ctx.role == "buyer":
-        # Buyer: starts ~95, moves towards ceiling 135
-        base_bid = ctx.your_previous_offer_usd or 95
+        target = ctx.buyer_target_usd or 120
+        open_bid = max(target - 10, 100)
+        base_bid = ctx.your_previous_offer_usd or open_bid
         current_ask = ctx.current_ask_usd or 150
 
         if ctx.round_number == 1:
-            offer = 95
-            thought = "Opening with a conservative valuation to anchor the spread and test seller flexibility."
-            msg = f"Considering secondary market depth and illiquidity, I open with {offer} {ctx.payment_ticker} for immediate atomic settlement."
+            offer = open_bid
+            thought = f"Opening near target valuation ({target} USD) to anchor the spread conservatively."
+            msg = f"Considering secondary market depth, I open with {offer} {ctx.payment_ticker} for immediate atomic settlement."
             action = "OFFER"
         elif ctx.round_number == 2:
-            offer = min(base_bid + 15, ctx.secret_limit_usd)
+            offer = min(base_bid + 10, ctx.secret_limit_usd)
             thought = f"Seller countered at {current_ask}. Raising bid to {offer} to signal constructive intent while holding margin."
             msg = f"I appreciate the counter. I can step up to {offer} {ctx.payment_ticker} given the guaranteed zero-counterparty-risk swap."
             action = "OFFER"
         elif ctx.round_number == 3:
-            offer = min(base_bid + 15, ctx.secret_limit_usd)
-            if offer >= current_ask:
+            offer = min(base_bid + 5, ctx.secret_limit_usd)
+            if current_ask is not None and offer >= current_ask and current_ask <= ctx.secret_limit_usd:
                 action = "ACCEPT"
                 offer = current_ask
                 thought = f"Seller's ask of {current_ask} is within budget. Executing agreement."
@@ -227,7 +237,7 @@ def mock_negotiate(ctx: NegotiationContext) -> Dict[str, Any]:
                 msg = f"I can offer {offer} {ctx.payment_ticker}. This represents fair value for an illiquid lot."
         else:
             # Round 4: closing
-            if current_ask <= ctx.secret_limit_usd:
+            if current_ask is not None and current_ask <= ctx.secret_limit_usd:
                 action = "ACCEPT"
                 offer = current_ask
                 thought = f"Final round: Seller ask {current_ask} is within ceiling {ctx.secret_limit_usd}. Accepting to avoid breakdown."

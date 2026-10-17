@@ -35,7 +35,10 @@ def test_market_endpoint():
     assert len(data["assets"]) >= 2
     usdt_asset = next(a for a in data["assets"] if a["ticker"] == "USDT")
     assert usdt_asset["price_usd"] == 1.0
+    assert usdt_asset["precision"] == 0
     assert usdt_asset["source"] == "fixed_peg"
+    pepe_asset = next(a for a in data["assets"] if a["ticker"] == "PEPE")
+    assert pepe_asset["precision"] == 0
 
 def test_wallets_list_and_details():
     resp = client.get("/api/wallets")
@@ -54,9 +57,21 @@ def test_wallets_list_and_details():
     assert wa["wallet_id"] == "wallet_a"
     assert wa["label"] == "Wallet A"
     assert "assets" in wa
+    # Check assets use "schema", not "schema_type"
+    for asset in wa["assets"]:
+        assert "schema" in asset
+        assert "schema_type" not in asset
     assert "history_points" in wa
-    assert "agent_profile" in wa
+    for hp in wa["history_points"]:
+        assert "btc" in hp["balances"]
+    assert "btc" in wa["avg_cost_basis"]
     assert wa["agent_profile"]["buyer_max_ceiling_usd"] == 135
+
+    # Check Wallet B total_usd starts at 0.0 before first trade
+    resp_b = client.get("/api/wallets/wallet_b")
+    assert resp_b.status_code == 200
+    wb = resp_b.json()
+    assert wb["history_points"][0]["total_usd"] == 0.0
 
 def test_put_agent_profile_seller_desk():
     """Verify PUT /api/wallets/{id}/agent_profile updates seller desk settings."""
@@ -95,6 +110,16 @@ def test_put_aliases_and_get_contacts():
     sybil_contact = next(c for c in contacts if c["trust"]["sybil_ring_detected"] is True)
     assert sybil_contact["trust"]["trust_tier"] == "Ring Anomaly Detected"
     assert sybil_contact["trust"]["trusted"] is False
+
+    # Check desk presence on contacts
+    for c in contacts:
+        assert "desk" in c
+    # Wallet B has active desk
+    wallet_b_contact = next((c for c in contacts if c.get("desk") is not None), None)
+    assert wallet_b_contact is not None
+    assert wallet_b_contact["desk"]["asking_price_usd"] > 0
+    assert "secret_min_reserve_usd" not in wallet_b_contact["desk"]
+    assert "seller_ai_prompt" not in wallet_b_contact["desk"]
 
 def test_session_blocked_immediately_by_gate_on_sybil():
     """
@@ -249,6 +274,39 @@ def test_session_cancellation():
     resp = client.post("/api/sessions", json=req)
     sess_id = resp.json()["session_id"]
 
+    # Attempt cancel from third party wallet -> 403 Forbidden
+    resp_forbidden = client.post(f"/api/sessions/{sess_id}/cancel", json={"wallet_id": "wallet_sybil"})
+    assert resp_forbidden.status_code == 403
+    assert resp_forbidden.json()["code"] == "forbidden"
+
     resp_cancel = client.post(f"/api/sessions/{sess_id}/cancel", json={"wallet_id": "wallet_a"})
     assert resp_cancel.status_code == 200
     assert resp_cancel.json()["state"] == "CANCELLED_BY_USER"
+
+def test_finalize_agreement_gate_check():
+    """Verify finalize_agreement calls evaluate_gate and blocks if outside limits."""
+    from backend.api_server import finalize_agreement
+    from backend.session_store import session_store, SessionStatus
+
+    # Create dummy session
+    session_store.create_session(
+        session_id="sess_gate_test",
+        asset_id="rgb:pepe_test",
+        asset_ticker="PEPE",
+        asset_amount=1_000_000,
+        payment_asset_id="rgb:usdt_test",
+        payment_ticker="USDT",
+        buyer_wallet_id="wallet_a",
+        seller_wallet_id="wallet_b",
+        buyer_address="bcrt1q_buyer",
+        seller_address="bcrt1q_seller",
+        asking_price_usd=150,
+        buyer_max_budget_usd=135,
+        seller_min_reserve_usd=110,
+    )
+    # Attempt finalize at 140 (exceeds buyer budget 135)
+    finalize_agreement("sess_gate_test", 140)
+    res = session_store.get_session("sess_gate_test")
+    assert res.status == SessionStatus.BLOCKED_BY_GATE
+    assert res.gate["passed"] is False
+    assert "Agreed price outside the secret limits" in res.gate["reasons"]

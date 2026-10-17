@@ -208,6 +208,18 @@
     white-space: nowrap;
   }
 
+  /* Avatar color from a per-seed hue (set inline as --avatar-hue by <Avatar>). */
+  .avatar {
+    background-color: hsl(var(--avatar-hue) 52% 48%);
+    color: #ffffff;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .avatar {
+      background-color: hsl(var(--avatar-hue) 45% 40%);
+    }
+  }
+
   /* Balances, prices, sats: digits keep their width while values change. */
   .amount {
     font-variant-numeric: tabular-nums;

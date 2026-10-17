@@ -84,9 +84,19 @@ export const backdrop: Variants = {
   exit: { opacity: 0, transition: close },
 }
 
-/** View change inside a WalletPane. */
+/** Crossfade, e.g. switching wallet in the single layout. */
+export const fade: Variants = {
+  initial: { opacity: 0 },
+  animate: { opacity: 1, transition: open },
+  exit: { opacity: 0, transition: close },
+}
+
+/**
+ * View change inside a WalletPane. Ends with filter: none so the page does not
+ * stay a containing block for absolutely positioned descendants.
+ */
 export const pageSlide: Variants = {
   initial: { opacity: 0, x: DIST.base, filter: 'blur(3px)' },
-  animate: { opacity: 1, x: 0, filter: 'blur(0px)', transition: open },
+  animate: { opacity: 1, x: 0, filter: 'blur(0px)', transition: open, transitionEnd: { filter: 'none' } },
   exit: { opacity: 0, x: -DIST.base, filter: 'blur(3px)', transition: close },
 }

@@ -13,6 +13,14 @@ export const DUR = {
   quick: 0.15,    // --duration-quick: close, press, text swap
   iconSwap: 0.17, // icon and state swaps (CLAUDE.md 160–180ms)
   open: 0.25,     // --duration-fast: sheet/modal/dropdown open, page slide
+  medium: 0.35,   // --duration-medium: error shake, checkbox draw
+} as const
+
+/** Looping indicators (seconds). */
+export const LOOP = {
+  dots: 1.2,       // thinking dots cycle (--matrix-cycle)
+  dotStagger: 0.2, // offset between dots
+  pulse: 2,        // halo pulse (--think-shimmer)
 } as const
 
 export const SCALE = {

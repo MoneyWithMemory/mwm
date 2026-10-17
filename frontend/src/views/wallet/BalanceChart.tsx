@@ -78,7 +78,7 @@ export function BalanceChart({ walletId, points, assets }: BalanceChartProps) {
 
   const series = useMemo<Series[]>(
     () => [
-      { key: COMBINED, label: 'Combined $', values: points.map((p) => p.total_usd), format: formatUsd },
+      { key: COMBINED, label: 'Total $', values: points.map((p) => p.total_usd), format: formatUsd },
       ...assets.map((asset) => ({
         key: asset.asset_id,
         label: asset.ticker,

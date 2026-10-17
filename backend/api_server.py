@@ -292,7 +292,8 @@ def get_wallet(wallet_id: str):
         }
 
     state = wallet_state_manager.assemble_wallet_state(wallet_id, balances)
-    return state.model_dump()
+    # The wallet's own standing, as counterparties see it in their contacts (its profile shows it).
+    return {**state.model_dump(), "trust": _trust_audit(memory_graph.get_reputation(wallet_id))}
 
 @app.post("/api/wallets/create", response_model=WalletSummary)
 def create_wallet(req: CreateWalletRequest) -> WalletSummary:

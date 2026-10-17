@@ -90,6 +90,16 @@ def test_wallets_list_and_details():
     assert wb["history_points"][0]["balances"]["btc"] == 1_000_000
     assert wb["history_points"][0]["total_usd"] == 1_000.0
 
+def test_wallet_state_carries_its_own_trust():
+    trust = {wid: client.get(f"/api/wallets/{wid}").json()["trust"] for wid in ("wallet_a", "wallet_sybil")}
+    assert (trust["wallet_a"]["trust_tier"], trust["wallet_a"]["trusted"]) == ("High Authenticity", True)
+    assert (trust["wallet_sybil"]["trust_tier"], trust["wallet_sybil"]["sybil_ring_detected"]) == ("Ring Anomaly Detected", True)
+    # The same audit counterparties get in their contacts: no loop % or raw counts, nothing secret.
+    contacts = client.get("/api/wallets/wallet_b/contacts").json()
+    wallet_a_addr = client.get("/api/wallets/wallet_a").json()["address"]
+    assert next(c["trust"] for c in contacts if c["address"] == wallet_a_addr) == trust["wallet_a"]
+
+
 def test_put_agent_profile_seller_desk():
     """Verify PUT /api/wallets/{id}/agent_profile updates seller desk settings."""
     payload = {

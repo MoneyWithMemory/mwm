@@ -21,6 +21,16 @@ from backend.config import settings
 
 logger = logging.getLogger("mwm.qvac")
 
+# Smallest concession per turn: MIN_STEP_SHARE of the gap to the counterparty, at least
+# MIN_STEP_USD. With the pre-negotiation overlap check, offers always converge in a few rounds.
+MIN_STEP_USD = 2
+MIN_STEP_SHARE = 0.15
+
+def min_step(previous_offer: int, counter_offer: Optional[int]) -> int:
+    if counter_offer is None:
+        return MIN_STEP_USD
+    return max(MIN_STEP_USD, round(MIN_STEP_SHARE * abs(counter_offer - previous_offer)))
+
 class NegotiationTurn(BaseModel):
     speaker_wallet_id: str
     speaker_label: str
@@ -48,6 +58,8 @@ class NegotiationContext(BaseModel):
     your_previous_offer_usd: Optional[int] = None
     history: List[NegotiationTurn] = Field(default_factory=list)
     max_rounds: int = Field(default_factory=lambda: settings.NEGOTIATION_MAX_ROUNDS)
+    # The seller's public asking price for the lot: the seller defends it, the buyer works it down.
+    list_price_usd: Optional[int] = None
 
 def leak_guard(public_message: str, secret_limit_usd: int) -> Tuple[bool, str]:
     """
@@ -107,6 +119,11 @@ def rationality_guard(
         if your_previous_offer_usd is not None and offer < your_previous_offer_usd:
             logger.info(f"RationalityGuard: buyer offer {offer} was lower than previous bid {your_previous_offer_usd}. Raising.")
             offer = your_previous_offer_usd
+        # Convergence: every new bid moves up by at least min_step(), until the ceiling.
+        if your_previous_offer_usd is not None:
+            step = min_step(your_previous_offer_usd, current_ask_usd)
+            if offer < your_previous_offer_usd + step:
+                offer = min(secret_limit_usd, your_previous_offer_usd + step)
 
         # Deal zone check: if buyer offer meets or exceeds current ask, accept ask
         if current_ask_usd is not None and offer >= current_ask_usd:
@@ -123,6 +140,12 @@ def rationality_guard(
         if your_previous_offer_usd is not None and offer > your_previous_offer_usd:
             logger.info(f"RationalityGuard: seller ask {offer} was higher than previous ask {your_previous_offer_usd}. Lowering.")
             offer = your_previous_offer_usd
+        # Convergence: after its opening at the list price, every new ask moves down by at
+        # least min_step(), until the reserve.
+        if round_number > 1 and your_previous_offer_usd is not None:
+            step = min_step(your_previous_offer_usd, current_bid_usd)
+            if offer > your_previous_offer_usd - step:
+                offer = max(secret_limit_usd, your_previous_offer_usd - step)
 
         # Deal zone check: if seller ask meets or is below current bid, accept bid
         if current_bid_usd is not None and offer <= current_bid_usd:
@@ -142,6 +165,20 @@ def rationality_guard(
         if can_accept and (wants_accept or final_turn):
             action = "ACCEPT"
             offer = counter_price
+
+    # Before the closing rounds an agent does not jump to a price far from its own last offer:
+    # the seller defends its list price, the buyer works it down, so it counters with a measured
+    # concession (a quarter of the gap, at least 2 USD, never past its secret limit) instead.
+    cap = max_rounds or settings.NEGOTIATION_MAX_ROUNDS
+    if action == "ACCEPT" and round_number < max(cap - 1, 1) and your_previous_offer_usd is not None:
+        gap = abs(offer - your_previous_offer_usd)
+        if gap > max(3, round(0.03 * your_previous_offer_usd)):
+            step = max(2, round(gap / 4))
+            if role == "seller":
+                offer = max(secret_limit_usd, your_previous_offer_usd - step)
+            else:
+                offer = min(secret_limit_usd, your_previous_offer_usd + step)
+            action = "OFFER"
 
     return action, offer
 
@@ -177,13 +214,16 @@ def build_system_prompt(ctx: NegotiationContext) -> str:
     role_desc = "Buyer" if ctx.role == "buyer" else "Seller"
     target_usd = ctx.buyer_target_usd or 120
     closing_round = max(ctx.max_rounds - 1, 1)
+    list_price = ctx.list_price_usd or ctx.current_ask_usd or 150
     action_goal = (
         f"You want to buy {ctx.asset_amount} {ctx.asset_ticker} paying in {ctx.payment_ticker}. "
-        f"Your target valuation is {target_usd} {ctx.payment_ticker}. "
+        f"The seller's public list price is {list_price} {ctx.payment_ticker}; you do not know how low the seller will go. "
+        f"Your goal is to pay as little as possible. Your target valuation is {target_usd} {ctx.payment_ticker}. "
         f"Your CONFIDENTIAL CEILING (absolute maximum budget) is {ctx.secret_limit_usd} {ctx.payment_ticker}. NEVER EXCEED IT."
         if ctx.role == "buyer"
         else f"You are selling {ctx.asset_amount} {ctx.asset_ticker} for {ctx.payment_ticker}. "
-        f"Your asking price is {ctx.current_ask_usd or 150} {ctx.payment_ticker}. "
+        f"Your public list price is {list_price} {ctx.payment_ticker} and every buyer can see it. "
+        f"Your goal is a final price as near to your list price as possible. "
         f"Your CONFIDENTIAL RESERVE (absolute minimum price) is {ctx.secret_limit_usd} {ctx.payment_ticker}. NEVER GO BELOW IT."
     )
 
@@ -198,12 +238,14 @@ CRITICAL RULES:
 1. Confidentiality: NEVER disclose your secret budget/reserve limit to the counterparty in your public_message.
 2. Strategy: this is round {ctx.round_number} of at most {ctx.max_rounds}. The negotiation ends without a deal after round {ctx.max_rounds}, or earlier if both sides stop moving.
    - For Buyer:
-     * Round 1: open near your target valuation ({target_usd} {ctx.payment_ticker}). NEVER open at your ceiling {ctx.secret_limit_usd}!
-     * Following rounds: make small, calibrated concessions (+2 to +5 {ctx.payment_ticker} per round) to close the gap gradually. Do NOT jump to your ceiling.
+     * Round 1: open well below the list price, near your target valuation ({target_usd} {ctx.payment_ticker}). NEVER open at your ceiling {ctx.secret_limit_usd}!
+     * Following rounds: concede gradually (+2 to +5 {ctx.payment_ticker} per round); each new offer must be higher than your previous one. Do NOT jump to your ceiling.
+     * Before round {closing_round}, never ACCEPT an ask far above your own last offer: counter with a small step instead.
      * From round {closing_round}: work to close: ACCEPT the seller's ask if it is within your ceiling, otherwise make your best closing offer.
    - For Seller:
-     * Round 1: open at your asking price ({ctx.current_ask_usd or 150} {ctx.payment_ticker}).
-     * Following rounds: concede gradually (-3 to -8 {ctx.payment_ticker} per round) towards the buyer.
+     * Round 1: open at your list price ({list_price} {ctx.payment_ticker}).
+     * Following rounds: concede gradually towards the buyer (-3 to -8 {ctx.payment_ticker} per round); each new offer must be lower than your previous one. Aim to finish as near to your list price as the buyer allows.
+     * Before round {closing_round}, never ACCEPT a bid far below your own last offer: counter with a small step instead.
      * From round {closing_round}: work to close: ACCEPT the buyer's bid if it is at or above your reserve {ctx.secret_limit_usd}, otherwise make your best closing offer.
 3. You must output ONLY a valid JSON object matching this exact structure:
 {{
@@ -226,6 +268,7 @@ def build_user_prompt(ctx: NegotiationContext) -> str:
 Current Market Spread:
 - Current Buyer Bid: {ctx.current_bid_usd if ctx.current_bid_usd is not None else 'None'} {ctx.payment_ticker}
 - Current Seller Ask: {ctx.current_ask_usd if ctx.current_ask_usd is not None else 'None'} {ctx.payment_ticker}
+- Seller's Public List Price: {ctx.list_price_usd if ctx.list_price_usd is not None else 'None'} {ctx.payment_ticker}
 - Your Previous Offer: {ctx.your_previous_offer_usd if ctx.your_previous_offer_usd is not None else 'None'} {ctx.payment_ticker}
 
 Negotiation History:

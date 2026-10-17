@@ -314,6 +314,18 @@ def set_alias(wallet_id: str, req: SetAliasRequest):
 @app.put("/api/wallets/{wallet_id}/agent_profile")
 def update_agent_profile(wallet_id: str, req: UpdateAgentProfileRequest):
     updates = req.model_dump(exclude_unset=True)
+    merged = {**wallet_state_manager.get_profile(wallet_id).model_dump(), **{k: v for k, v in updates.items() if v is not None}}
+    # The asking price is the public list price, so the secret floor cannot sit above it.
+    if merged["seller_active"] and merged["secret_min_reserve_usd"] > merged["asking_price_usd"]:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "invalid_profile", "message": "The secret reserve must not exceed the asking price"},
+        )
+    if merged["buyer_target_usd"] > merged["buyer_max_ceiling_usd"]:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "invalid_profile", "message": "The target must not exceed the ceiling"},
+        )
     updated_profile = wallet_state_manager.update_profile(wallet_id, updates)
     return updated_profile.model_dump()
 
@@ -431,6 +443,7 @@ def run_negotiation_loop(session_id: str) -> None:
             session_id=session_id,
             round_number=r_num,
             max_rounds=max_rounds,
+            list_price_usd=session.asking_price_usd,
             role="buyer",
             wallet_id=session.buyer_wallet_id,
             wallet_label="Wallet A",
@@ -477,6 +490,7 @@ def run_negotiation_loop(session_id: str) -> None:
             session_id=session_id,
             round_number=r_num,
             max_rounds=max_rounds,
+            list_price_usd=session.asking_price_usd,
             role="seller",
             wallet_id=session.seller_wallet_id,
             wallet_label="Wallet B",
@@ -673,6 +687,8 @@ def run_settlement_worker(session_id: str) -> None:
 
 # ── Sessions Endpoints ──────────────────────────────────────────────
 
+NO_OVERLAP_REASON = "No deal possible: the buyer's maximum is below the seller's minimum."
+
 def _spendable(wallet_id: str, asset_id: str) -> int:
     try:
         return wallet_mgr.get_spendable(wallet_id, asset_id)
@@ -792,7 +808,16 @@ def create_session(req: CreateSessionRequest):
             detail={"code": "insufficient_funds", "message": "USDT balance is below the ceiling"},
         )
 
-    # 5. Create negotiating session
+    # 5. Pre-negotiation: if the buyer's maximum is below the seller's minimum no deal is possible,
+    # so the agents never talk. The reason reveals only that, never either number.
+    if req.buyer_max_ceiling_usd < seller_profile.secret_min_reserve_usd:
+        session = new_session(
+            SessionStatus.BLOCKED_BY_GATE,
+            {"passed": False, "trust_tier": seller_tier, "reasons": [NO_OVERLAP_REASON]},
+        )
+        return _session_view(session, req.buyer_wallet_id)
+
+    # 6. Create negotiating session
     session = new_session(SessionStatus.NEGOTIATING)
 
     # Negotiations share one local model: they run in arrival order through the queue.
@@ -1050,9 +1075,16 @@ def close_listing(listing_id: str, req: CloseListingRequest):
         raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "This listing is not yours"})
     return _want_listing(shop_store.close(listing_id), req.wallet_id)
 
+def _desk_floor(listing: Dict[str, Any]) -> int:
+    """The desk owner's secret reserve; used server-side only, never returned."""
+    return wallet_state_manager.get_profile(listing["listing_id"][len("desk_"):]).secret_min_reserve_usd
+
 @app.post("/api/shop/agent_search")
 def agent_search(req: AgentSearchRequest):
-    """The buyer's agent picks the cheapest fitting Seller Desk (rings skipped) and opens a session."""
+    """
+    The buyer's agent picks the cheapest fitting Seller Desk and opens a session. Rings are skipped,
+    and so are desks whose secret floor is above the buyer's maximum (no deal would be possible).
+    """
     _require_wallet(req.buyer_wallet_id)
 
     def price_for(listing: Dict[str, Any]) -> float:
@@ -1065,6 +1097,7 @@ def agent_search(req: AgentSearchRequest):
         and l["amount"] >= req.rgb_amount
         and l["trust"]["trust_tier"] != TrustTier.RING_ANOMALY
         and price_for(l) <= 1.5 * req.buyer_max_ceiling_usd
+        and _desk_floor(l) <= req.buyer_max_ceiling_usd
     ]
     if not fits:
         raise HTTPException(status_code=404, detail={"code": "no_match", "message": "No matching listing right now"})

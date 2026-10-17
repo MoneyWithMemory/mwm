@@ -20,6 +20,12 @@ def _desk_asset() -> str:
     return client.get("/api/wallets/wallet_b").json()["agent_profile"]["offered_asset_id"]
 
 
+def _reset_desk(asking: int = 150, reserve: int = 110) -> None:
+    client.put("/api/wallets/wallet_b/agent_profile", json={
+        "seller_active": True, "asking_price_usd": asking, "secret_min_reserve_usd": reserve, "offered_amount": 1_000_000,
+    })
+
+
 def _fund_wallets(monkeypatch, amount: int = 10**9) -> None:
     # Test wallets live in a temp dir with no RGB assets; stub the balance read.
     monkeypatch.setattr("backend.api_server._spendable", lambda wallet_id, asset_id: amount)
@@ -223,55 +229,52 @@ def test_session_signature_hash_mismatch_returns_409(monkeypatch):
     assert sess_after_buyer["buyer_signed"] is True
     assert sess_after_buyer["seller_signed"] is False
 
-def test_impossible_negotiation_stops_when_offers_stall(monkeypatch):
+def test_incompatible_buyer_is_blocked_before_any_negotiation(monkeypatch):
+    """Buyer maximum below the seller's minimum: no agent ever talks, and no number is revealed."""
     _fund_wallets(monkeypatch)
-    """
-    Buyer ceiling below seller reserve: once both sides stop moving for two rounds the session
-    is BLOCKED_BY_GATE ('No agreement: the offers stopped moving.'), well before the round cap.
-    """
-    monkeypatch.setattr("backend.qvac_negotiator.negotiator.use_mock", True)
-
+    _reset_desk(asking=150, reserve=140)
     wallets = client.get("/api/wallets").json()
     seller_addr = next(w["address"] for w in wallets if w["wallet_id"] == "wallet_b")
+    sess = client.post("/api/sessions", json=_session_request(seller_addr, buyer_max_ceiling_usd=100, buyer_target_usd=90)).json()
+    assert sess["state"] == "BLOCKED_BY_GATE"
+    assert sess["gate"]["reasons"] == ["No deal possible: the buyer's maximum is below the seller's minimum."]
+    assert sess["rounds"] == [] and sess["queue_position"] is None
+    assert "140" not in str(sess) and "100" not in str(sess["gate"])
+    _reset_desk()
 
-    # Set disjoint pricing: seller reserve 140, buyer ceiling 100 -> impossible agreement
-    client.put("/api/wallets/wallet_b/agent_profile", json={
-        "asking_price_usd": 150,
-        "secret_min_reserve_usd": 140,
-    })
 
-    req = {
-        "buyer_wallet_id": "wallet_a",
-        "seller_address": seller_addr,
-        "asset_id": _desk_asset(),
-        "rgb_amount": 1_000_000,
-        "buyer_max_ceiling_usd": 100,
-        "buyer_target_usd": 90,
-        "buyer_ai_prompt": "Hard cap 100",
-    }
-    resp = client.post("/api/sessions", json=req)
-    assert resp.status_code == 200
-    sess_id = resp.json()["session_id"]
+def test_negotiation_stops_when_offers_stall(monkeypatch):
+    from backend.qvac_negotiator import NegotiationTurn
 
-    final_sess = None
+    _fund_wallets(monkeypatch)
+    _reset_desk()
+
+    def stubborn(ctx):
+        offer = 112 if ctx.role == "buyer" else 140
+        return NegotiationTurn(
+            speaker_wallet_id=ctx.wallet_id, speaker_label=ctx.wallet_label, action="OFFER",
+            offer_usd=offer, public_message="Holding.", private_thought="Holding.", round_number=ctx.round_number,
+        )
+
+    monkeypatch.setattr("backend.api_server.negotiator.generate_turn", stubborn)
+    wallets = client.get("/api/wallets").json()
+    seller_addr = next(w["address"] for w in wallets if w["wallet_id"] == "wallet_b")
+    sess_id = client.post("/api/sessions", json=_session_request(seller_addr)).json()["session_id"]
+
+    final = None
     for _ in range(100):
         time.sleep(0.1)
-        resp_sess = client.get(f"/api/sessions/{sess_id}?wallet_id=wallet_a")
-        final_sess = resp_sess.json()
-        if final_sess["state"] == "BLOCKED_BY_GATE":
+        final = client.get(f"/api/sessions/{sess_id}?wallet_id=wallet_a").json()
+        if final["state"] == "BLOCKED_BY_GATE":
             break
-
-    assert final_sess is not None
-    assert final_sess["state"] == "BLOCKED_BY_GATE"
-    assert final_sess["gate"] is not None
-    assert final_sess["gate"]["passed"] is False
-    assert final_sess["gate"]["reasons"] == ["No agreement: the offers stopped moving."]
-    assert 3 <= len(final_sess["rounds"]) < final_sess["max_rounds"]
+    assert final["gate"]["reasons"] == ["No agreement: the offers stopped moving."]
+    assert len(final["rounds"]) == 3 and final["max_rounds"] == 10
 
 
 def test_session_cancellation(monkeypatch):
     """Verify session can be cancelled before settlement."""
     _fund_wallets(monkeypatch)
+    _reset_desk()
     wallets = client.get("/api/wallets").json()
     seller_addr = next(w["address"] for w in wallets if w["wallet_id"] == "wallet_b")
 
@@ -488,7 +491,7 @@ def test_agent_search_skips_rings_and_opens_a_session(monkeypatch):
         "buyer_ai_prompt": "Open low and concede in steps.",
     }
     # Make Sybil's desk the cheapest (40 vs 75 USD for 500k): it is a ring, so Wallet B's desk must win.
-    client.put("/api/wallets/wallet_sybil/agent_profile", json={"seller_active": True, "asking_price_usd": 40, "offered_amount": 500_000})
+    client.put("/api/wallets/wallet_sybil/agent_profile", json={"seller_active": True, "asking_price_usd": 40, "secret_min_reserve_usd": 30, "offered_amount": 500_000})
     resp = client.post("/api/shop/agent_search", json=req)
     assert resp.status_code == 200
     body = resp.json()
@@ -497,6 +500,10 @@ def test_agent_search_skips_rings_and_opens_a_session(monkeypatch):
     assert body["session"]["counterparty_address"] == body["listing"]["owner_address"]
 
     assert client.post("/api/shop/agent_search", json={**req, "asset_id": "rgb:other"}).json()["code"] == "no_match"
+    # Wallet B's floor above the buyer's maximum: no desk can close, so no session is opened.
+    _reset_desk(asking=150, reserve=140)
+    assert client.post("/api/shop/agent_search", json={**req, "buyer_max_ceiling_usd": 130}).json()["code"] == "no_match"
+    _reset_desk()
     assert client.post("/api/shop/agent_search", json={**req, "rgb_amount": 5_000_000}).json()["code"] == "no_match"
     resp = client.post("/api/shop/agent_search", json={**req, "buyer_max_ceiling_usd": 40, "buyer_target_usd": 30})
     assert (resp.status_code, resp.json()["code"]) == (404, "no_match")
@@ -516,7 +523,7 @@ def test_negotiation_ends_at_the_round_cap(monkeypatch):
         )
 
     monkeypatch.setattr("backend.api_server.negotiator.generate_turn", moving_but_never_crossing)
-    client.put("/api/wallets/wallet_b/agent_profile", json={"seller_active": True, "asking_price_usd": 150, "secret_min_reserve_usd": 110})
+    _reset_desk()
     wallets = client.get("/api/wallets").json()
     seller_addr = next(w["address"] for w in wallets if w["wallet_id"] == "wallet_b")
     sess_id = client.post("/api/sessions", json=_session_request(seller_addr)).json()["session_id"]
@@ -539,7 +546,7 @@ def test_queued_negotiations_report_their_position(monkeypatch):
     queue = NegotiationQueue(lambda sid: release.wait(10), concurrency=1)
     monkeypatch.setattr("backend.api_server.negotiation_queue", queue)
     _fund_wallets(monkeypatch)
-    client.put("/api/wallets/wallet_b/agent_profile", json={"seller_active": True})
+    _reset_desk()
     wallets = client.get("/api/wallets").json()
     seller_addr = next(w["address"] for w in wallets if w["wallet_id"] == "wallet_b")
 
@@ -559,3 +566,13 @@ def test_queued_negotiations_report_their_position(monkeypatch):
     release.set()
     for sid in (first["session_id"], second["session_id"]):
         client.post(f"/api/sessions/{sid}/cancel", json={"wallet_id": "wallet_a"})
+
+
+def test_agent_profile_rejects_inconsistent_limits():
+    _reset_desk()
+    resp = client.put("/api/wallets/wallet_b/agent_profile", json={"secret_min_reserve_usd": 160})
+    assert (resp.status_code, resp.json()["code"]) == (400, "invalid_profile")
+    resp = client.put("/api/wallets/wallet_a/agent_profile", json={"buyer_target_usd": 200})
+    assert (resp.status_code, resp.json()["code"]) == (400, "invalid_profile")
+    profile = client.get("/api/wallets/wallet_b").json()["agent_profile"]
+    assert profile["secret_min_reserve_usd"] == 110  # rejected updates change nothing

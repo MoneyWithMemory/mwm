@@ -56,17 +56,17 @@ def test_rationality_guard_buyer_clamp():
         your_previous_offer_usd=115,
         round_number=3,
     )
-    assert offer == 115
+    assert offer == 117  # raised to the previous bid, then the minimum step
 
-    # Buyer bid meets or exceeds ask -> converts to ACCEPT
+    # Buyer bid meets or exceeds an ask close to its last bid -> converts to ACCEPT
     action, offer = rationality_guard(
         role="buyer",
         raw_action="OFFER",
         raw_offer_usd=130,
         secret_limit_usd=135,
-        current_bid_usd=115,
+        current_bid_usd=122,
         current_ask_usd=125,
-        your_previous_offer_usd=115,
+        your_previous_offer_usd=122,
         round_number=3,
     )
     assert action == "ACCEPT"
@@ -98,17 +98,17 @@ def test_rationality_guard_seller_clamp():
         your_previous_offer_usd=130,
         round_number=3,
     )
-    assert offer == 130
+    assert offer == 126  # lowered to the previous ask, then 15% of the 30 USD gap
 
-    # Seller ask meets or goes below bid -> converts to ACCEPT
+    # Seller ask meets or goes below a bid close to its last ask -> converts to ACCEPT
     action, offer = rationality_guard(
         role="seller",
         raw_action="OFFER",
         raw_offer_usd=115,
         secret_limit_usd=110,
         current_bid_usd=120,
-        current_ask_usd=130,
-        your_previous_offer_usd=130,
+        current_ask_usd=123,
+        your_previous_offer_usd=123,
         round_number=3,
     )
     assert action == "ACCEPT"
@@ -231,7 +231,7 @@ def test_coerce_offer_usd():
 
 def test_accept_is_recorded_at_the_counterparty_price():
     # Buyer says ACCEPT with its own lower number: the round must show the seller's ask.
-    assert rationality_guard("buyer", "ACCEPT", 120, 135, 115, 128, 115, 3) == ("ACCEPT", 128)
+    assert rationality_guard("buyer", "ACCEPT", 120, 135, 125, 128, 125, 3) == ("ACCEPT", 128)
     # Buyer cannot accept an ask above its ceiling: the ACCEPT becomes an OFFER.
     assert rationality_guard("buyer", "ACCEPT", 120, 135, 115, 140, 115, 3) == ("OFFER", 120)
     # Seller cannot accept a bid below its reserve.
@@ -277,3 +277,23 @@ def test_missing_offer_from_model_never_publishes_the_secret(monkeypatch):
     turn = live.generate_turn(ctx)
     assert turn.offer_usd != 135
     assert turn.action == "OFFER"
+
+
+def test_no_early_capitulation_far_from_own_last_offer():
+    # Round 1: the seller (list price 150) tries to take a 120 bid -> counters 150 - 30/4 instead.
+    assert rationality_guard("seller", "ACCEPT", 120, 110, 120, 150, 150, 1, max_rounds=10) == ("OFFER", 142)
+    # Same move in a closing round is honoured.
+    assert rationality_guard("seller", "ACCEPT", 120, 110, 120, 150, 150, 9, max_rounds=10) == ("ACCEPT", 120)
+    # The buyer jumping from 115 to a 140 ask counts too, and never passes its ceiling.
+    assert rationality_guard("buyer", "ACCEPT", 140, 135, 115, 135, 115, 2, max_rounds=10) == ("OFFER", 120)
+    # Within a small gap the counterparty's price is taken.
+    assert rationality_guard("seller", "ACCEPT", 127, 110, 127, 130, 130, 3, max_rounds=10) == ("ACCEPT", 127)
+
+
+def test_offers_always_move_towards_each_other():
+    # A seller repeating its ask is moved down by the minimum step (but not in its opening round).
+    assert rationality_guard("seller", "OFFER", 140, 110, 125, 140, 140, 3, max_rounds=10) == ("OFFER", 138)
+    assert rationality_guard("seller", "OFFER", 150, 110, 120, 150, 150, 1, max_rounds=10) == ("OFFER", 150)
+    # Never below the reserve, never above the ceiling.
+    assert rationality_guard("seller", "OFFER", 111, 110, 100, 111, 111, 3, max_rounds=10) == ("OFFER", 110)
+    assert rationality_guard("buyer", "OFFER", 134, 135, 134, 150, 134, 3, max_rounds=10) == ("OFFER", 135)

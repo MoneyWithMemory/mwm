@@ -11,6 +11,7 @@ import type {
   SessionSummary,
   SessionView,
   SetAliasRequest,
+  SignRequest,
   UpdateAgentProfileRequest,
   WalletId,
   WalletState,
@@ -120,10 +121,11 @@ export class HttpApiClient implements ApiClient {
     return this.request<SessionView>('GET', `/sessions/${enc(sessionId)}?wallet_id=${enc(walletId)}`, opts)
   }
 
-  sign(sessionId: SessionId, walletId: WalletId, opts?: RequestOptions) {
+  sign(sessionId: SessionId, walletId: WalletId, termsHash: string, opts?: RequestOptions) {
+    const body: SignRequest = { wallet_id: walletId, terms_hash: termsHash }
     return this.request<SessionView>('POST', `/sessions/${enc(sessionId)}/sign`, {
       ...opts,
-      body: { wallet_id: walletId },
+      body,
       timeoutMs: SIGN_TIMEOUT_MS,
     })
   }

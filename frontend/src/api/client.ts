@@ -32,7 +32,8 @@ export interface ApiClient {
   createSession(body: CreateSessionRequest, opts?: RequestOptions): Promise<SessionView>
   listSessions(walletId: WalletId, opts?: RequestOptions): Promise<SessionSummary[]>
   getSession(sessionId: SessionId, walletId: WalletId, opts?: RequestOptions): Promise<SessionView>
-  sign(sessionId: SessionId, walletId: WalletId, opts?: RequestOptions): Promise<SessionView>
+  /** termsHash: the terms_hash shown to the user when they approved. */
+  sign(sessionId: SessionId, walletId: WalletId, termsHash: string, opts?: RequestOptions): Promise<SessionView>
   cancel(sessionId: SessionId, walletId: WalletId, opts?: RequestOptions): Promise<SessionView>
 }
 

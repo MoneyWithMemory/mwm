@@ -3,6 +3,7 @@ import { useMarket, useWallet } from '@/api'
 import { AmountCountUp, ErrorState } from '@/components/ui'
 import { useWalletContext } from '@/lib/navigation'
 import { ActivityList } from './ActivityList'
+import { Insights } from './insights/Insights'
 import { AssetList } from './AssetList'
 import { BalanceChart } from './BalanceChart'
 import { ReceiveSheet } from './ReceiveSheet'
@@ -15,6 +16,8 @@ export function WalletView() {
   const { walletId, navigate } = useWalletContext()
   const wallet = useWallet(walletId)
   const market = useMarket()
+  // Read once per mount: the weekly buckets only need day-level accuracy.
+  const [clock] = useState(() => Date.now())
   const [receiveOpen, setReceiveOpen] = useState(false)
   const [rename, setRename] = useState<{ address: string; open: boolean } | null>(null)
 
@@ -37,6 +40,7 @@ export function WalletView() {
   }
 
   const total = totalValueUsd(state.assets, market.data)
+  const nowSeconds = Math.floor(clock / 1000)
 
   return (
     <div className="flex flex-col justify-start gap-5 p-4">
@@ -56,6 +60,7 @@ export function WalletView() {
 
       <BalanceChart walletId={walletId} points={state.history_points} assets={state.assets} />
       <AssetList assets={state.assets} costBasis={state.avg_cost_basis} market={market.data} />
+      {market.data && <Insights wallet={state} market={market.data} nowSeconds={nowSeconds} />}
       <ActivityList
         items={state.activity}
         aliases={state.local_aliases}

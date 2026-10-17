@@ -8,7 +8,7 @@ import { createContext, useContext } from 'react'
 
 /** Params each view accepts; `undefined` means the view takes none. */
 export type ViewParams = {
-  wallet: undefined
+  wallet: { sheet?: 'receive' } | undefined
   /** counterpartyId is the counterparty's address (Contact.address); sessionId opens an existing session. */
   trade: { counterpartyId?: string; sessionId?: string } | undefined
   'seller-desk': undefined

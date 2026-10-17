@@ -1,7 +1,23 @@
-import { ArrowLeftRight, Store, Users, Wallet, type LucideIcon } from 'lucide-react'
+import { ArrowLeftRight, QrCode, Store, Users, Wallet, type LucideIcon } from 'lucide-react'
 import type { ViewName } from '@/lib/navigation'
 
-/** The four pane sections, shared by the bottom tab bar and the desktop side nav. */
+export type BottomNavItem =
+  | { kind: 'action'; id: 'receive'; label: string; icon: LucideIcon }
+  | { kind: 'tab'; view: ViewName; label: string; icon: LucideIcon }
+
+/**
+ * 5 bottom navigation items in order:
+ * Receive (action), Trade, Wallet (center, highlighted), Seller Desk, Contacts.
+ */
+export const BOTTOM_NAV_ITEMS: BottomNavItem[] = [
+  { kind: 'action', id: 'receive', label: 'Receive', icon: QrCode },
+  { kind: 'tab', view: 'trade', label: 'Trade', icon: ArrowLeftRight },
+  { kind: 'tab', view: 'wallet', label: 'Wallet', icon: Wallet },
+  { kind: 'tab', view: 'seller-desk', label: 'Seller Desk', icon: Store },
+  { kind: 'tab', view: 'contacts', label: 'Contacts', icon: Users },
+]
+
+/** The 4 navigation tabs, used by the desktop side nav. */
 export const NAV_ITEMS: { view: ViewName; label: string; icon: LucideIcon }[] = [
   { view: 'wallet', label: 'Wallet', icon: Wallet },
   { view: 'trade', label: 'Trade', icon: ArrowLeftRight },

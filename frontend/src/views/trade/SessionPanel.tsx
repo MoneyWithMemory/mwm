@@ -1,8 +1,9 @@
 import { ShieldCheck } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { CANCELLABLE_STATES, useCancel, useSession, useSign, useWallet } from '@/api'
-import { ApprovalCard, Button, ErrorState, Skeleton, ThinkingState, toast } from '@/components/ui'
+import { ApprovalCard, Button, EmptyState, ErrorState, Skeleton, ThinkingState, toast } from '@/components/ui'
 import { shortAddress } from '@/lib/format'
+import { useWalletContext } from '@/lib/navigation'
 import { RoundsTimeline } from './RoundsTimeline'
 import { SessionHeader } from './SessionHeader'
 import { SettlementPanel } from './SettlementPanel'
@@ -20,6 +21,7 @@ function SessionSkeleton() {
 }
 
 export function SessionPanel({ sessionId, walletId }: { sessionId: string; walletId: string }) {
+  const { reset } = useWalletContext()
   const sessionPoll = useSession(sessionId, walletId)
   const wallet = useWallet(walletId)
   const sign = useSign()
@@ -29,7 +31,13 @@ export function SessionPanel({ sessionId, walletId }: { sessionId: string; walle
   if (!session) {
     return (
       <div className="flex flex-col justify-start p-4">
-        {sessionPoll.error ? (
+        {sessionPoll.error?.status === 403 ? (
+          <EmptyState
+            title="This deal is not yours"
+            description="Only the buyer and the seller can open it."
+            action={<Button onClick={() => reset('deals')}>Back to Deals</Button>}
+          />
+        ) : sessionPoll.error ? (
           <ErrorState
             title="Couldn't load this session"
             message="Check your connection and try again."

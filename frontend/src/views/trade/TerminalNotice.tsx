@@ -2,6 +2,7 @@ import { Ban, CircleAlert, ShieldAlert, TimerOff, type LucideIcon } from 'lucide
 import type { SessionView } from '@/api'
 import { Button, Card, CardContent, TrustBadge } from '@/components/ui'
 import { useWalletContext } from '@/lib/navigation'
+import { TxidRow } from './TxidRow'
 
 interface Notice {
   icon: LucideIcon
@@ -49,6 +50,12 @@ export function TerminalNotice({ session }: { session: SessionView }) {
           <h2 className="text-base font-semibold">{notice.title}</h2>
           <p className="text-sm text-hint">{notice.body}</p>
         </div>
+        {session.state === 'FAILED' && session.txid && (
+          <div className="flex w-full flex-col gap-1.5">
+            <TxidRow txid={session.txid} label="Broadcast transaction ID" />
+            <p className="text-xs text-hint">This transaction was broadcast before the failure. Check it before trying again.</p>
+          </div>
+        )}
         {session.state === 'BLOCKED_BY_GATE' && (
           <TrustBadge tier={session.counterparty_trust.trust_tier} reliabilityPct={session.counterparty_trust.reliability_pct} />
         )}

@@ -1,10 +1,11 @@
 import { Check } from 'lucide-react'
 import { motion } from 'motion/react'
 import type { SessionView } from '@/api'
-import { Button, Card, CardContent, CardHeader, CardTitle, CopyButton, StepList } from '@/components/ui'
+import { Button, Card, CardContent, CardHeader, CardTitle, StepList } from '@/components/ui'
 import { formatUsd } from '@/lib/format'
 import { iconSwap } from '@/lib/motion'
 import { useWalletContext } from '@/lib/navigation'
+import { TxidRow } from './TxidRow'
 
 export function SettlementPanel({ session }: { session: SessionView }) {
   const { reset } = useWalletContext()
@@ -29,15 +30,7 @@ export function SettlementPanel({ session }: { session: SessionView }) {
                 <p className="amount text-sm text-hint">Settled at {formatUsd(session.agreed_price_usd)}</p>
               )}
             </div>
-            {session.txid && (
-              <div className="flex w-full items-center gap-2 rounded-control bg-surface-muted py-1.5 pr-1.5 pl-3 text-left">
-                <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="text-[11px] text-hint">Transaction ID</span>
-                  <span className="select-text break-all font-mono text-xs">{session.txid}</span>
-                </span>
-                <CopyButton text={session.txid} size="md" />
-              </div>
-            )}
+            {session.txid && <TxidRow txid={session.txid} />}
             <Button fullWidth trailingArrow onClick={() => reset('wallet')}>
               Back to Wallet
             </Button>
@@ -49,7 +42,8 @@ export function SettlementPanel({ session }: { session: SessionView }) {
         <CardHeader>
           <CardTitle>{settled ? 'Settlement steps' : 'Settling on Bitcoin regtest'}</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="flex flex-col gap-3">
+          {!settled && session.txid && <TxidRow txid={session.txid} label="Broadcast transaction ID" />}
           <StepList steps={session.settlement_steps} />
         </CardContent>
       </Card>

@@ -24,6 +24,7 @@ import rgb_lib
 from backend.config import settings
 from backend import regtest
 from backend.deterministic_gate import CanonicalSwapTerms, compute_terms_hash
+from backend.seed import SEED_WALLETS
 
 logger = logging.getLogger("mwm.rgb_engine")
 
@@ -102,7 +103,9 @@ class WalletManager:
         singlesig_keys = rgb_lib.SinglesigKeys(
             account_xpub_vanilla=keys.account_xpub_vanilla,
             account_xpub_colored=keys.account_xpub_colored,
-            vanilla_keychain=1,
+            # Keychain 0 (external) so the first address is m/84'/1'/0'/0/0,
+            # identical to the one Tether WDK derives client-side.
+            vanilla_keychain=0,
             master_fingerprint=keys.master_fingerprint,
             mnemonic=keys.mnemonic,
             witness_version=keys.witness_version,
@@ -199,9 +202,10 @@ class RgbSwapEngine:
         """
         with SWAP_GLOBAL_LOCK:
             logger.info("Setting up demo wallets and RGB assets...")
-            # 1. Wallets setup
-            self.wallet_mgr.fund_and_create_utxos("wallet_b", "1.0", 5, 10_000)
-            self.wallet_mgr.fund_and_create_utxos("wallet_a", "1.0", 5, 10_000)
+            # 1. Wallets setup (BTC amount from seed.py, sats -> BTC string)
+            for wid in ("wallet_b", "wallet_a"):
+                btc = f"{SEED_WALLETS[wid].initial_btc_sats / 100_000_000:.8f}"
+                self.wallet_mgr.fund_and_create_utxos(wid, btc, 5, 10_000)
 
             # 2. Check if Wallet B already has PEPE
             b_balances = self.wallet_mgr.get_balances("wallet_b")

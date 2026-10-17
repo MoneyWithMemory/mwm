@@ -16,7 +16,7 @@ class SeedWalletInfo(BaseModel):
     wallet_id: str
     label: str
     role: str
-    initial_btc_sats: int = 100_000_000  # 1.0 BTC on regtest for fees
+    initial_btc_sats: int = 1_000_000  # 0.01 BTC on regtest: fees + colored UTXOs (~1,000 USD at sats_per_usd=1000)
     initial_assets: Dict[str, int] = Field(default_factory=dict)
     description: str
 
@@ -25,7 +25,7 @@ SEED_WALLETS: Dict[str, SeedWalletInfo] = {
         wallet_id="wallet_a",
         label="Wallet A",
         role="buyer",
-        initial_btc_sats=100_000_000,
+        initial_btc_sats=1_000_000,
         initial_assets={settings.PAYMENT_ASSET_TICKER: settings.PAYMENT_ASSET_SUPPLY},
         description="Buyer in primary demo. Liquid USDT balance, seeking to acquire PEPE-RGB.",
     ),
@@ -33,7 +33,7 @@ SEED_WALLETS: Dict[str, SeedWalletInfo] = {
         wallet_id="wallet_b",
         label="Wallet B",
         role="seller",
-        initial_btc_sats=100_000_000,
+        initial_btc_sats=1_000_000,
         initial_assets={settings.DEMO_ASSET_TICKER: settings.DEMO_ASSET_SUPPLY},
         description="Seller in primary demo. Issuer/holder of 1,000,000 PEPE-RGB.",
     ),
@@ -41,7 +41,7 @@ SEED_WALLETS: Dict[str, SeedWalletInfo] = {
         wallet_id="wallet_sybil",
         label="Sybil",
         role="sybil",
-        initial_btc_sats=50_000_000,
+        initial_btc_sats=500_000,
         initial_assets={},
         description="Malicious counterparty embedded in a wash-trading cluster. Trigger for BLOCKED_BY_GATE.",
     ),

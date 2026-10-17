@@ -127,6 +127,9 @@
   --blur-small: 2px;       /* icon swap, text swap, panel reveal */
   --blur-medium: 3px;      /* page slide, text reveal */
   --blur-large: 8px;       /* success check */
+  /* Floating tab bar (BottomNav island): its height and the gap below it */
+  --island-height: 3.75rem;  /* 48px items + 6px padding top and bottom */
+  --island-gap: max(env(safe-area-inset-bottom), 12px);
 }
 
 @layer base {
@@ -229,6 +232,24 @@
     background-image:
       radial-gradient(120% 55% at 50% -12%, rgb(124 98 230 / 0.14), transparent 62%),
       radial-gradient(70% 40% at 100% 0%, rgb(111 200 244 / 0.04), transparent 70%);
+  }
+
+  /* BottomNav island: drops and fades while scrolling down, back on scroll up. */
+  .nav-island {
+    transition:
+      transform var(--duration-fast) var(--ease-smooth-out),
+      opacity var(--duration-fast) var(--ease-smooth-out);
+  }
+
+  .nav-island[data-hidden="true"] {
+    transform: translateY(1.5rem);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* Keeps the last row of a pane reachable above the island. */
+  .pane-scroll-island {
+    padding-bottom: calc(var(--island-height) + var(--island-gap) + 0.75rem);
   }
 
   /* Translucent chrome over scrolling content (tab bar, side nav, toasts). */

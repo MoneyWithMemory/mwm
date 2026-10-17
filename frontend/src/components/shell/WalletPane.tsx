@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { useCallback, useMemo, useState, type ComponentType } from 'react'
+import { useCallback, useMemo, useRef, useState, type ComponentType, type UIEvent } from 'react'
 import { OverlayLayer } from '@/components/ui/OverlayLayer'
 import { cn } from '@/lib/cn'
 import { pageSlide } from '@/lib/motion'
@@ -28,6 +28,11 @@ const VIEWS: Record<ViewName, ComponentType> = {
 
 const ROOT: NavEntry = { view: 'wallet', params: undefined }
 
+/** Scroll distance (px) that counts as a direction change for the island. */
+const SCROLL_STEP = 8
+/** Near the top the island always shows. */
+const SCROLL_TOP_ZONE = 24
+
 function toEntry<V extends ViewName>([view, params]: NavigateArgs<V>): NavEntry {
   return { view, params } as NavEntry
 }
@@ -50,6 +55,20 @@ export function WalletPane({ walletId, nav = 'bottom' }: { walletId: string; nav
   }, [])
 
   const current = stack[stack.length - 1]
+  const viewKey = `${stack.length}:${current.view}`
+
+  // The island hides while scrolling down and returns on scroll up or at the end of the
+  // content. Tied to the view key, so a new view always starts with the island visible.
+  const [islandHiddenFor, setIslandHiddenFor] = useState<string | null>(null)
+  const lastScrollTop = useRef(0)
+  const onScroll = (event: UIEvent<HTMLDivElement>) => {
+    const { scrollTop: top, clientHeight, scrollHeight } = event.currentTarget
+    const delta = top - lastScrollTop.current
+    if (Math.abs(delta) < SCROLL_STEP) return
+    lastScrollTop.current = top
+    const atEnd = top + clientHeight >= scrollHeight - SCROLL_STEP
+    setIslandHiddenFor(delta > 0 && top > SCROLL_TOP_ZONE && !atEnd ? viewKey : null)
+  }
   const value = useMemo<WalletContextValue>(
     () => ({ walletId, current, canGoBack: stack.length > 1, navigate, reset, back }),
     [walletId, current, stack.length, navigate, reset, back],
@@ -64,17 +83,18 @@ export function WalletPane({ walletId, nav = 'bottom' }: { walletId: string; nav
         <OverlayLayer className="flex min-h-0 min-w-0 flex-1 flex-col" role="region" aria-label={`Wallet ${walletId}`}>
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
-              key={`${stack.length}:${current.view}`}
+              key={viewKey}
               variants={pageSlide}
               initial="initial"
               animate="animate"
               exit="exit"
-              className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+              onScroll={nav === 'bottom' ? onScroll : undefined}
+              className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain', nav === 'bottom' && 'pane-scroll-island')}
             >
               <View />
             </motion.div>
           </AnimatePresence>
-          {nav === 'bottom' && <BottomNav />}
+          {nav === 'bottom' && <BottomNav hidden={islandHiddenFor === viewKey} />}
         </OverlayLayer>
       </div>
     </WalletContext.Provider>

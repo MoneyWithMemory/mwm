@@ -164,6 +164,14 @@ class WalletManager:
             "assets": assets_list,
         }
 
+    def get_spendable(self, wallet_id: str, asset_id: str) -> int:
+        """Spendable amount of an RGB asset; 0 when the wallet does not know the asset."""
+        wallet, _, _ = self.get_or_create_wallet(wallet_id)
+        try:
+            return wallet.get_asset_balance(asset_id).spendable
+        except Exception:
+            return 0
+
     def fund_and_create_utxos(self, wallet_id: str, btc_amount: str = "1.0", utxo_count: int = 5, size_sat: int = 10_000) -> None:
         """Ensure wallet has BTC and colored UTXOs for RGB allocations."""
         wallet, online, address = self.get_or_create_wallet(wallet_id)
@@ -244,28 +252,50 @@ class RgbSwapEngine:
                 "usdt_asset_id": usdt_id,
             }
 
+    @staticmethod
+    def _selected_amount(wallet: rgb_lib.Wallet, online: Any, asset_id: str, amount: int) -> Optional[int]:
+        """
+        Mirrors rgb-lib's select_rgb_inputs for a swap leg: UTXOs sorted by the sum of their
+        allocations, taken whole until `amount` is covered. Returns the amount those inputs
+        carry (None if insufficient). Swap transitions have no RGB change output, so anything
+        above `amount` would make the transition invalid.
+        """
+        def alloc_amount(a: Any) -> int:
+            return getattr(a.assignment, "amount", 0) or 0
+
+        eligible = [
+            u for u in wallet.list_unspents(online, False, False)
+            if u.utxo.exists and u.pending_blinded == 0 and all(a.settled for a in u.rgb_allocations)
+        ]
+        eligible.sort(key=lambda u: sum(alloc_amount(a) for a in u.rgb_allocations))
+        collected = 0
+        for u in eligible:
+            got = sum(alloc_amount(a) for a in u.rgb_allocations if a.asset_id == asset_id)
+            if got == 0:
+                continue
+            collected += got
+            if collected >= amount:
+                return collected
+        return None
+
     def _ensure_isolated_allocation(
         self,
         wallet: rgb_lib.Wallet,
         online: Any,
         asset_id: str,
         exact_amount: int,
+        party: str,
     ) -> None:
         """
-        Ensures taker has an unspent UTXO containing EXCLUSIVELY the exact payment amount.
-        In rgb-lib atomic swaps, spending from a multi-allocated or larger UTXO without prior
-        splitting causes InvalidConsignment at process_swap_completion.
+        Ensures the inputs rgb-lib will select for this leg carry exactly `exact_amount`,
+        splitting the allocation with a self-send if needed. Raises before anything is
+        swapped if an exact selection is still impossible, so no funds can be destroyed.
         """
-        unspents = wallet.list_unspents(online, False, False)
-        for u in unspents:
-            if len(u.rgb_allocations) == 1:
-                alloc = u.rgb_allocations[0]
-                if alloc.asset_id == asset_id and alloc.settled:
-                    if hasattr(alloc.assignment, "amount") and alloc.assignment.amount == exact_amount:
-                        logger.info(f"Isolated settled allocation of {exact_amount} {asset_id} already exists.")
-                        return
+        if self._selected_amount(wallet, online, asset_id, exact_amount) == exact_amount:
+            logger.info(f"{party}: inputs already carry exactly {exact_amount} {asset_id}.")
+            return
 
-        logger.info(f"Preparing isolated allocation of {exact_amount} {asset_id} on taker via self-send...")
+        logger.info(f"{party}: preparing isolated allocation of {exact_amount} {asset_id} via self-send...")
         transport = self.proxy_url.replace("http://", "rpc://").replace("https://", "rpcs://")
         rcv = wallet.blind_receive(None, rgb_lib.Assignment.FUNGIBLE(exact_amount), None, [transport], 1)
         recipient = rgb_lib.Recipient(
@@ -279,7 +309,14 @@ class RgbSwapEngine:
         wallet.refresh(online, None, [], False)
         regtest.mine(1)
         wallet.refresh(online, asset_id, [], False)
-        logger.info(f"Isolated settled allocation of {exact_amount} {asset_id} successfully created.")
+
+        selected = self._selected_amount(wallet, online, asset_id, exact_amount)
+        if selected != exact_amount:
+            raise RgbSwapEngineError(
+                f"The {party}'s allocations of {asset_id} cannot be selected as exactly {exact_amount} "
+                f"(rgb-lib would spend {selected}); settlement refused before any transfer."
+            )
+        logger.info(f"{party}: isolated settled allocation of {exact_amount} {asset_id} ready.")
 
     def execute_atomic_swap(
         self,
@@ -291,6 +328,7 @@ class RgbSwapEngine:
         maker_wallet_id: str = "wallet_b",
         taker_wallet_id: str = "wallet_a",
         progress_callback: Optional[Callable[[int, str], None]] = None,
+        txid_callback: Optional[Callable[[str], None]] = None,
     ) -> str:
         """
         Executes the 7-stage atomic swap between Maker (Seller) and Taker (Buyer).
@@ -317,14 +355,27 @@ class RgbSwapEngine:
             maker_wallet, maker_online, _ = self.wallet_mgr.get_or_create_wallet(maker_wallet_id)
             taker_wallet, taker_online, _ = self.wallet_mgr.get_or_create_wallet(taker_wallet_id)
 
-            # Ensure Taker has an isolated, settled allocation of exactly canonical_terms.payment_amount
-            # This prevents InvalidConsignment during process_swap_completion in rgb-lib
-            logger.info(f"Ensuring isolated allocation of {canonical_terms.payment_amount} payment tokens on Taker...")
+            # Pre-flight: check both legs before anything moves on-chain (no self-send, no fees).
+            if self.wallet_mgr.get_spendable(maker_wallet_id, canonical_terms.asset_id) < canonical_terms.rgb_amount:
+                raise RgbSwapEngineError("The seller no longer holds the agreed lot; settlement refused before any transfer.")
+            if self.wallet_mgr.get_spendable(taker_wallet_id, canonical_terms.payment_asset_id) < canonical_terms.payment_amount:
+                raise RgbSwapEngineError("The buyer's balance does not cover the agreed price; settlement refused before any transfer.")
+
+            # Both legs must select inputs carrying exactly their amount: otherwise the buyer's leg
+            # fails at step 5 (InvalidConsignment) and the seller's surplus would be destroyed.
             self._ensure_isolated_allocation(
                 wallet=taker_wallet,
                 online=taker_online,
                 asset_id=canonical_terms.payment_asset_id,
                 exact_amount=canonical_terms.payment_amount,
+                party="buyer",
+            )
+            self._ensure_isolated_allocation(
+                wallet=maker_wallet,
+                online=maker_online,
+                asset_id=canonical_terms.asset_id,
+                exact_amount=canonical_terms.rgb_amount,
+                party="seller",
             )
 
             # Legs definition:
@@ -390,33 +441,52 @@ class RgbSwapEngine:
                 online=maker_online,
                 completion=finalized,
             )
+            if txid_callback:
+                txid_callback(txid)
             report(6, f"Transaction broadcast confirmed (txid: {txid}). Mining blocks...")
-            regtest.mine(2)
+
+            # The swap is on-chain from here: run every finalization call even if one fails,
+            # so one side's error does not skip the other side's accept.
+            post_errors: List[str] = []
+
+            def attempt(label: str, fn: Callable[[], Any]) -> None:
+                try:
+                    fn()
+                except Exception as exc:
+                    logger.error(f"Post-broadcast step '{label}' failed (txid {txid}): {exc}")
+                    post_errors.append(f"{label}: {exc}")
+
+            attempt("mine", lambda: regtest.mine(2))
 
             # Stage 7: Atomically accept swap transfers & refresh on both sides
             report(7, "Finalizing: accepting swap transfers and consolidating balances on both Maker and Taker...")
-            taker_wallet.accept_swap_transfers(
+            attempt("taker accept_swap_transfers", lambda: taker_wallet.accept_swap_transfers(
                 online=taker_online,
                 completion=finalized,
                 role=rgb_lib.OnchainSwapRole.TAKER,
                 skip_sync=False,
-            )
-            maker_wallet.accept_swap_transfers(
+            ))
+            attempt("maker accept_swap_transfers", lambda: maker_wallet.accept_swap_transfers(
                 online=maker_online,
                 completion=finalized,
                 role=rgb_lib.OnchainSwapRole.MAKER,
                 skip_sync=False,
-            )
-            regtest.mine(1)
+            ))
+            attempt("mine", lambda: regtest.mine(1))
 
             # Refresh both wallets to transition incoming allocations to SETTLED
-            taker_wallet.refresh(taker_online, None, [], False)
-            regtest.mine(1)
-            taker_wallet.refresh(taker_online, canonical_terms.asset_id, [], False)
+            attempt("taker refresh", lambda: taker_wallet.refresh(taker_online, None, [], False))
+            attempt("mine", lambda: regtest.mine(1))
+            attempt("taker refresh", lambda: taker_wallet.refresh(taker_online, canonical_terms.asset_id, [], False))
 
-            maker_wallet.refresh(maker_online, None, [], False)
-            regtest.mine(1)
-            maker_wallet.refresh(maker_online, canonical_terms.payment_asset_id, [], False)
+            attempt("maker refresh", lambda: maker_wallet.refresh(maker_online, None, [], False))
+            attempt("mine", lambda: regtest.mine(1))
+            attempt("maker refresh", lambda: maker_wallet.refresh(maker_online, canonical_terms.payment_asset_id, [], False))
+
+            if post_errors:
+                raise RgbSwapEngineError(
+                    f"Swap transaction {txid} was broadcast but finalization failed: " + "; ".join(post_errors)
+                )
 
             report(7, "Settlement complete: both assets transitioned to SETTLED status.")
             return txid

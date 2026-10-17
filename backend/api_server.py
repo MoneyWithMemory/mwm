@@ -547,6 +547,7 @@ def run_settlement_worker(session_id: str) -> None:
             maker_wallet_id=session.seller_wallet_id,
             taker_wallet_id=session.buyer_wallet_id,
             progress_callback=progress_callback,
+            txid_callback=lambda txid: session_store.set_txid(session_id, txid),
         )
         session_store.set_settled(session_id, txid)
 

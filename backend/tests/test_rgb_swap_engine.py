@@ -3,10 +3,12 @@ Unit tests for rgb_swap_engine, double signature enforcement, and session state 
 """
 
 import time
+from types import SimpleNamespace
 import pytest
 from backend.deterministic_gate import CanonicalSwapTerms, compute_terms_hash
 from backend.rgb_swap_engine import (
     RgbSwapEngine,
+    RgbSwapEngineError,
     SecurityViolationError,
     WalletManager,
 )
@@ -197,4 +199,71 @@ def test_engine_enforces_double_signature_and_hash_security():
             seller_signed=True,
             buyer_signed_hash="outdated_terms_hash",
             seller_signed_hash="outdated_terms_hash",
+        )
+
+
+def _unspent(*allocs, exists=True, pending_blinded=0):
+    return SimpleNamespace(
+        utxo=SimpleNamespace(exists=exists),
+        pending_blinded=pending_blinded,
+        rgb_allocations=[
+            SimpleNamespace(asset_id=aid, settled=settled, assignment=SimpleNamespace(amount=amt))
+            for aid, amt, settled in allocs
+        ],
+    )
+
+
+class _FakeWallet:
+    def __init__(self, unspents):
+        self.unspents = unspents
+
+    def list_unspents(self, online, settled_only, skip_sync):
+        return self.unspents
+
+
+def test_selected_amount_mirrors_rgb_lib_selection():
+    sel = RgbSwapEngine._selected_amount
+    split = _FakeWallet([_unspent(("usdt", 9_870, True)), _unspent(("usdt", 130, True))])
+    assert sel(split, None, "usdt", 130) == 130
+    assert sel(split, None, "usdt", 124) == 130  # would sweep 6 USDT with no change output
+
+    lot = _FakeWallet([_unspent(("pepe", 1_000_000, True))])
+    assert sel(lot, None, "pepe", 1_000_000) == 1_000_000
+    assert sel(lot, None, "pepe", 500_000) == 1_000_000  # partial lot: not exact
+    assert sel(lot, None, "pepe", 2_000_000) is None
+
+    pending = _FakeWallet([_unspent(("usdt", 50, False)), _unspent(("usdt", 130, True))])
+    assert sel(pending, None, "usdt", 130) == 130
+
+
+def test_swap_refused_before_any_transfer_when_seller_lacks_lot():
+    class FakeMgr:
+        def get_or_create_wallet(self, wallet_id):
+            return object(), None, "bcrt1qfake"
+
+        def get_spendable(self, wallet_id, asset_id):
+            return 0 if wallet_id == "wallet_b" else 10_000
+
+    engine = RgbSwapEngine(wallet_mgr=FakeMgr())
+    engine._ensure_isolated_allocation = lambda **kw: pytest.fail("no on-chain step may run")
+    terms = CanonicalSwapTerms(
+        session_id="sess_short",
+        asset_id="rgb:pepe_asset",
+        rgb_amount=1_000_000,
+        payment_asset_id="rgb:usdt_asset",
+        payment_amount=125,
+        agreed_price_usd=125,
+        network_fee_sat=2000,
+        buyer_address="bcrt1qbuyer",
+        seller_address="bcrt1qseller",
+        expiry_unix=int(time.time()) + 3600,
+    )
+    h = compute_terms_hash(terms)
+    with pytest.raises(RgbSwapEngineError, match="seller no longer holds the agreed lot"):
+        engine.execute_atomic_swap(
+            canonical_terms=terms,
+            buyer_signed=True,
+            seller_signed=True,
+            buyer_signed_hash=h,
+            seller_signed_hash=h,
         )

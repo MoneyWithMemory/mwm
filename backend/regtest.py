@@ -11,6 +11,8 @@ from backend.config import settings
 
 logger = logging.getLogger("mwm.regtest")
 
+REGTEST_TIMEOUT_S = 180
+
 class RegtestError(RuntimeError):
     """Raised when a regtest command fails."""
     pass
@@ -20,8 +22,13 @@ def run_regtest_cmd(*args: str) -> str:
     script_path = settings.REGTEST_SCRIPT
     cmd: List[str] = [script_path] + list(args)
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        # Bounded so a hung `docker compose exec` cannot hold SWAP_GLOBAL_LOCK forever.
+        res = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=REGTEST_TIMEOUT_S)
         return res.stdout.strip()
+    except subprocess.TimeoutExpired as exc:
+        err_msg = f"Regtest command timed out after {REGTEST_TIMEOUT_S}s: {' '.join(cmd)}"
+        logger.error(err_msg)
+        raise RegtestError(err_msg) from exc
     except subprocess.CalledProcessError as exc:
         err_msg = f"Regtest command failed: {' '.join(cmd)}\nStdout: {exc.stdout}\nStderr: {exc.stderr}"
         logger.error(err_msg)

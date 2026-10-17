@@ -417,6 +417,13 @@ class SessionStore:
                 session.settlement_message = message
                 session.updated_at_unix = int(time.time())
 
+    def set_txid(self, session_id: str, txid: str) -> None:
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session:
+                session.txid = txid
+                session.updated_at_unix = int(time.time())
+
     def set_settled(self, session_id: str, txid: str) -> Session:
         with self._lock:
             session = self._sessions[session_id]

@@ -40,8 +40,14 @@ function toEntry<V extends ViewName>([view, params]: NavigateArgs<V>): NavEntry 
 /** Where the pane's sections live: the bottom tab bar, or a sidebar on wide single view. */
 export type PaneNav = 'bottom' | 'side'
 
+export interface WalletPaneProps {
+  walletId: string
+  nav?: PaneNav
+  autoHideIsland?: boolean
+}
+
 /** One wallet with its own view stack, page transitions, section nav and overlay host. */
-export function WalletPane({ walletId, nav = 'bottom' }: { walletId: string; nav?: PaneNav }) {
+export function WalletPane({ walletId, nav = 'bottom', autoHideIsland = true }: WalletPaneProps) {
   const [stack, setStack] = useState<NavEntry[]>([ROOT])
 
   const navigate = useCallback(<V extends ViewName>(...args: NavigateArgs<V>) => {
@@ -88,13 +94,13 @@ export function WalletPane({ walletId, nav = 'bottom' }: { walletId: string; nav
               initial="initial"
               animate="animate"
               exit="exit"
-              onScroll={nav === 'bottom' ? onScroll : undefined}
+              onScroll={nav === 'bottom' && autoHideIsland ? onScroll : undefined}
               className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain', nav === 'bottom' && 'pane-scroll-island')}
             >
               <View />
             </motion.div>
           </AnimatePresence>
-          {nav === 'bottom' && <BottomNav hidden={islandHiddenFor === viewKey} />}
+          {nav === 'bottom' && <BottomNav hidden={autoHideIsland && islandHiddenFor === viewKey} />}
         </OverlayLayer>
       </div>
     </WalletContext.Provider>

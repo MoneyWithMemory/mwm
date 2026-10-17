@@ -38,6 +38,10 @@ export const ADDRESSES = {
   faucet: 'bcrt1qj4rm9lxm99jlcufp0qf594tzgd80fd08hye6dx',
   /** Sybil's ring partner. */
   ringPeer: 'bcrt1q9xukdg3atm67fzlajzpxgrrpttsvl70ympjawc',
+  exchange: 'bcrt1qexchan9e7desk834k92jjd82kdls83hdjsk82',
+  otc: 'bcrt1qotc8partn9er382kdls93ksjdl92kdls83h992',
+  merchant: 'bcrt1qpaym3nt8gatew4y82ksdl93ksjd82kdls8288',
+  miningPool: 'bcrt1qmin1ngp00l8strat2kdls82kdls83kdls8277',
 } as const
 
 const TRUST: Record<string, TrustAudit> = {
@@ -109,29 +113,43 @@ export function randomHex(bytes: number): string {
   return Array.from(buf, (b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-type SeedEvent = { day: number; kind: ActivityItem['kind']; asset: AssetRef; amount: number; from: string | null }
+type SeedEvent = {
+  day: number
+  kind: ActivityItem['kind']
+  direction?: ActivityItem['direction']
+  asset: AssetRef
+  amount: number
+  counterparty?: string | null
+  from?: string | null
+  status?: ActivityItem['status']
+}
 
 function buildActivity(events: SeedEvent[], now: number): ActivityItem[] {
   return events
-    .map((e, i) => ({
-      id: `seed-${i}-${randomHex(4)}`,
-      t: now - e.day * DAY,
-      kind: e.kind,
-      direction: 'in' as const,
-      asset: e.asset,
-      amount: e.amount,
-      counterparty_address: e.from,
-      txid: randomHex(32),
-      session_id: null,
-      status: 'confirmed' as const,
-    }))
+    .map((e, i) => {
+      const direction = e.direction ?? 'in'
+      const status = e.status ?? 'confirmed'
+      const counterparty = e.counterparty ?? e.from ?? null
+      return {
+        id: `seed-${i}-${randomHex(4)}`,
+        t: now - e.day * DAY,
+        kind: e.kind,
+        direction,
+        asset: e.asset,
+        amount: e.amount,
+        counterparty_address: counterparty,
+        txid: randomHex(32),
+        session_id: null,
+        status,
+      }
+    })
     .sort((x, y) => y.t - x.t)
 }
 
-/** One point per day for the last 30 days, replaying the activity. */
+/** One point per day for the last 35 days (5 weekly buckets), replaying the activity. */
 function buildHistory(activity: ActivityItem[], now: number): HistoryPoint[] {
   const points: HistoryPoint[] = []
-  for (let day = 29; day >= 0; day--) {
+  for (let day = 34; day >= 0; day--) {
     const t = now - day * DAY
     const balances: Record<AssetId, number> = {}
     for (const item of activity) {
@@ -203,13 +221,55 @@ export function createSeedWallets(now: number): MockWallet[] {
       'Wallet A',
       ADDRESSES.a,
       [
-        { day: 29, kind: 'receive', asset: ASSETS.btc, amount: 500_000, from: ADDRESSES.faucet },
-        { day: 25, kind: 'receive', asset: ASSETS.usdt, amount: usdt(400), from: ADDRESSES.faucet },
-        { day: 14, kind: 'receive', asset: ASSETS.usdt, amount: usdt(350), from: ADDRESSES.newcomer },
-        { day: 5, kind: 'receive', asset: ASSETS.usdt, amount: usdt(250), from: ADDRESSES.faucet },
+        // Week 5 (days 34–28)
+        { day: 34, kind: 'receive', direction: 'in', asset: ASSETS.btc, amount: 1_000_000, counterparty: ADDRESSES.faucet },
+        { day: 34, kind: 'receive', direction: 'in', asset: ASSETS.usdt, amount: usdt(500), counterparty: ADDRESSES.faucet },
+        { day: 33, kind: 'receive', direction: 'in', asset: ASSETS.usdt, amount: usdt(400), counterparty: ADDRESSES.exchange },
+        { day: 32, kind: 'receive', direction: 'in', asset: ASSETS.usdt, amount: usdt(300), counterparty: ADDRESSES.otc },
+        { day: 30, kind: 'swap', direction: 'out', asset: ASSETS.usdt, amount: usdt(150), counterparty: ADDRESSES.merchant },
+        { day: 29, kind: 'receive', direction: 'in', asset: ASSETS.btc, amount: 300_000, counterparty: ADDRESSES.miningPool },
+        { day: 28, kind: 'swap', direction: 'out', asset: ASSETS.btc, amount: 50_000, counterparty: ADDRESSES.exchange },
+
+        // Week 4 (days 27–21)
+        { day: 27, kind: 'receive', direction: 'in', asset: ASSETS.usdt, amount: usdt(350), counterparty: ADDRESSES.exchange },
+        { day: 26, kind: 'swap', direction: 'out', asset: ASSETS.usdt, amount: usdt(200), counterparty: ADDRESSES.merchant },
+        { day: 24, kind: 'receive', direction: 'in', asset: ASSETS.usdt, amount: usdt(250), counterparty: ADDRESSES.otc },
+        { day: 23, kind: 'swap', direction: 'out', asset: ASSETS.usdt, amount: usdt(100), counterparty: ADDRESSES.newcomer },
+        { day: 22, kind: 'receive', direction: 'in', asset: ASSETS.btc, amount: 200_000, counterparty: ADDRESSES.faucet },
+        { day: 21, kind: 'swap', direction: 'out', asset: ASSETS.btc, amount: 30_000, counterparty: ADDRESSES.exchange },
+
+        // Week 3 (days 20–14)
+        { day: 19, kind: 'receive', direction: 'in', asset: ASSETS.usdt, amount: usdt(400), counterparty: ADDRESSES.exchange },
+        { day: 18, kind: 'swap', direction: 'out', asset: ASSETS.usdt, amount: usdt(180), counterparty: ADDRESSES.merchant },
+        { day: 16, kind: 'receive', direction: 'in', asset: ASSETS.usdt, amount: usdt(300), counterparty: ADDRESSES.faucet },
+        { day: 15, kind: 'swap', direction: 'out', asset: ASSETS.usdt, amount: usdt(120), counterparty: ADDRESSES.otc },
+        { day: 14, kind: 'receive', direction: 'in', asset: ASSETS.btc, amount: 150_000, counterparty: ADDRESSES.miningPool },
+
+        // Week 2 (days 13–7)
+        { day: 12, kind: 'receive', direction: 'in', asset: ASSETS.usdt, amount: usdt(350), counterparty: ADDRESSES.newcomer },
+        { day: 11, kind: 'swap', direction: 'out', asset: ASSETS.usdt, amount: usdt(200), counterparty: ADDRESSES.merchant },
+        { day: 9, kind: 'receive', direction: 'in', asset: ASSETS.usdt, amount: usdt(280), counterparty: ADDRESSES.exchange },
+        { day: 8, kind: 'swap', direction: 'out', asset: ASSETS.btc, amount: 40_000, counterparty: ADDRESSES.exchange },
+        { day: 7, kind: 'receive', direction: 'in', asset: ASSETS.usdt, amount: usdt(200), counterparty: ADDRESSES.otc },
+
+        // Week 1 (days 6–0)
+        { day: 5, kind: 'swap', direction: 'out', asset: ASSETS.usdt, amount: usdt(150), counterparty: ADDRESSES.merchant },
+        { day: 4, kind: 'receive', direction: 'in', asset: ASSETS.btc, amount: 100_000, counterparty: ADDRESSES.faucet },
+        { day: 3, kind: 'receive', direction: 'in', asset: ASSETS.usdt, amount: usdt(250), counterparty: ADDRESSES.exchange },
+        { day: 2, kind: 'swap', direction: 'out', asset: ASSETS.usdt, amount: usdt(100), counterparty: ADDRESSES.newcomer },
+        { day: 1, kind: 'receive', direction: 'in', asset: ASSETS.usdt, amount: usdt(150), counterparty: ADDRESSES.otc, status: 'pending' },
+        { day: 0, kind: 'swap', direction: 'out', asset: ASSETS.usdt, amount: usdt(50), counterparty: ADDRESSES.merchant, status: 'pending' },
+        { day: 0, kind: 'receive', direction: 'in', asset: ASSETS.btc, amount: 50_000, counterparty: ADDRESSES.faucet, status: 'pending' },
       ],
       { ...DESK_OFF, ...BUYER_DEFAULTS },
-      { [ADDRESSES.b]: 'PEPE Desk', [ADDRESSES.faucet]: 'Regtest faucet' },
+      {
+        [ADDRESSES.b]: 'PEPE Desk',
+        [ADDRESSES.faucet]: 'Regtest faucet',
+        [ADDRESSES.exchange]: 'Exchange desk',
+        [ADDRESSES.otc]: 'OTC partner',
+        [ADDRESSES.merchant]: 'RGB Merchant',
+        [ADDRESSES.miningPool]: 'Mining Pool',
+      },
       now,
     ),
     wallet(
@@ -217,8 +277,35 @@ export function createSeedWallets(now: number): MockWallet[] {
       'Wallet B',
       ADDRESSES.b,
       [
-        { day: 29, kind: 'receive', asset: ASSETS.btc, amount: 500_000, from: ADDRESSES.faucet },
-        { day: 28, kind: 'issue', asset: ASSETS.pepe, amount: 3_000_000, from: null },
+        // Week 5 (days 34–28)
+        { day: 34, kind: 'receive', direction: 'in', asset: ASSETS.btc, amount: 1_000_000, counterparty: ADDRESSES.faucet },
+        { day: 34, kind: 'issue', direction: 'in', asset: ASSETS.pepe, amount: 5_000_000, counterparty: null },
+        { day: 33, kind: 'receive', direction: 'in', asset: ASSETS.usdt, amount: usdt(100), counterparty: ADDRESSES.exchange },
+        { day: 31, kind: 'swap', direction: 'out', asset: ASSETS.pepe, amount: 400_000, counterparty: ADDRESSES.otc },
+        { day: 31, kind: 'swap', direction: 'in', asset: ASSETS.usdt, amount: usdt(50), counterparty: ADDRESSES.otc },
+        { day: 28, kind: 'receive', direction: 'in', asset: ASSETS.btc, amount: 300_000, counterparty: ADDRESSES.miningPool },
+
+        // Week 4 (days 27–21)
+        { day: 26, kind: 'swap', direction: 'out', asset: ASSETS.pepe, amount: 350_000, counterparty: ADDRESSES.exchange },
+        { day: 26, kind: 'swap', direction: 'in', asset: ASSETS.usdt, amount: usdt(45), counterparty: ADDRESSES.exchange },
+        { day: 22, kind: 'swap', direction: 'out', asset: ASSETS.btc, amount: 30_000, counterparty: ADDRESSES.exchange },
+
+        // Week 3 (days 20–14)
+        { day: 20, kind: 'swap', direction: 'out', asset: ASSETS.pepe, amount: 300_000, counterparty: ADDRESSES.merchant },
+        { day: 20, kind: 'swap', direction: 'in', asset: ASSETS.usdt, amount: usdt(40), counterparty: ADDRESSES.merchant },
+        { day: 16, kind: 'receive', direction: 'in', asset: ASSETS.btc, amount: 200_000, counterparty: ADDRESSES.faucet },
+        { day: 14, kind: 'swap', direction: 'out', asset: ASSETS.pepe, amount: 250_000, counterparty: ADDRESSES.otc },
+        { day: 14, kind: 'swap', direction: 'in', asset: ASSETS.usdt, amount: usdt(30), counterparty: ADDRESSES.otc },
+
+        // Week 2 (days 13–7)
+        { day: 10, kind: 'swap', direction: 'out', asset: ASSETS.btc, amount: 25_000, counterparty: ADDRESSES.exchange },
+        { day: 7, kind: 'swap', direction: 'out', asset: ASSETS.pepe, amount: 200_000, counterparty: ADDRESSES.exchange },
+        { day: 7, kind: 'swap', direction: 'in', asset: ASSETS.usdt, amount: usdt(25), counterparty: ADDRESSES.exchange },
+
+        // Week 1 (days 6–0)
+        { day: 3, kind: 'receive', direction: 'in', asset: ASSETS.btc, amount: 100_000, counterparty: ADDRESSES.miningPool },
+        { day: 1, kind: 'swap', direction: 'out', asset: ASSETS.pepe, amount: 100_000, counterparty: ADDRESSES.otc, status: 'pending' },
+        { day: 1, kind: 'swap', direction: 'in', asset: ASSETS.usdt, amount: usdt(15), counterparty: ADDRESSES.otc, status: 'pending' },
       ],
       {
         seller_active: true,
@@ -229,7 +316,14 @@ export function createSeedWallets(now: number): MockWallet[] {
         seller_ai_prompt: 'Hold the asking price early, concede in small steps, close once the gap is small.',
         ...BUYER_DEFAULTS,
       },
-      { [ADDRESSES.a]: 'Regular buyer' },
+      {
+        [ADDRESSES.a]: 'Regular buyer',
+        [ADDRESSES.faucet]: 'Regtest faucet',
+        [ADDRESSES.exchange]: 'Exchange desk',
+        [ADDRESSES.otc]: 'OTC partner',
+        [ADDRESSES.merchant]: 'RGB Merchant',
+        [ADDRESSES.miningPool]: 'Mining Pool',
+      },
       now,
     ),
     wallet(
@@ -237,9 +331,13 @@ export function createSeedWallets(now: number): MockWallet[] {
       'Sybil',
       ADDRESSES.sybil,
       [
-        { day: 21, kind: 'receive', asset: ASSETS.btc, amount: 200_000, from: ADDRESSES.faucet },
-        { day: 20, kind: 'receive', asset: ASSETS.usdt, amount: usdt(300), from: ADDRESSES.ringPeer },
-        { day: 19, kind: 'receive', asset: ASSETS.pepe, amount: 500_000, from: ADDRESSES.ringPeer },
+        { day: 30, kind: 'receive', direction: 'in', asset: ASSETS.btc, amount: 300_000, counterparty: ADDRESSES.faucet },
+        { day: 28, kind: 'receive', direction: 'in', asset: ASSETS.usdt, amount: usdt(400), counterparty: ADDRESSES.ringPeer },
+        { day: 27, kind: 'receive', direction: 'in', asset: ASSETS.pepe, amount: 600_000, counterparty: ADDRESSES.ringPeer },
+        { day: 20, kind: 'swap', direction: 'out', asset: ASSETS.usdt, amount: usdt(150), counterparty: ADDRESSES.ringPeer },
+        { day: 14, kind: 'swap', direction: 'out', asset: ASSETS.pepe, amount: 100_000, counterparty: ADDRESSES.ringPeer },
+        { day: 7, kind: 'receive', direction: 'in', asset: ASSETS.usdt, amount: usdt(100), counterparty: ADDRESSES.ringPeer },
+        { day: 1, kind: 'swap', direction: 'out', asset: ASSETS.usdt, amount: usdt(50), counterparty: ADDRESSES.ringPeer, status: 'pending' },
       ],
       {
         seller_active: true,
@@ -250,7 +348,7 @@ export function createSeedWallets(now: number): MockWallet[] {
         seller_ai_prompt: 'Undercut every desk to attract buyers.',
         ...BUYER_DEFAULTS,
       },
-      {},
+      { [ADDRESSES.ringPeer]: 'Fast liquidity desk' },
       now,
     ),
   ]

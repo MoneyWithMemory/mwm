@@ -5,12 +5,19 @@ export type BottomNavItem =
   | { kind: 'action'; id: 'receive'; label: string; icon: LucideIcon }
   | { kind: 'tab'; view: ViewName; label: string; icon: LucideIcon }
 
+export const RECEIVE_NAV_ACTION: BottomNavItem & { kind: 'action' } = {
+  kind: 'action',
+  id: 'receive',
+  label: 'Receive',
+  icon: QrCode,
+}
+
 /**
  * 5 bottom navigation items in order:
  * Receive (action), Trade, Wallet (center, highlighted), Seller Desk, Contacts.
  */
 export const BOTTOM_NAV_ITEMS: BottomNavItem[] = [
-  { kind: 'action', id: 'receive', label: 'Receive', icon: QrCode },
+  RECEIVE_NAV_ACTION,
   { kind: 'tab', view: 'trade', label: 'Trade', icon: ArrowLeftRight },
   { kind: 'tab', view: 'wallet', label: 'Wallet', icon: Wallet },
   { kind: 'tab', view: 'seller-desk', label: 'Seller Desk', icon: Store },

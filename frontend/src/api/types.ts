@@ -277,6 +277,15 @@ export interface CreateWalletRequest {
   mnemonic?: string
 }
 
+/**
+ * POST /api/sessions/{id}/sign. terms_hash is the hash the user reviewed; the
+ * backend rejects it with 409 terms_hash_mismatch if it differs from the active terms.
+ */
+export interface SignRequest {
+  wallet_id: WalletId
+  terms_hash: string
+}
+
 /** PUT /api/wallets/{id}/aliases */
 export interface SetAliasRequest {
   address: string

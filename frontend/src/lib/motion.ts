@@ -8,12 +8,16 @@ import type { Transition, Variants } from 'motion/react'
 /** --ease-smooth-out: default for open/close, slides, swaps. */
 export const EASE_OUT = [0.22, 1, 0.36, 1] as const
 
+/** --ease-bounce: entrances only (badge pop); never on a close. */
+export const EASE_BOUNCE = [0.34, 1.36, 0.64, 1] as const
+
 /** Seconds. close = quick (150ms): closing is always faster than opening. */
 export const DUR = {
   quick: 0.15,    // --duration-quick: close, press, text swap
   iconSwap: 0.17, // icon and state swaps (CLAUDE.md 160–180ms)
   open: 0.25,     // --duration-fast: sheet/modal/dropdown open, page slide
   medium: 0.35,   // --duration-medium: error shake, checkbox draw
+  badge: 0.5,     // --duration-very-slow: badge appear
 } as const
 
 /** Looping indicators (seconds). */
@@ -55,6 +59,13 @@ export const iconSwap: Variants = {
   initial: { scale: 0.6, rotate: -20, opacity: 0, filter: 'blur(2px)' },
   animate: { scale: 1, rotate: 0, opacity: 1, filter: 'blur(0px)', transition: { duration: DUR.iconSwap, ease: EASE_OUT } },
   exit: { scale: 0.6, rotate: 20, opacity: 0, filter: 'blur(2px)', transition: { duration: DUR.iconSwap, ease: EASE_OUT } },
+}
+
+/** Notification badge: pops in with a soft overshoot, leaves quickly without one. */
+export const badgePop: Variants = {
+  initial: { scale: 0.6, opacity: 0 },
+  animate: { scale: 1, opacity: 1, transition: { duration: DUR.badge, ease: EASE_BOUNCE } },
+  exit: { scale: 0.6, opacity: 0, transition: close },
 }
 
 /** Text/label swap (Save → Saved), with AnimatePresence mode="wait". */

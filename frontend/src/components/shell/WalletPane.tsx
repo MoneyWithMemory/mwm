@@ -3,6 +3,7 @@ import { useCallback, useMemo, useRef, useState, type ComponentType, type UIEven
 import { OverlayLayer } from '@/components/ui/OverlayLayer'
 import { cn } from '@/lib/cn'
 import { pageSlide } from '@/lib/motion'
+import { setStack, updateStack, usePaneStack } from '@/lib/paneStacks'
 import {
   WalletContext,
   type NavEntry,
@@ -28,8 +29,6 @@ const VIEWS: Record<ViewName, ComponentType> = {
   contacts: ContactsView,
 }
 
-const ROOT: NavEntry = { view: 'wallet', params: undefined }
-
 /** Scroll distance (px) that counts as a direction change for the island. */
 const SCROLL_STEP = 8
 /** Near the top the island always shows. */
@@ -50,17 +49,21 @@ export interface WalletPaneProps {
 
 /** One wallet with its own view stack, page transitions, section nav and overlay host. */
 export function WalletPane({ walletId, nav = 'bottom', autoHideIsland = true }: WalletPaneProps) {
-  const [stack, setStack] = useState<NavEntry[]>([ROOT])
+  // The stack lives in paneStacks, so it survives wallet switches and can be driven from the shell.
+  const stack = usePaneStack(walletId)
 
   const navigate = useCallback(<V extends ViewName>(...args: NavigateArgs<V>) => {
-    setStack((s) => [...s, toEntry(args)])
-  }, [])
+    updateStack(walletId, (s) => [...s, toEntry(args)])
+  }, [walletId])
   const reset = useCallback(<V extends ViewName>(...args: NavigateArgs<V>) => {
-    setStack([toEntry(args)])
-  }, [])
+    setStack(walletId, [toEntry(args)])
+  }, [walletId])
+  const replace = useCallback(<V extends ViewName>(...args: NavigateArgs<V>) => {
+    updateStack(walletId, (s) => [...s.slice(0, -1), toEntry(args)])
+  }, [walletId])
   const back = useCallback(() => {
-    setStack((s) => (s.length > 1 ? s.slice(0, -1) : s))
-  }, [])
+    updateStack(walletId, (s) => (s.length > 1 ? s.slice(0, -1) : s))
+  }, [walletId])
 
   const current = stack[stack.length - 1]
   const viewKey = `${stack.length}:${current.view}`
@@ -78,8 +81,8 @@ export function WalletPane({ walletId, nav = 'bottom', autoHideIsland = true }: 
     setIslandHiddenFor(delta > 0 && top > SCROLL_TOP_ZONE && !atEnd ? viewKey : null)
   }
   const value = useMemo<WalletContextValue>(
-    () => ({ walletId, current, canGoBack: stack.length > 1, navigate, reset, back }),
-    [walletId, current, stack.length, navigate, reset, back],
+    () => ({ walletId, current, canGoBack: stack.length > 1, navigate, reset, replace, back }),
+    [walletId, current, stack.length, navigate, reset, replace, back],
   )
   const View = VIEWS[current.view]
 

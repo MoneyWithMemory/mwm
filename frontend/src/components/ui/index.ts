@@ -14,6 +14,7 @@ export { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 export { Checkbox, type CheckboxProps } from './Checkbox'
 export { Chip, type ChipProps } from './Chip'
 export { CopyButton, type CopyButtonProps } from './CopyButton'
+export { CountBadge, type CountBadgeProps } from './CountBadge'
 export { EmptyState, type EmptyStateProps } from './EmptyState'
 export { ErrorState, type ErrorStateProps } from './ErrorState'
 export { IconButton, type IconButtonSize, type IconButtonVariant } from './IconButton'

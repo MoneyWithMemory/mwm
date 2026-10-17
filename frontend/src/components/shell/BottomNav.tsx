@@ -1,4 +1,6 @@
 import { motion } from 'motion/react'
+import { usePendingSignatureCount } from '@/api'
+import { CountBadge } from '@/components/ui/CountBadge'
 import { cn } from '@/lib/cn'
 import { SPRING_TABS } from '@/lib/motion'
 import { useWalletContext } from '@/lib/navigation'
@@ -12,6 +14,7 @@ import { NAV_ITEMS } from './navItems'
  */
 export function BottomNav({ hidden = false }: { hidden?: boolean }) {
   const { walletId, current, reset } = useWalletContext()
+  const toSign = usePendingSignatureCount(walletId)
 
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex justify-center px-3 pb-[var(--island-gap)]">
@@ -42,7 +45,12 @@ export function BottomNav({ hidden = false }: { hidden?: boolean }) {
                   aria-hidden="true"
                 />
               )}
-              <Icon size={20} strokeWidth={2} className="pointer-events-none relative shrink-0" aria-hidden="true" />
+              <span className="pointer-events-none relative inline-flex shrink-0">
+                <Icon size={20} strokeWidth={2} className="relative shrink-0" aria-hidden="true" />
+                {view === 'deals' && (
+                  <CountBadge count={toSign} label={`${toSign} ${toSign === 1 ? 'deal' : 'deals'} to sign`} className="-top-1.5 -right-2.5" />
+                )}
+              </span>
               <span className="badge-nowrap pointer-events-none relative">{label}</span>
             </button>
           )

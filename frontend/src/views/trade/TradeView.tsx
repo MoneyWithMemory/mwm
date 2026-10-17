@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { useContacts, useMarket, useWallet } from '@/api'
 import { EmptyState, ErrorState, Skeleton } from '@/components/ui'
 import { useViewParams, useWalletContext } from '@/lib/navigation'
@@ -58,19 +57,18 @@ function Setup({ walletId, counterpartyId, onCreated }: { walletId: string; coun
 }
 
 export function TradeView() {
-  const { walletId, current } = useWalletContext()
+  const { walletId, replace } = useWalletContext()
   const params = useViewParams('trade')
-  // A session started here is only valid for the navigation entry it was created in.
-  const [created, setCreated] = useState<{ id: string; entry: unknown } | null>(null)
-  const sessionId = params?.sessionId ?? (created && created.entry === current ? created.id : null)
+  const sessionId = params?.sessionId
 
   if (sessionId) return <SessionPanel key={sessionId} sessionId={sessionId} walletId={walletId} />
+  // The new session replaces the form in the stack, so it survives wallet switches and Back.
   return (
     <Setup
       key={walletId}
       walletId={walletId}
       counterpartyId={params?.counterpartyId}
-      onCreated={(id) => setCreated({ id, entry: current })}
+      onCreated={(id) => replace('trade', { sessionId: id })}
     />
   )
 }

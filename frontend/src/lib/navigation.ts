@@ -36,6 +36,8 @@ export type WalletContextValue = {
   navigate: <V extends ViewName>(...args: NavigateArgs<V>) => void
   /** Replace the whole stack with one view (tab switches). */
   reset: <V extends ViewName>(...args: NavigateArgs<V>) => void
+  /** Replace only the top view, e.g. the trade form with the session it just started. */
+  replace: <V extends ViewName>(...args: NavigateArgs<V>) => void
   back: () => void
 }
 

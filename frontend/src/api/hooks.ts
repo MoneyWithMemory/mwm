@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useEffectEvent, useState } from 'react'
 import { api } from './api'
 import { toApiError, type ApiError } from './client'
-import type { SessionId, ShopQuery, WalletId } from './types'
+import type { SessionId, SessionSummary, ShopQuery, WalletId } from './types'
 
 /** Polling intervals (ms). Negotiation turns take a few seconds; settlement steps faster. */
 export const POLL_MS = {
@@ -125,6 +125,32 @@ export function useContacts(walletId: WalletId | null) {
 
 export function useSessions(walletId: WalletId | null) {
   return usePoll(walletId && `sessions:${walletId}`, (signal) => api.listSessions(walletId as WalletId, { signal }), POLL_MS.sessions)
+}
+
+/** How many of walletId's deals wait for its signature (drives the Deals badge). */
+export function usePendingSignatureCount(walletId: WalletId | null): number {
+  const sessions = useSessions(walletId)
+  return (sessions.data ?? []).filter((s) => s.needs_my_signature).length
+}
+
+export interface PendingSignature {
+  walletId: WalletId
+  session: SessionSummary
+}
+
+/** Deals waiting for a signature across several wallets, oldest first (drives the header prompt). */
+export function usePendingSignatures(walletIds: WalletId[]) {
+  const key = walletIds.length > 0 ? `pending:${walletIds.join(',')}` : null
+  return usePoll(
+    key,
+    async (signal): Promise<PendingSignature[]> => {
+      const lists = await Promise.all(walletIds.map((id) => api.listSessions(id, { signal })))
+      return lists
+        .flatMap((sessions, i) => sessions.filter((s) => s.needs_my_signature).map((session) => ({ walletId: walletIds[i], session })))
+        .sort((a, b) => a.session.created_at - b.session.created_at)
+    },
+    POLL_MS.sessions,
+  )
 }
 
 /** The session from walletId's perspective (my_role, my_private_thought). */

@@ -10,6 +10,7 @@ import { MOTION_CONFIG, fade } from '@/lib/motion'
 import { useMediaQuery } from '@/lib/useMediaQuery'
 import { SplitView } from '@/views'
 import { HealthDot } from './HealthDot'
+import { PendingSignaturesPill } from './PendingSignaturesPill'
 import { SplitToggle, type Layout } from './SplitToggle'
 import { WalletPane } from './WalletPane'
 import { WalletSwitcher } from './WalletSwitcher'
@@ -52,7 +53,8 @@ export function AppShell() {
               />
               {wide && !split && <span className="h-4 w-px shrink-0 bg-separator" aria-hidden="true" />}
               {!split && <WalletSwitcher walletId={walletId} onSelect={setWalletId} />}
-              <div className="ml-auto flex items-center gap-2">
+              <div className="ml-auto flex min-w-0 items-center gap-2">
+                {!split && <PendingSignaturesPill activeWalletId={walletId} onSwitch={setWalletId} />}
                 <HealthDot />
                 {wide && <SplitToggle layout={layout} onToggle={() => setLayout(split ? 'single' : 'split')} />}
               </div>

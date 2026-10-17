@@ -134,6 +134,8 @@ function publicDesk(address: string): PublicDesk | null {
 
 // ── Shop ───────────────────────────────────────────────────────────
 
+const NO_OVERLAP_REASON = "No deal possible: the buyer's maximum is below the seller's minimum."
+
 const REGTEST_ADDRESS = /^bcrt1[0-9a-z]{20,90}$/i
 
 function wantListing(want: MockWant, viewer: MockWallet): ShopListing {
@@ -638,6 +640,11 @@ export const mockEngine = {
     }
 
     sessions.set(s.id, s)
+    // Pre-negotiation: no overlap between the buyer's maximum and the seller's minimum, so the agents never talk.
+    if (body.buyer_max_ceiling_usd < desk.secret_min_reserve_usd) {
+      block(s, [NO_OVERLAP_REASON])
+      return sessionView(s, 'buyer')
+    }
     buyerTurn(s)
     return sessionView(s, 'buyer')
   },
@@ -725,6 +732,8 @@ export const mockEngine = {
       .filter((l) => !l.is_mine && l.asset.asset_id === body.asset_id && l.amount >= body.rgb_amount)
       .filter((l) => l.trust.trust_tier !== 'Ring Anomaly Detected')
       .filter((l) => priceFor(l) <= body.buyer_max_ceiling_usd * 1.5)
+      // Server-side only: a desk whose secret floor is above the buyer's maximum could never close.
+      .filter((l) => (walletByAddress(l.owner_address)?.agent_profile.secret_min_reserve_usd ?? Infinity) <= body.buyer_max_ceiling_usd)
       .sort((a, b) => priceFor(a) - priceFor(b))
     const best = fits[0]
     if (!best) throw notFound('no_match', 'No matching listing right now')

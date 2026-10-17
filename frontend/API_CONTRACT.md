@@ -202,6 +202,7 @@ The buyer starts a negotiation with a seller's address. The secret ceiling and t
 - The endpoint returns immediately with the `SessionView`, and the negotiation runs in the background.
 - Negotiations share one local model, so they run in arrival order, one at a time (`NEGOTIATION_CONCURRENCY`, default 1). While a session waits it stays `NEGOTIATING` with `rounds: []` and `thinking: null`, and `queue_position` is its 1-based place in line (`null` once its negotiation runs). If the seller no longer holds the lot when its turn comes, it moves to `BLOCKED_BY_GATE` with the reason `"The seller no longer holds this lot."`.
 - If either side is a ring member or Unverified, the session is created directly in `BLOCKED_BY_GATE`, with `rounds: []` and the reason in `gate.reasons`. No QVAC call happens.
+- **Pre-negotiation:** if the buyer's ceiling is below the seller's secret reserve no deal is possible, so the session is also born `BLOCKED_BY_GATE`, without QVAC, with the reason `"No deal possible: the buyer's maximum is below the seller's minimum."`. Neither number is revealed. The seller's `asking_price_usd` is the public list price: the seller's agent defends it, the buyer's agent works it down.
 - Errors:
   - `400`: invalid amount or limits, or self-trade.
   - `409 seller_desk_inactive`: the seller's desk is off, or the seller isn't selling this asset.
@@ -333,7 +334,7 @@ The buyer's agent looks for the best matching `sell` listing and opens a session
   "buyer_max_ceiling_usd": 135, "buyer_target_usd": 120, "buyer_ai_prompt": "Open low and concede in steps." }
 ```
 
-Candidates are `sell` listings that are not the buyer's, have the same asset, offer at least `rgb_amount`, and whose owner trust tier is not `Ring Anomaly Detected`. The price for the requested amount is `price_usd * rgb_amount / amount`; candidates above `1.5 * buyer_max_ceiling_usd` are dropped. The cheapest candidate wins, and the response is `{ "listing": ShopListing, "session": SessionView }` with the session created exactly as `POST /api/sessions` would (same gate, same errors). `404 no_match` when nothing fits. The UI takes the user straight to the session.
+Candidates are `sell` listings that are not the buyer's, have the same asset, offer at least `rgb_amount`, whose owner trust tier is not `Ring Anomaly Detected`, and whose secret reserve is not above `buyer_max_ceiling_usd` (checked server-side, never returned). The price for the requested amount is `price_usd * rgb_amount / amount`; candidates above `1.5 * buyer_max_ceiling_usd` are dropped. The cheapest candidate wins, and the response is `{ "listing": ShopListing, "session": SessionView }` with the session created exactly as `POST /api/sessions` would (same gate, same errors). `404 no_match` when nothing fits. The UI takes the user straight to the session.
 
 ## Session state machine
 
@@ -358,14 +359,14 @@ Every session read carries `wallet_id`, and the response depends on it:
 ## Negotiation (QVAC)
 
 - Rounds continue until agreement, up to a safety cap of `max_rounds` (backend `NEGOTIATION_MAX_ROUNDS`, default 10; every `SessionView` carries it). In each round the buyer speaks first, then the seller. The only actions are `OFFER` and `ACCEPT`, never `REJECT`.
-- **Rationality:** every buyer `OFFER` is below the seller's last offer, and every seller `OFFER` is above the buyer's last offer. Offers move monotonically towards each other.
+- **Rationality:** every buyer `OFFER` is below the seller's last offer, and every seller `OFFER` is above the buyer's last offer. Offers move monotonically towards each other. Each new offer moves at least max(2 USD, 15% of the gap) towards the other side, until that side's secret limit (the seller's opening at the list price excepted). Before the last two rounds an agent does not take a price far from its own last offer (more than max(3 USD, 3%)): it counters with a quarter of the gap instead.
 - **Leak guard:** the public JSON never contains the speaker's secret, compared as integers rather than substrings.
 - **Model output:** `{private_thought, action, offer_usd, public_message}` with `reasoning_budget: 0`. `private_thought` becomes `my_private_thought` for its own side only.
 - **No agreement:** if neither side moves for two full rounds, the session moves to `BLOCKED_BY_GATE` with the reason `"No agreement: the offers stopped moving."`; if the cap is reached, the reason is `"No agreement within 10 rounds."` (with the actual cap). On the seller's turn in the last round, a bid at or above the reserve is accepted.
 
 ## Deterministic gate
 
-1. **When the session is created:** it blocks if either party is a ring member or Unverified. This happens before any negotiation.
+1. **When the session is created:** it blocks if either party is a ring member or Unverified, or if the buyer's ceiling is below the seller's reserve. This happens before any negotiation.
 2. **After the agreement:**
    - it blocks if the price is above the buyer's ceiling or below the seller's reserve;
    - it blocks if the amounts are not positive integers, or if either balance can't cover its leg.

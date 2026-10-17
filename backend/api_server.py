@@ -17,6 +17,10 @@ Key Endpoints:
 - GET  /api/sessions/{session_id}?wallet_id={wallet_id}
 - POST /api/sessions/{session_id}/sign
 - POST /api/sessions/{session_id}/cancel
+- GET  /api/shop?wallet_id=&kind=&asset_id=&q=
+- POST /api/shop/wants
+- POST /api/shop/{listing_id}/close
+- POST /api/shop/agent_search
 """
 
 import time
@@ -45,6 +49,7 @@ from backend.qvac_negotiator import negotiator, NegotiationContext
 from backend.session_store import session_store, SessionStatus
 from backend.rgb_swap_engine import RgbSwapEngine, WalletManager
 from backend.market import market_manager
+from backend.shop import shop_store, Want
 from backend.wallet_state import (
     wallet_state_manager,
     AgentProfile,
@@ -84,6 +89,7 @@ async def lifespan(app: FastAPI):
         settings.DEMO_ASSET_ID = assets["pepe_asset_id"]
         market_manager.set_asset_ids(assets["pepe_asset_id"], assets["usdt_asset_id"])
         wallet_state_manager.sync_demo_assets(assets["pepe_asset_id"], assets["usdt_asset_id"])
+        shop_store.seed_demo_wants(assets["pepe_asset_id"])
         logger.info(f"Demo environment ready: PEPE={assets['pepe_asset_id'][:12]}... USDT={assets['usdt_asset_id'][:12]}...")
     except Exception as exc:
         logger.warning(f"Demo environment setup deferred (regtest offline or starting): {exc}")
@@ -188,6 +194,25 @@ class SignSessionRequest(BaseModel):
 
 class CancelSessionRequest(BaseModel):
     wallet_id: str
+
+class CreateWantRequest(BaseModel):
+    wallet_id: str
+    asset_id: str
+    # Validated by hand so a non-integer amount gets the contract's invalid_amount code.
+    amount: Any
+    target_usd: Any
+    note: Optional[str] = None
+
+class CloseListingRequest(BaseModel):
+    wallet_id: str
+
+class AgentSearchRequest(BaseModel):
+    buyer_wallet_id: str
+    asset_id: str
+    rgb_amount: int
+    buyer_max_ceiling_usd: int
+    buyer_target_usd: int
+    buyer_ai_prompt: str
 
 # ── Health & Market ─────────────────────────────────────────────────
 
@@ -856,3 +881,164 @@ def cancel_session(session_id: str, req: CancelSessionRequest):
         )
     return session.to_session_view(viewer_wallet_id=req.wallet_id)
 
+# ── Shop ────────────────────────────────────────────────────────────
+
+def _require_wallet(wallet_id: str) -> None:
+    if wallet_id not in wallet_state_manager._labels:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "wallet_not_found", "message": f"Wallet {wallet_id} does not exist"},
+        )
+
+def _asset_ref(asset_id: str) -> Dict[str, Any]:
+    ticker = next((a.ticker for a in market_manager.get_market().assets if a.asset_id == asset_id), asset_id)
+    return {"asset_id": asset_id, "ticker": ticker, "schema": "NIA", "precision": 0}
+
+def _sell_listings(viewer_id: str) -> List[Dict[str, Any]]:
+    """Active Seller Desks, public fields only (never the reserve or the prompt)."""
+    aliases = wallet_state_manager.get_aliases(viewer_id)
+    listings: List[Dict[str, Any]] = []
+    for owner_id in list(wallet_state_manager._labels):
+        desk = _public_desk(owner_id)
+        if not desk or desk["offered_amount"] <= 0:
+            continue
+        owner_address = wallet_state_manager._addresses.get(owner_id, "")
+        listings.append({
+            "listing_id": f"desk_{owner_id}",
+            "kind": "sell",
+            "owner_address": owner_address,
+            "owner_alias": aliases.get(owner_address),
+            "is_mine": owner_id == viewer_id,
+            "asset": desk["asset"],
+            "amount": desk["offered_amount"],
+            "price_usd": desk["asking_price_usd"],
+            "note": None,
+            "trust": _trust_audit(memory_graph.get_reputation(owner_id)),
+            "created_at": None,
+        })
+    return listings
+
+def _want_listing(want: Want, viewer_id: str) -> Dict[str, Any]:
+    if want.owner_wallet_id:
+        owner_address = wallet_state_manager._addresses.get(want.owner_wallet_id, "")
+        rep = memory_graph.get_reputation(want.owner_wallet_id)
+    else:
+        owner_address = want.owner_address or ""
+        rep = memory_graph.get_reputation(wallet_state_manager.get_wallet_by_address(owner_address) or owner_address)
+    price = want.target_usd
+    return {
+        "listing_id": want.want_id,
+        "kind": "want",
+        "owner_address": owner_address,
+        "owner_alias": wallet_state_manager.get_aliases(viewer_id).get(owner_address),
+        "is_mine": want.owner_wallet_id == viewer_id,
+        "asset": _asset_ref(want.asset_id),
+        "amount": want.amount,
+        "price_usd": int(price) if float(price).is_integer() else price,
+        "note": want.note,
+        "trust": _trust_audit(rep),
+        "created_at": want.created_at,
+    }
+
+def _positive_int(value: Any) -> Optional[int]:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, float) and value.is_integer() and value > 0:
+        return int(value)
+    return None
+
+@app.get("/api/shop")
+def get_shop(
+    wallet_id: str = Query(...),
+    kind: Optional[str] = Query(None),
+    asset_id: Optional[str] = Query(None),
+    q: Optional[str] = Query(None),
+):
+    _require_wallet(wallet_id)
+    listings = _sell_listings(wallet_id) + [_want_listing(w, wallet_id) for w in shop_store.list_open()]
+    text = (q or "").strip().lower()
+
+    def matches(listing: Dict[str, Any]) -> bool:
+        if kind and listing["kind"] != kind:
+            return False
+        if asset_id and listing["asset"]["asset_id"] != asset_id:
+            return False
+        if not text:
+            return True
+        fields = (listing["owner_alias"], listing["owner_address"], listing["asset"]["ticker"], listing["note"])
+        return any(f and text in f.lower() for f in fields)
+
+    return [l for l in listings if matches(l)]
+
+@app.post("/api/shop/wants")
+def create_want(req: CreateWantRequest):
+    _require_wallet(req.wallet_id)
+    rgb_asset_ids = {a.asset_id for a in market_manager.get_market().assets}
+    if req.asset_id not in rgb_asset_ids:
+        raise HTTPException(status_code=400, detail={"code": "invalid_asset", "message": "Unknown RGB asset"})
+    amount = _positive_int(req.amount)
+    if amount is None:
+        raise HTTPException(status_code=400, detail={"code": "invalid_amount", "message": "Amount must be a positive integer"})
+    target = req.target_usd
+    if isinstance(target, bool) or not isinstance(target, (int, float)) or not target > 0:
+        raise HTTPException(status_code=400, detail={"code": "invalid_price", "message": "The target price must be greater than 0"})
+
+    want = shop_store.create_want(
+        owner_wallet_id=req.wallet_id,
+        asset_id=req.asset_id,
+        amount=amount,
+        target_usd=float(target),
+        note=req.note,
+    )
+    return _want_listing(want, req.wallet_id)
+
+@app.post("/api/shop/{listing_id}/close")
+def close_listing(listing_id: str, req: CloseListingRequest):
+    _require_wallet(req.wallet_id)
+    if listing_id.startswith("desk_"):
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "desk_listing", "message": "Turn off your Seller Desk to remove this listing"},
+        )
+    want = shop_store.get(listing_id)
+    if not want or want.closed:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "listing_not_found", "message": f"No open listing {listing_id}"},
+        )
+    if want.owner_wallet_id != req.wallet_id:
+        raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "This listing is not yours"})
+    return _want_listing(shop_store.close(listing_id), req.wallet_id)
+
+@app.post("/api/shop/agent_search")
+def agent_search(req: AgentSearchRequest):
+    """The buyer's agent picks the cheapest fitting Seller Desk (rings skipped) and opens a session."""
+    _require_wallet(req.buyer_wallet_id)
+
+    def price_for(listing: Dict[str, Any]) -> float:
+        return listing["price_usd"] * req.rgb_amount / listing["amount"]
+
+    fits = [
+        l for l in _sell_listings(req.buyer_wallet_id)
+        if not l["is_mine"]
+        and l["asset"]["asset_id"] == req.asset_id
+        and l["amount"] >= req.rgb_amount
+        and l["trust"]["trust_tier"] != TrustTier.RING_ANOMALY
+        and price_for(l) <= 1.5 * req.buyer_max_ceiling_usd
+    ]
+    if not fits:
+        raise HTTPException(status_code=404, detail={"code": "no_match", "message": "No matching listing right now"})
+    best = min(fits, key=price_for)
+
+    session = create_session(CreateSessionRequest(
+        buyer_wallet_id=req.buyer_wallet_id,
+        seller_address=best["owner_address"],
+        asset_id=req.asset_id,
+        rgb_amount=req.rgb_amount,
+        buyer_max_ceiling_usd=req.buyer_max_ceiling_usd,
+        buyer_target_usd=req.buyer_target_usd,
+        buyer_ai_prompt=req.buyer_ai_prompt,
+    ))
+    return {"listing": best, "session": session}

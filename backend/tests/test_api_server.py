@@ -419,3 +419,84 @@ def test_new_wdk_wallet_buying_is_blocked_by_gate(monkeypatch):
     assert resp.status_code == 200
     assert sess["state"] == "BLOCKED_BY_GATE"
     assert "Buyer trust check failed: Unverified" in sess["gate"]["reasons"]
+
+
+SECRET_KEYS = ("secret_min_reserve_usd", "seller_ai_prompt", "buyer_max_ceiling_usd", "buyer_target_usd", "buyer_ai_prompt")
+
+
+def test_shop_lists_public_seller_desks():
+    client.put("/api/wallets/wallet_b/agent_profile", json={"seller_active": True})
+    assert client.get("/api/shop?wallet_id=wallet_ghost").status_code == 404
+
+    resp = client.get("/api/shop?wallet_id=wallet_a&kind=sell")
+    assert resp.status_code == 200
+    listings = resp.json()
+    by_id = {l["listing_id"]: l for l in listings}
+    desk_b = by_id["desk_wallet_b"]
+    assert desk_b["kind"] == "sell" and desk_b["is_mine"] is False and desk_b["created_at"] is None
+    assert desk_b["asset"]["asset_id"] == _desk_asset()
+    assert desk_b["price_usd"] == client.get("/api/wallets/wallet_b").json()["agent_profile"]["asking_price_usd"]
+    assert by_id["desk_wallet_sybil"]["trust"]["trust_tier"] == "Ring Anomaly Detected"
+    assert "desk_wallet_a" not in by_id  # Wallet A's desk is off
+    for listing in listings:
+        assert not any(k in listing for k in SECRET_KEYS)
+
+    mine = client.get("/api/shop?wallet_id=wallet_b&kind=sell").json()
+    assert next(l for l in mine if l["listing_id"] == "desk_wallet_b")["is_mine"] is True
+
+
+def test_shop_wants_create_filter_and_close():
+    pepe = _desk_asset()
+    bad = {"wallet_id": "wallet_a", "asset_id": pepe, "amount": 250_000, "target_usd": 55}
+    assert client.post("/api/shop/wants", json={**bad, "asset_id": "btc"}).json()["code"] == "invalid_asset"
+    assert client.post("/api/shop/wants", json={**bad, "amount": 0}).json()["code"] == "invalid_amount"
+    assert client.post("/api/shop/wants", json={**bad, "amount": 2.5}).json()["code"] == "invalid_amount"
+    assert client.post("/api/shop/wants", json={**bad, "target_usd": 0}).json()["code"] == "invalid_price"
+
+    resp = client.post("/api/shop/wants", json={**bad, "note": "  Clean lot wanted, quick settle.  "})
+    assert resp.status_code == 200
+    want = resp.json()
+    assert want["kind"] == "want" and want["is_mine"] is True
+    assert want["price_usd"] == 55 and want["amount"] == 250_000
+    assert want["note"] == "Clean lot wanted, quick settle."
+    assert want["listing_id"].startswith("want_") and want["created_at"] > 0
+
+    found = client.get("/api/shop?wallet_id=wallet_b&kind=want&q=CLEAN LOT").json()
+    assert [l["listing_id"] for l in found] == [want["listing_id"]]
+    assert found[0]["is_mine"] is False
+    assert client.get(f"/api/shop?wallet_id=wallet_b&asset_id=rgb:other&q=clean").json() == []
+
+    wid = want["listing_id"]
+    assert client.post(f"/api/shop/{wid}/close", json={"wallet_id": "wallet_b"}).status_code == 403
+    assert client.post("/api/shop/desk_wallet_b/close", json={"wallet_id": "wallet_b"}).json()["code"] == "desk_listing"
+    assert client.post("/api/shop/want_missing/close", json={"wallet_id": "wallet_a"}).status_code == 404
+    assert client.post(f"/api/shop/{wid}/close", json={"wallet_id": "wallet_a"}).status_code == 200
+    assert client.post(f"/api/shop/{wid}/close", json={"wallet_id": "wallet_a"}).json()["code"] == "listing_not_found"
+    assert wid not in [l["listing_id"] for l in client.get("/api/shop?wallet_id=wallet_a").json()]
+
+
+def test_agent_search_skips_rings_and_opens_a_session(monkeypatch):
+    monkeypatch.setattr("backend.qvac_negotiator.negotiator.use_mock", True)
+    _fund_wallets(monkeypatch)
+    client.put("/api/wallets/wallet_b/agent_profile", json={"seller_active": True, "asking_price_usd": 150, "secret_min_reserve_usd": 110})
+    req = {
+        "buyer_wallet_id": "wallet_a",
+        "asset_id": _desk_asset(),
+        "rgb_amount": 500_000,
+        "buyer_max_ceiling_usd": 135,
+        "buyer_target_usd": 120,
+        "buyer_ai_prompt": "Open low and concede in steps.",
+    }
+    # Make Sybil's desk the cheapest (40 vs 75 USD for 500k): it is a ring, so Wallet B's desk must win.
+    client.put("/api/wallets/wallet_sybil/agent_profile", json={"seller_active": True, "asking_price_usd": 40, "offered_amount": 500_000})
+    resp = client.post("/api/shop/agent_search", json=req)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["listing"]["listing_id"] == "desk_wallet_b"
+    assert body["session"]["state"] == "NEGOTIATING"
+    assert body["session"]["counterparty_address"] == body["listing"]["owner_address"]
+
+    assert client.post("/api/shop/agent_search", json={**req, "asset_id": "rgb:other"}).json()["code"] == "no_match"
+    assert client.post("/api/shop/agent_search", json={**req, "rgb_amount": 5_000_000}).json()["code"] == "no_match"
+    resp = client.post("/api/shop/agent_search", json={**req, "buyer_max_ceiling_usd": 40, "buyer_target_usd": 30})
+    assert (resp.status_code, resp.json()["code"]) == (404, "no_match")

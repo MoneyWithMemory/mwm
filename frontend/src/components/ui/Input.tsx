@@ -11,6 +11,8 @@ export interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 
   prefix?: ReactNode
   suffix?: ReactNode
   containerClassName?: string
+  /** A line kept under the field so a hint or an error never moves what follows; off for fields that never show one (e.g. search). */
+  reserveMessage?: boolean
 }
 
 const shakeVariants = {
@@ -33,6 +35,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
     disabled = false,
     className,
     containerClassName,
+    reserveMessage = true,
     ...rest
   },
   ref
@@ -91,33 +94,35 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
       </motion.div>
 
       {/* Reserved height footer ensures ZERO layout shift when errors appear or resolve */}
-      <div id={hintId} className="min-h-[1.25rem] pt-1 text-xs select-none">
-        <AnimatePresence mode="wait" initial={false}>
-          {hasError ? (
-            <motion.p
-              key="error"
-              initial={{ opacity: 0, y: -2 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -2 }}
-              transition={{ duration: DUR.quick, ease: EASE_OUT }}
-              className="text-danger font-medium leading-none"
-            >
-              {error}
-            </motion.p>
-          ) : hint ? (
-            <motion.p
-              key="hint"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: DUR.quick, ease: EASE_OUT }}
-              className="text-hint leading-none"
-            >
-              {hint}
-            </motion.p>
-          ) : null}
-        </AnimatePresence>
-      </div>
+      {(reserveMessage || hasError || hint) && (
+        <div id={hintId} className="min-h-[1.25rem] pt-1 text-xs select-none">
+          <AnimatePresence mode="wait" initial={false}>
+            {hasError ? (
+              <motion.p
+                key="error"
+                initial={{ opacity: 0, y: -2 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -2 }}
+                transition={{ duration: DUR.quick, ease: EASE_OUT }}
+                className="text-danger font-medium leading-none"
+              >
+                {error}
+              </motion.p>
+            ) : hint ? (
+              <motion.p
+                key="hint"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: DUR.quick, ease: EASE_OUT }}
+                className="text-hint leading-none"
+              >
+                {hint}
+              </motion.p>
+            ) : null}
+          </AnimatePresence>
+        </div>
+      )}
     </div>
   )
 })

@@ -18,11 +18,31 @@ const FILTERS = [
   { value: 'mine', label: 'Yours' },
 ] as const
 
+/** One column on phones, two from 672px of pane, three from 896px (desktop single view). */
+const GRID = 'grid grid-cols-1 gap-4 @2xl:grid-cols-2 @4xl:grid-cols-3'
+
+/** Shaped like a ListingCard (who, price, amount, action), in the same grid: nothing jumps when listings arrive. */
 function ListSkeleton() {
   return (
-    <div className="flex flex-col gap-3" role="status" aria-label="Loading shop">
-      {[0, 1, 2].map((i) => (
-        <Skeleton key={i} className="h-52 rounded-card" />
+    <div className={GRID} role="status" aria-label="Loading shop">
+      {[0, 1, 2, 3, 4, 5].map((i) => (
+        <Card key={i} className="flex flex-col gap-4 p-4">
+          <div className="flex items-center gap-3">
+            <Skeleton variant="circular" className="size-7" />
+            <div className="flex flex-1 flex-col gap-1.5">
+              <Skeleton width={96} height={13} />
+              <Skeleton width={136} height={12} />
+            </div>
+            <Skeleton width={56} height={20} className="rounded-full" />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Skeleton width={88} height={22} />
+            <Skeleton width={168} height={12} />
+          </div>
+          <div className="flex items-center justify-end">
+            <Skeleton width={72} height={32} />
+          </div>
+        </Card>
       ))}
     </div>
   )
@@ -63,7 +83,7 @@ export function ShopView() {
   let feed
   if (shop.data && listings.length > 0) {
     feed = (
-      <ul className="flex flex-col gap-3 @4xl:grid @4xl:grid-cols-2">
+      <ul className={GRID}>
         {listings.map((listing) => (
           <li key={listing.listing_id} className="min-w-0">
             <ListingCard listing={listing} onEditOffer={() => openDesk()} onSellTo={sellTo} />
@@ -117,11 +137,11 @@ export function ShopView() {
 
         <Card>
           <CardContent className="flex items-center gap-3 pt-4">
-            <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent" aria-hidden="true">
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-surface-muted text-hint" aria-hidden="true">
               <Bot size={20} />
             </span>
-            <div className="flex min-w-0 flex-1 flex-col">
-              <span className="text-sm font-semibold">Let your agent find the best deal</span>
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="text-sm font-medium">Let your agent find the best deal</span>
               <span className="text-xs text-hint">It picks the best seller and negotiates within your limits.</span>
             </div>
             <Button size="sm" trailingArrow onClick={() => setAgentOpen(true)} disabled={!market.data || !wallet.data}>
@@ -143,6 +163,7 @@ export function ShopView() {
             placeholder="Search by name, address or asset"
             value={text}
             prefix={<Search size={16} aria-hidden="true" />}
+            reserveMessage={false}
             onChange={(e) => setText(e.target.value)}
           />
         </div>

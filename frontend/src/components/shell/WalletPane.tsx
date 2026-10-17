@@ -1,4 +1,7 @@
+import { AnimatePresence, motion } from 'motion/react'
 import { useCallback, useMemo, useState, type ComponentType } from 'react'
+import { OverlayLayer } from '@/components/ui/OverlayLayer'
+import { pageSlide } from '@/lib/motion'
 import {
   WalletContext,
   type NavEntry,
@@ -12,6 +15,7 @@ import { ContactsView } from '@/views/contacts/ContactsView'
 import { SellerDeskView } from '@/views/seller-desk/SellerDeskView'
 import { TradeView } from '@/views/trade/TradeView'
 import { WalletView } from '@/views/wallet/WalletView'
+import { BottomNav } from './BottomNav'
 
 const VIEWS: Record<ViewName, ComponentType> = {
   wallet: WalletView,
@@ -20,20 +24,13 @@ const VIEWS: Record<ViewName, ComponentType> = {
   contacts: ContactsView,
 }
 
-// Placeholder tab bar; M1.6 replaces it with the Telegram-style BottomNav.
-const TABS: { view: ViewName; label: string }[] = [
-  { view: 'wallet', label: 'Wallet' },
-  { view: 'trade', label: 'Trade' },
-  { view: 'seller-desk', label: 'Seller Desk' },
-  { view: 'contacts', label: 'Contacts' },
-]
-
 const ROOT: NavEntry = { view: 'wallet', params: undefined }
 
 function toEntry<V extends ViewName>([view, params]: NavigateArgs<V>): NavEntry {
   return { view, params } as NavEntry
 }
 
+/** One wallet with its own view stack, page transitions, tab bar and overlay host. */
 export function WalletPane({ walletId }: { walletId: string }) {
   const [stack, setStack] = useState<NavEntry[]>([ROOT])
 
@@ -56,24 +53,21 @@ export function WalletPane({ walletId }: { walletId: string }) {
 
   return (
     <WalletContext.Provider value={value}>
-      <section className="flex min-h-0 flex-1 flex-col" aria-label={`Wallet ${walletId}`}>
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <View />
-        </div>
-        <nav className="flex gap-1 border-t border-black/10 p-2" aria-label="Views">
-          {TABS.map((tab) => (
-            <button
-              key={tab.view}
-              type="button"
-              className="pressable flex-1 rounded-lg px-2 py-2 text-xs font-medium aria-[current=page]:bg-black/10"
-              aria-current={stack[0].view === tab.view ? 'page' : undefined}
-              onClick={() => reset(tab.view)}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </nav>
-      </section>
+      <OverlayLayer className="flex min-h-0 flex-1 flex-col" role="region" aria-label={`Wallet ${walletId}`}>
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={`${stack.length}:${current.view}`}
+            variants={pageSlide}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+          >
+            <View />
+          </motion.div>
+        </AnimatePresence>
+        <BottomNav />
+      </OverlayLayer>
     </WalletContext.Provider>
   )
 }

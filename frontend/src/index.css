@@ -1,3 +1,233 @@
 @import "tailwindcss";
 
-/* Design and motion tokens, .pressable, .ui-shell and .select-text land in M1.2. */
+/*
+ * Single source of truth for design and motion tokens (M1.2).
+ * Components read these through Tailwind utilities (bg-surface, text-hint,
+ * rounded-card, ease-smooth-out, ...) or var(--...). Mirror for Framer
+ * Motion: src/lib/motion.ts.
+ */
+
+/* ── Color palette per scheme (Telegram Wallet) ─────────────────── */
+:root {
+  color-scheme: light dark;
+  --palette-bg: #f2f2f7;             /* app background behind cards */
+  --palette-surface: #ffffff;        /* cards, sheets, nav */
+  --palette-surface-muted: #e9e9ef;  /* inputs, segmented track, chips */
+  --palette-fg: #0f0f0f;             /* primary text */
+  --palette-hint: #707579;           /* secondary text, placeholders */
+  --palette-separator: rgb(0 0 0 / 0.08);
+  --palette-accent: #2481cc;         /* Telegram blue: links, primary buttons */
+  --palette-accent-pressed: #1f6fb0;
+  --palette-success: #31b545;
+  --palette-danger: #e53935;
+  --palette-warning: #e8930c;
+  --palette-overlay: rgb(0 0 0 / 0.4);  /* sheet/modal backdrop */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --palette-bg: #000000;
+    --palette-surface: #1c1c1e;
+    --palette-surface-muted: #2c2c2e;
+    --palette-fg: #ffffff;
+    --palette-hint: #8d8e93;
+    --palette-separator: rgb(255 255 255 / 0.1);
+    --palette-accent: #3e88f7;
+    --palette-accent-pressed: #2f74db;
+    --palette-success: #30d158;
+    --palette-danger: #ff453a;
+    --palette-warning: #ff9f0a;
+    --palette-overlay: rgb(0 0 0 / 0.6);
+  }
+}
+
+/* static: every token is emitted, so components can also read it with var(). */
+@theme static {
+  --color-bg: var(--palette-bg);
+  --color-surface: var(--palette-surface);
+  --color-surface-muted: var(--palette-surface-muted);
+  --color-fg: var(--palette-fg);
+  --color-hint: var(--palette-hint);
+  --color-separator: var(--palette-separator);
+  --color-accent: var(--palette-accent);
+  --color-accent-pressed: var(--palette-accent-pressed);
+  --color-on-accent: #ffffff;
+  --color-success: var(--palette-success);
+  --color-danger: var(--palette-danger);
+  --color-warning: var(--palette-warning);
+  --color-overlay: var(--palette-overlay);
+
+  /* Trust tiers (TrustBadge): High Authenticity / Ring Anomaly Detected / Unverified */
+  --color-trust-high: var(--palette-success);
+  --color-trust-ring: var(--palette-danger);
+  --color-trust-unverified: var(--palette-hint);
+}
+
+@theme static {
+  /* Asset badges: same in both schemes. Other assets get a color derived from asset_id. */
+  --color-btc: #f7931a;
+  --color-usdt: #26a17b;
+  --color-pepe: #4c9a2a;  /* proposed, pending confirmation */
+
+  /* Typography: system font; amounts use .amount (tabular numbers) */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --text-hero: 2.5rem;
+  --text-hero--line-height: 1.1;
+  --text-hero--letter-spacing: -0.02em;
+
+  /* Radii */
+  --radius-control: 0.75rem;  /* buttons, inputs, chips */
+  --radius-card: 1rem;
+  --radius-sheet: 1.25rem;    /* top corners of bottom sheets */
+
+  /* Shadows */
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.04);
+  --shadow-raised: 0 4px 14px rgb(0 0 0 / 0.1);   /* hover lift */
+  --shadow-overlay: 0 -8px 30px rgb(0 0 0 / 0.18); /* sheets, modals */
+
+  /* Easings (also available as ease-* utilities) */
+  --ease-smooth-out: cubic-bezier(0.22, 1, 0.36, 1);  /* default: open/close, slide, resize, hover */
+  --ease-exponential: cubic-bezier(0.16, 1, 0.3, 1);  /* dialog and card reveal */
+  --ease-bounce: cubic-bezier(0.34, 1.36, 0.64, 1);   /* badge pop, number bump */
+  --ease-bounce-strong: cubic-bezier(0.34, 3.85, 0.64, 1);  /* bouncy hover-out return */
+  --ease-in-out: ease-in-out;  /* icon swap, text swap */
+  --ease-out: ease-out;        /* tooltips */
+  --ease-in: initial;          /* removed: ease-in is banned on interactive UI */
+}
+
+/* ── Motion scale (transitions-dev) ─────────────────────────────── */
+:root {
+  /* Durations */
+  --duration-stagger: 40ms;    /* per-item stagger offset */
+  --duration-micro: 80ms;      /* intent delay, shake segment */
+  --duration-quick: 150ms;     /* close, press, hover-in, text swap */
+  --duration-fast: 250ms;      /* open, hover-out, tabs, page slide */
+  --duration-medium: 350ms;    /* panel and toast close */
+  --duration-slow: 400ms;      /* panel open, skeleton reveal */
+  --duration-very-slow: 500ms; /* success check, emphasis */
+  --ease-linear: linear;       /* shimmer, skeleton pulse, spinner */
+  /* Distances */
+  --distance-micro: 4px;   /* text swap */
+  --distance-small: 6px;   /* error shake (small segment) */
+  --distance-base: 8px;    /* page slide, list item entry */
+  --distance-medium: 12px; /* text reveal */
+  --distance-large: 30px;  /* success badge rise, sheet entry */
+  /* Scales: overlays never start from 0 */
+  --scale-large: 0.96;     /* modal and sheet open/close */
+  --scale-medium: 0.97;    /* dropdown open */
+  --scale-small: 0.98;     /* tooltip open */
+  --scale-tiny: 0.99;      /* dropdown close */
+  --scale-hover: 1.015;    /* hover lift */
+  --scale-press: 0.97;     /* :active on buttons, cards, tabs */
+  --scale-press-icon: 0.9; /* :active on icon-only triggers */
+  /* Blur */
+  --blur-small: 2px;       /* icon swap, text swap, panel reveal */
+  --blur-medium: 3px;      /* page slide, text reveal */
+  --blur-large: 8px;       /* success check */
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* App chrome: no accidental selection, callouts or tap flashes on mobile. */
+  .ui-shell {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Selectable content: inputs, agent thoughts, negotiation rounds, addresses, hashes. */
+  .ui-shell :is(input, textarea, [contenteditable="true"]),
+  .select-text {
+    -webkit-user-select: text;
+    user-select: text;
+    -webkit-touch-callout: default;
+  }
+
+  /*
+   * Clickable surfaces. Hover-in and press are quick, hover-out settles
+   * softer (the transition of the state being entered applies). Owns the
+   * element's transition: don't add transition-* utilities on top.
+   */
+  .pressable,
+  .pressable-icon {
+    --pressable-shadow: var(--shadow-raised);
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    transition:
+      transform var(--duration-fast) var(--ease-smooth-out),
+      box-shadow var(--duration-fast) var(--ease-smooth-out),
+      background-color var(--duration-quick) var(--ease-smooth-out),
+      border-color var(--duration-quick) var(--ease-smooth-out),
+      color var(--duration-quick) var(--ease-smooth-out),
+      opacity var(--duration-quick) var(--ease-smooth-out);
+  }
+
+  /* Flat variant for text/ghost triggers: lift without a shadow. */
+  .pressable-flat {
+    --pressable-shadow: none;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .pressable:hover:not(:disabled, [aria-disabled="true"]),
+    .pressable-icon:hover:not(:disabled, [aria-disabled="true"]) {
+      transform: scale(var(--scale-hover));
+      box-shadow: var(--pressable-shadow);
+      transition-duration: var(--duration-quick);
+    }
+  }
+
+  .pressable:active:not(:disabled, [aria-disabled="true"]) {
+    transform: scale(var(--scale-press));
+    transition-duration: var(--duration-quick);
+  }
+
+  .pressable-icon:active:not(:disabled, [aria-disabled="true"]) {
+    transform: scale(var(--scale-press-icon));
+    transition-duration: var(--duration-quick);
+  }
+
+  .badge-nowrap {
+    white-space: nowrap;
+  }
+
+  /* Balances, prices, sats: digits keep their width while values change. */
+  .amount {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --scale-hover: 1;
+    --scale-press: 0.99;
+    --scale-press-icon: 0.97;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}

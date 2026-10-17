@@ -219,11 +219,11 @@ class RgbSwapEngine:
                     settings.DEMO_ASSET_SUPPLY,
                 )
 
-            # 3. Check if Wallet A already has USDT
+            # 3. Check if Wallet A already has USDT (with positive spendable balance)
             a_balances = self.wallet_mgr.get_balances("wallet_a")
             usdt_id = None
             for a in a_balances["assets"]:
-                if a["ticker"] == settings.PAYMENT_ASSET_TICKER and a["future"] >= settings.PAYMENT_ASSET_SUPPLY:
+                if a["ticker"] == settings.PAYMENT_ASSET_TICKER and a["spendable"] >= settings.PAYMENT_ASSET_SUPPLY:
                     usdt_id = a["asset_id"]
                     break
             if not usdt_id:
@@ -239,6 +239,43 @@ class RgbSwapEngine:
                 "pepe_asset_id": pepe_id,
                 "usdt_asset_id": usdt_id,
             }
+
+    def _ensure_isolated_allocation(
+        self,
+        wallet: rgb_lib.Wallet,
+        online: Any,
+        asset_id: str,
+        exact_amount: int,
+    ) -> None:
+        """
+        Ensures taker has an unspent UTXO containing EXCLUSIVELY the exact payment amount.
+        In rgb-lib atomic swaps, spending from a multi-allocated or larger UTXO without prior
+        splitting causes InvalidConsignment at process_swap_completion.
+        """
+        unspents = wallet.list_unspents(online, False, False)
+        for u in unspents:
+            if len(u.rgb_allocations) == 1:
+                alloc = u.rgb_allocations[0]
+                if alloc.asset_id == asset_id and alloc.settled:
+                    if hasattr(alloc.assignment, "amount") and alloc.assignment.amount == exact_amount:
+                        logger.info(f"Isolated settled allocation of {exact_amount} {asset_id} already exists.")
+                        return
+
+        logger.info(f"Preparing isolated allocation of {exact_amount} {asset_id} on taker via self-send...")
+        transport = self.proxy_url.replace("http://", "rpc://").replace("https://", "rpcs://")
+        rcv = wallet.blind_receive(None, rgb_lib.Assignment.FUNGIBLE(exact_amount), None, [transport], 1)
+        recipient = rgb_lib.Recipient(
+            recipient_id=rcv.recipient_id,
+            witness_data=None,
+            assignment=rgb_lib.Assignment.FUNGIBLE(exact_amount),
+            transport_endpoints=[transport],
+        )
+        wallet.send(online, {asset_id: [recipient]}, True, FEE_RATE, 1, None)
+        regtest.mine(2)
+        wallet.refresh(online, None, [], False)
+        regtest.mine(1)
+        wallet.refresh(online, asset_id, [], False)
+        logger.info(f"Isolated settled allocation of {exact_amount} {asset_id} successfully created.")
 
     def execute_atomic_swap(
         self,
@@ -273,6 +310,16 @@ class RgbSwapEngine:
         with SWAP_GLOBAL_LOCK:
             maker_wallet, maker_online, _ = self.wallet_mgr.get_or_create_wallet("wallet_b")
             taker_wallet, taker_online, _ = self.wallet_mgr.get_or_create_wallet("wallet_a")
+
+            # Ensure Taker has an isolated, settled allocation of exactly canonical_terms.payment_amount
+            # This prevents InvalidConsignment during process_swap_completion in rgb-lib
+            logger.info(f"Ensuring isolated allocation of {canonical_terms.payment_amount} payment tokens on Taker...")
+            self._ensure_isolated_allocation(
+                wallet=taker_wallet,
+                online=taker_online,
+                asset_id=canonical_terms.payment_asset_id,
+                exact_amount=canonical_terms.payment_amount,
+            )
 
             # Legs definition:
             # Maker (Seller) gives PEPE-RGB, receives USDT-RGB

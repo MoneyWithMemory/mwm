@@ -440,6 +440,7 @@ def test_shop_lists_public_seller_desks():
     assert desk_b["asset"]["asset_id"] == _desk_asset()
     assert desk_b["price_usd"] == client.get("/api/wallets/wallet_b").json()["agent_profile"]["asking_price_usd"]
     assert by_id["desk_wallet_sybil"]["trust"]["trust_tier"] == "Ring Anomaly Detected"
+    assert desk_b["owner_alias"] == "Wallet B"  # wallet label when the viewer has no alias
     assert "desk_wallet_a" not in by_id  # Wallet A's desk is off
     for listing in listings:
         assert not any(k in listing for k in SECRET_KEYS)

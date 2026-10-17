@@ -957,9 +957,15 @@ def _asset_ref(asset_id: str) -> Dict[str, Any]:
     ticker = next((a.ticker for a in market_manager.get_market().assets if a.asset_id == asset_id), asset_id)
     return {"asset_id": asset_id, "ticker": ticker, "schema": "NIA", "precision": 0}
 
+def _owner_name(viewer_id: str, owner_address: str, owner_id: Optional[str]) -> Optional[str]:
+    """The viewer's alias for the owner, else the owner's wallet label (as in contacts)."""
+    alias = wallet_state_manager.get_aliases(viewer_id).get(owner_address)
+    if alias or not owner_id:
+        return alias
+    return wallet_state_manager._labels.get(owner_id)
+
 def _sell_listings(viewer_id: str) -> List[Dict[str, Any]]:
     """Active Seller Desks, public fields only (never the reserve or the prompt)."""
-    aliases = wallet_state_manager.get_aliases(viewer_id)
     listings: List[Dict[str, Any]] = []
     for owner_id in list(wallet_state_manager._labels):
         desk = _public_desk(owner_id)
@@ -970,7 +976,7 @@ def _sell_listings(viewer_id: str) -> List[Dict[str, Any]]:
             "listing_id": f"desk_{owner_id}",
             "kind": "sell",
             "owner_address": owner_address,
-            "owner_alias": aliases.get(owner_address),
+            "owner_alias": _owner_name(viewer_id, owner_address, owner_id),
             "is_mine": owner_id == viewer_id,
             "asset": desk["asset"],
             "amount": desk["offered_amount"],
@@ -993,7 +999,7 @@ def _want_listing(want: Want, viewer_id: str) -> Dict[str, Any]:
         "listing_id": want.want_id,
         "kind": "want",
         "owner_address": owner_address,
-        "owner_alias": wallet_state_manager.get_aliases(viewer_id).get(owner_address),
+        "owner_alias": _owner_name(viewer_id, owner_address, want.owner_wallet_id or wallet_state_manager.get_wallet_by_address(owner_address)),
         "is_mine": want.owner_wallet_id == viewer_id,
         "asset": _asset_ref(want.asset_id),
         "amount": want.amount,

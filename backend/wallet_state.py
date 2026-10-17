@@ -175,12 +175,13 @@ class WalletStateManager:
         self._profiles["wallet_b"].offered_asset_id = pepe_id
         self._profiles["wallet_sybil"].offered_asset_id = pepe_id
 
-        # Update initial seed points with real asset IDs
+        # Update initial seed points with real asset IDs and BTC valuation at sats_per_usd
+        sats_per_usd = settings.SATS_PER_USD or 1000
         self._history["wallet_a"] = [
             HistoryPoint(
                 t=int(time.time()) - 3600,
                 balances={"btc": 100_000_000, usdt_id: 10_000, pepe_id: 0},
-                total_usd=10_000.0,
+                total_usd=round(100_000_000 / sats_per_usd + 10_000.0, 2),
             )
         ]
         self._cost_basis["wallet_a"] = {"btc": None, usdt_id: 1.0, pepe_id: None}
@@ -189,7 +190,7 @@ class WalletStateManager:
             HistoryPoint(
                 t=int(time.time()) - 3600,
                 balances={"btc": 100_000_000, pepe_id: 1_000_000, usdt_id: 0},
-                total_usd=0.0,
+                total_usd=round(100_000_000 / sats_per_usd + 0.0, 2),
             )
         ]
         self._cost_basis["wallet_b"] = {"btc": None, usdt_id: 1.0, pepe_id: None}
@@ -198,7 +199,7 @@ class WalletStateManager:
             HistoryPoint(
                 t=int(time.time()) - 3600,
                 balances={"btc": 50_000_000, pepe_id: 0, usdt_id: 0},
-                total_usd=0.0,
+                total_usd=round(50_000_000 / sats_per_usd + 0.0, 2),
             )
         ]
         self._cost_basis["wallet_sybil"] = {"btc": None, usdt_id: 1.0, pepe_id: None}
@@ -344,13 +345,49 @@ class WalletStateManager:
                 status="confirmed",
             ))
 
-        # 3. Update market price
-        market_manager.record_settlement_price(agreed_price_usd)
+        # 3. Update market price with unit price (agreed / lot)
+        unit_pepe_price = float(agreed_price_usd) / (float(asset_amount) / (10 ** 0))
+        market_manager.record_settlement_price(unit_pepe_price)
 
         # 4. Update avg cost basis
         if buyer_wallet_id not in self._cost_basis:
             self._cost_basis[buyer_wallet_id] = {}
-        self._cost_basis[buyer_wallet_id][asset_id] = float(agreed_price_usd)
+        self._cost_basis[buyer_wallet_id][asset_id] = unit_pepe_price
+
+        # 5. Append new HistoryPoint for Buyer and Seller
+        sats_per_usd = settings.SATS_PER_USD or 1000
+
+        # Buyer history point
+        if buyer_wallet_id in self._history and self._history[buyer_wallet_id]:
+            prev_hp = self._history[buyer_wallet_id][-1]
+            b_balances = dict(prev_hp.balances)
+            b_balances["btc"] = b_balances.get("btc", 100_000_000)
+            b_balances[payment_asset_id] = max(0, b_balances.get(payment_asset_id, 0) - payment_amount)
+            b_balances[asset_id] = b_balances.get(asset_id, 0) + asset_amount
+            btc_usd = float(b_balances["btc"]) / float(sats_per_usd)
+            usdt_usd = float(b_balances.get(payment_asset_id, 0))
+            pepe_usd = float(b_balances.get(asset_id, 0)) * unit_pepe_price
+            self._history[buyer_wallet_id].append(HistoryPoint(
+                t=now,
+                balances=b_balances,
+                total_usd=round(btc_usd + usdt_usd + pepe_usd, 2)
+            ))
+
+        # Seller history point
+        if seller_wallet_id in self._history and self._history[seller_wallet_id]:
+            prev_hp = self._history[seller_wallet_id][-1]
+            s_balances = dict(prev_hp.balances)
+            s_balances["btc"] = s_balances.get("btc", 100_000_000)
+            s_balances[payment_asset_id] = s_balances.get(payment_asset_id, 0) + payment_amount
+            s_balances[asset_id] = max(0, s_balances.get(asset_id, 0) - asset_amount)
+            btc_usd = float(s_balances["btc"]) / float(sats_per_usd)
+            usdt_usd = float(s_balances.get(payment_asset_id, 0))
+            pepe_usd = float(s_balances.get(asset_id, 0)) * unit_pepe_price
+            self._history[seller_wallet_id].append(HistoryPoint(
+                t=now,
+                balances=s_balances,
+                total_usd=round(btc_usd + usdt_usd + pepe_usd, 2)
+            ))
 
     def assemble_wallet_state(self, wallet_id: str, balance_data: Dict[str, Any]) -> WalletState:
         address = balance_data.get("address", self._addresses.get(wallet_id, ""))
@@ -378,7 +415,7 @@ class WalletStateManager:
                 # Filter out legacy old assets
                 continue
             ticker = nia["ticker"]
-            amt = nia["settled"]
+            amt = nia.get("spendable", nia.get("settled", 0))
             balances_map[aid] = amt
             assets.append(AssetBalance(
                 asset_id=aid,
@@ -388,10 +425,14 @@ class WalletStateManager:
                 amount=amt,
             ))
 
-        # Total USD: assets without price count as 0
-        total_usd = float(balances_map.get(usdt_id, 0))
+        # Total USD: BTC (sats / sats_per_usd) + USDT + PEPE (if settled and priced)
+        btc_sats = balances_map.get("btc", 0)
+        sats_per_usd = settings.SATS_PER_USD or 1000
+        btc_usd = float(btc_sats) / float(sats_per_usd)
+        total_usd = btc_usd + float(balances_map.get(usdt_id, 0))
         if market_manager.last_pepe_price_usd and balances_map.get(pepe_id, 0) > 0:
-            total_usd += float(market_manager.last_pepe_price_usd)
+            total_usd += float(market_manager.last_pepe_price_usd) * float(balances_map.get(pepe_id, 0))
+        total_usd = round(total_usd, 2)
 
         # Build history points with asset_id keys
         raw_history = self._history.get(wallet_id, [])
@@ -400,10 +441,11 @@ class WalletStateManager:
             hp_map: Dict[str, int] = {"btc": hp.balances.get("btc", hp.balances.get("BTC", btc_sats))}
             hp_map[usdt_id] = hp.balances.get(usdt_id, hp.balances.get("USDT", 0))
             hp_map[pepe_id] = hp.balances.get(pepe_id, hp.balances.get("PEPE", 0))
-            hp_tot = float(hp_map[usdt_id])
+            hp_btc_usd = float(hp_map["btc"]) / float(sats_per_usd)
+            hp_tot = hp_btc_usd + float(hp_map[usdt_id])
             if market_manager.last_pepe_price_usd and hp_map[pepe_id] > 0:
-                hp_tot += float(market_manager.last_pepe_price_usd)
-            history_points.append(HistoryPoint(t=hp.t, balances=hp_map, total_usd=hp_tot))
+                hp_tot += float(market_manager.last_pepe_price_usd) * float(hp_map[pepe_id])
+            history_points.append(HistoryPoint(t=hp.t, balances=hp_map, total_usd=round(hp_tot, 2)))
 
         if not history_points:
             now = int(time.time())

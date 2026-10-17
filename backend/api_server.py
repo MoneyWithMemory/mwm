@@ -108,7 +108,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from fastapi.exceptions import RequestValidationError
+
 # ── Global Error Handler matching ApiErrorBody ──────────────────────
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    messages = []
+    for err in exc.errors():
+        loc = ".".join(str(l) for l in err.get("loc", []))
+        msg = err.get("msg", "Invalid value")
+        messages.append(f"{loc}: {msg}" if loc else msg)
+    combined_msg = "; ".join(messages) if messages else "Invalid request payload"
+    return JSONResponse(
+        status_code=400,
+        content={"code": "invalid_request", "message": combined_msg},
+    )
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
@@ -529,6 +544,8 @@ def run_settlement_worker(session_id: str) -> None:
             seller_signed=session.seller_signed,
             buyer_signed_hash=session.buyer_signed_hash or "",
             seller_signed_hash=session.seller_signed_hash or "",
+            maker_wallet_id=session.seller_wallet_id,
+            taker_wallet_id=session.buyer_wallet_id,
             progress_callback=progress_callback,
         )
         session_store.set_settled(session_id, txid)
@@ -564,7 +581,9 @@ def run_settlement_worker(session_id: str) -> None:
         logger.info(f"Session {session_id} successfully settled and confirmed. txid={txid}")
     except Exception as exc:
         logger.error(f"Settlement failed for session {session_id}: {exc}", exc_info=True)
-        session_store.set_failed(session_id, str(exc))
+        failure_msg = str(exc).strip() or repr(exc)
+        failure_str = f"{type(exc).__name__}: {failure_msg}"
+        session_store.set_failed(session_id, failure_str)
 
 # ── Sessions Endpoints ──────────────────────────────────────────────
 

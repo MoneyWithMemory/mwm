@@ -168,13 +168,13 @@ CRITICAL RULES:
 1. Confidentiality: NEVER disclose your secret budget/reserve limit to the counterparty in your public_message.
 2. Strategy: This is Round {ctx.round_number} of 4.
    - For Buyer:
-     * Round 1: Open near your target valuation ({target_usd} {ctx.payment_ticker}, e.g. {max(target_usd - 10, 100)} to {target_usd}). NEVER open at your ceiling {ctx.secret_limit_usd}!
-     * Round 2-3: Make small, calibrated concessions (e.g. +5 to +10) towards agreement while protecting margin below ceiling {ctx.secret_limit_usd}.
-     * Round 4: Final round. Offer up to ceiling {ctx.secret_limit_usd}, or ACCEPT if seller ask is <= {ctx.secret_limit_usd}.
+     * Round 1: Open near your target valuation ({target_usd} {ctx.payment_ticker}). NEVER open at your ceiling {ctx.secret_limit_usd}!
+     * Round 2-3: Make small, calibrated concessions (+3 to +5 {ctx.payment_ticker} max per round) towards agreement. Do NOT jump to your ceiling.
+     * Round 4: Final round. Offer a firm closing counteroffer (e.g. {min(target_usd + 10, ctx.secret_limit_usd)} {ctx.payment_ticker}) or ACCEPT if seller ask is acceptable.
    - For Seller:
-     * Round 1: Open near your asking price (e.g. 145-150 {ctx.payment_ticker}).
-     * Round 2-3: Concede gradually down towards reserve {ctx.secret_limit_usd}.
-     * Round 4: Final round. Offer final price >= reserve {ctx.secret_limit_usd}, or ACCEPT if buyer bid >= {ctx.secret_limit_usd}.
+     * Round 1: Open near your asking price (e.g. 148-150 {ctx.payment_ticker}).
+     * Round 2-3: Concede gradually (-5 to -8 {ctx.payment_ticker} per round) towards buyer.
+     * Round 4: Final round. Offer closing compromise around 128-132 {ctx.payment_ticker}, or ACCEPT if buyer bid >= reserve {ctx.secret_limit_usd}.
 3. You must output ONLY a valid JSON object matching this exact structure:
 {{
   "private_thought": "<1-2 sentences of cold strategic assessment: estimated counterparty stance and rationale>",
@@ -215,13 +215,13 @@ def mock_negotiate(ctx: NegotiationContext) -> Dict[str, Any]:
         current_ask = ctx.current_ask_usd or 150
 
         if ctx.round_number == 1:
-            offer = open_bid
+            offer = target
             thought = f"Opening near target valuation ({target} USD) to anchor the spread conservatively."
             msg = f"Considering secondary market depth, I open with {offer} {ctx.payment_ticker} for immediate atomic settlement."
             action = "OFFER"
         elif ctx.round_number == 2:
-            offer = min(base_bid + 10, ctx.secret_limit_usd)
-            thought = f"Seller countered at {current_ask}. Raising bid to {offer} to signal constructive intent while holding margin."
+            offer = min(base_bid + 5, ctx.secret_limit_usd)
+            thought = f"Seller countered at {current_ask}. Raising bid slightly to {offer} to signal constructive intent while holding margin."
             msg = f"I appreciate the counter. I can step up to {offer} {ctx.payment_ticker} given the guaranteed zero-counterparty-risk swap."
             action = "OFFER"
         elif ctx.round_number == 3:

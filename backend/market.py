@@ -35,7 +35,7 @@ class MarketManager:
 
     def record_settlement_price(self, price_usd: float) -> None:
         """Update PEPE market price from a completed settlement."""
-        self.last_pepe_price_usd = round(float(price_usd), 4)
+        self.last_pepe_price_usd = float(price_usd)
 
     def get_market(self) -> MarketState:
         pepe_id = self.pepe_asset_id or settings.DEMO_ASSET_ID or "rgb:pepe_nia"

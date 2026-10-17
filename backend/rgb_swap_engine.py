@@ -284,10 +284,12 @@ class RgbSwapEngine:
         seller_signed: bool,
         buyer_signed_hash: str,
         seller_signed_hash: str,
+        maker_wallet_id: str = "wallet_b",
+        taker_wallet_id: str = "wallet_a",
         progress_callback: Optional[Callable[[int, str], None]] = None,
     ) -> str:
         """
-        Executes the 7-stage atomic swap between Maker (Seller/Wallet B) and Taker (Buyer/Wallet A).
+        Executes the 7-stage atomic swap between Maker (Seller) and Taker (Buyer).
         Strictly enforces 2/2 signature and terms_hash validation prior to settlement.
         Returns broadcast transaction ID (txid).
         """
@@ -308,8 +310,8 @@ class RgbSwapEngine:
                 progress_callback(step, msg)
 
         with SWAP_GLOBAL_LOCK:
-            maker_wallet, maker_online, _ = self.wallet_mgr.get_or_create_wallet("wallet_b")
-            taker_wallet, taker_online, _ = self.wallet_mgr.get_or_create_wallet("wallet_a")
+            maker_wallet, maker_online, _ = self.wallet_mgr.get_or_create_wallet(maker_wallet_id)
+            taker_wallet, taker_online, _ = self.wallet_mgr.get_or_create_wallet(taker_wallet_id)
 
             # Ensure Taker has an isolated, settled allocation of exactly canonical_terms.payment_amount
             # This prevents InvalidConsignment during process_swap_completion in rgb-lib

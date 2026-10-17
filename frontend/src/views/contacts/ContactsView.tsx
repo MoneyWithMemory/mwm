@@ -1,7 +1,9 @@
+import { UserPlus } from 'lucide-react'
 import { useState } from 'react'
 import { useContacts } from '@/api'
-import { EmptyState, ErrorState, Skeleton } from '@/components/ui'
+import { Button, EmptyState, ErrorState, Skeleton } from '@/components/ui'
 import { useWalletContext } from '@/lib/navigation'
+import { AddContactSheet } from './AddContactSheet'
 import { ContactRow } from './ContactRow'
 import { ContactSheet } from './ContactSheet'
 
@@ -18,6 +20,7 @@ function ContactsSkeleton() {
 export function ContactsView() {
   const { walletId, navigate } = useWalletContext()
   const contacts = useContacts(walletId)
+  const [addOpen, setAddOpen] = useState(false)
   const [selected, setSelected] = useState<{ address: string; open: boolean } | null>(null)
 
   const list = contacts.data
@@ -60,11 +63,18 @@ export function ContactsView() {
 
   return (
     <div className="flex flex-col justify-start gap-4 p-4">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-lg font-semibold">Contacts</h1>
-        <p className="text-sm text-hint">No-KYC address book</p>
+      <header className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-col gap-1">
+          <h1 className="text-lg font-semibold">Contacts</h1>
+          <p className="text-sm text-hint">No-KYC address book</p>
+        </div>
+        <Button variant="secondary" size="sm" onClick={() => setAddOpen(true)}>
+          <UserPlus size={16} aria-hidden="true" />
+          Add
+        </Button>
       </header>
       {body}
+      <AddContactSheet open={addOpen} onClose={() => setAddOpen(false)} />
       {current && selected && (
         <ContactSheet
           contact={current}

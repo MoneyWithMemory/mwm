@@ -132,7 +132,7 @@ Negoziazione AI, doppia firma delle parti e regolamento RGB a 7 step su regtest:
 ```bash
 (cd /tmp/mwm-check/frontend && node --experimental-strip-types scripts/contract-check.mjs http://127.0.0.1:8000 --e2e)
 ```
-*Esito atteso*: `OK: 0 failed, 0 warnings`, con `SETTLED in ~7.5s` dopo la seconda firma. Lo swap sposta l'intero lotto di 1.000.000 PEPE da Wallet B a Wallet A e gli USDT concordati da A a B. Per rilanciare `--e2e` serve prima il reset (§4).
+*Esito atteso*: `OK: 0 failed, 0 warnings`, con `SETTLED in ~7.5s` dopo la seconda firma. Lo swap sposta l'intero lotto di 1.000.000 PEPE da Wallet B a Wallet A e gli USDT concordati da A a B. Per rilanciare `--e2e` serve prima il reset (§4): senza reset una nuova sessione verso Wallet B riceve `409 insufficient_funds`, perché B non ha più il lotto.
 
 ---
 
@@ -156,10 +156,10 @@ rm -rf "${MWM_DATA_DIR:-$HOME/.mwm/data}"
 
 ## 5. Dettagli Architetturali Chiave
 
-1. **Atomic swap step 5 (`_ensure_isolated_allocation`)**:
-   Maker = seller (Wallet B, dà PEPE), taker = buyer (Wallet A, paga USDT); i ruoli vengono dalla sessione. Prima dello step 1, `_ensure_isolated_allocation` in `backend/rgb_swap_engine.py` controlla che il taker abbia una UTXO con un'unica allocazione settled di esattamente `payment_amount`; se non c'è la crea con un self-send seguito da mining. Senza questo passaggio lo step 5 (`process_swap_completion` del maker) fallisce con `InvalidConsignment`.
+1. **Controlli prima dello swap (`_ensure_isolated_allocation`)**:
+   Maker = seller (Wallet B, dà PEPE), taker = buyer (Wallet A, paga USDT); i ruoli vengono dalla sessione. Prima dello step 1, `execute_atomic_swap` in `backend/rgb_swap_engine.py` controlla che entrambi abbiano il saldo spendibile della propria gamba. Poi `_ensure_isolated_allocation` simula la selezione degli input di rgb-lib per ciascuna gamba: gli input scelti devono contenere esattamente `payment_amount` (taker) e `rgb_amount` (maker), perché la transizione dello swap non ha output di resto RGB. Se non è così crea l'allocazione esatta con un self-send seguito da mining, e se resta impossibile rifiuta il settlement prima di qualsiasi trasferimento. Senza questo lo step 5 del maker fallisce con `InvalidConsignment` (gamba del taker) o il surplus del venditore viene distrutto (lotto parziale).
 2. **Doppia firma 2/2 e `terms_hash`**:
-   `terms_hash` è lo SHA-256 del JSON di `CanonicalSwapTerms` (`sort_keys=True`, separatori `(",", ":")`), con scadenza a 600 s. Ogni parte invia `POST /api/sessions/{id}/sign` con `{wallet_id, terms_hash}`; la firma è una conferma registrata dal backend, non una firma crittografica. Un hash diverso da quello attivo dà `409 terms_hash_mismatch`; gli altri rifiuti sono `409 already_signed`, `expired`, `not_awaiting_signatures` e `403 forbidden` per un wallet esterno. Solo con entrambe le firme la sessione passa a `SETTLING` e lo swap parte in background; `execute_atomic_swap` ricontrolla le due firme e l'hash ricalcolato dai termini prima di toccare i wallet.
+   `terms_hash` è lo SHA-256 del JSON di `CanonicalSwapTerms` (`sort_keys=True`, separatori `(",", ":")`), con scadenza a 600 s. Ogni parte invia `POST /api/sessions/{id}/sign` con `{wallet_id, terms_hash}`; la firma è una conferma registrata dal backend, non una firma crittografica. Un hash diverso da quello attivo dà `409 terms_hash_mismatch`; gli altri rifiuti sono `409 already_signed`, `expired`, `not_awaiting_signatures` e `403 forbidden` per un wallet esterno. Solo con entrambe le firme la sessione passa a `SETTLING` e lo swap parte in background (un solo worker); `execute_atomic_swap` ricontrolla le due firme e l'hash ricalcolato dai termini prima di toccare i wallet. Il `txid` è visibile dallo step 6; se qualcosa fallisce dopo il broadcast la sessione va in `FAILED` ma conserva il `txid`.
 3. **Valutazione `total_usd`**:
    BTC a `sats_per_usd` (1.000 sats = 1 USD) + USDT (peg a 1,00) + PEPE al prezzo dell'ultimo swap regolato (`agreed_price_usd / rgb_amount`). Prima del primo swap il prezzo PEPE è `null` e PEPE vale 0. La stessa formula vale per ogni punto di `history_points`.
 4. **Error handling**:

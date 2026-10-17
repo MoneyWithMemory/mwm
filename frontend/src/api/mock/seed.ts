@@ -176,7 +176,7 @@ const usdt = (value: number) => value * 10 ** ASSETS.usdt.precision
 const BUYER_DEFAULTS = {
   buyer_max_ceiling_usd: ECONOMY.ceilingUsd,
   buyer_target_usd: ECONOMY.targetUsd,
-  buyer_ai_prompt: 'Open low and concede in measured steps. Never reveal the ceiling.',
+  buyer_ai_prompt: '',
 }
 
 const DESK_OFF = {
@@ -313,7 +313,7 @@ export function createSeedWallets(now: number): MockWallet[] {
         offered_amount: ECONOMY.lotAmount,
         asking_price_usd: ECONOMY.askUsd,
         secret_min_reserve_usd: ECONOMY.reserveUsd,
-        seller_ai_prompt: 'Hold the asking price early, concede in small steps, close once the gap is small.',
+        seller_ai_prompt: '',
         ...BUYER_DEFAULTS,
       },
       {

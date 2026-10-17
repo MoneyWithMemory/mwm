@@ -1,11 +1,11 @@
-import { Check, Lock } from 'lucide-react'
+import { Check } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useUpdateAgentProfile, type AgentProfile, type AssetBalance, type Market } from '@/api'
-import { AssetBadge, Button, Card, CardContent, Chip, Input, SegmentedControl, TextArea, Toggle } from '@/components/ui'
-import { formatAssetAmount } from '@/lib/format'
+import { AssetBadge, Button, Card, CardContent, FormNote, NumberField, PrivacyTag, SegmentedControl, Toggle } from '@/components/ui'
+import { formatAssetAmount, formatUnitPrice } from '@/lib/format'
 import { textSwap } from '@/lib/motion'
-import { PROMPT_MAX_LENGTH, STRATEGIES } from './strategies'
+import { StrategyPicker } from '../shared/StrategyPicker'
 
 /** Starting values that differ from the saved profile, e.g. answering a request in the Shop. */
 export interface SellerDraft {
@@ -34,6 +34,10 @@ function parse(text: string): number | null {
 
 function toText(value: number): string {
   return value > 0 ? String(value) : ''
+}
+
+function CardTitle({ children }: { children: string }) {
+  return <h3 className="text-sm font-semibold">{children}</h3>
 }
 
 export function SellerForm({ walletId, profile, assets, market, draft, onSaved }: SellerFormProps) {
@@ -65,12 +69,13 @@ export function SellerForm({ walletId, profile, assets, market, draft, onSaved }
   const amountValue = parse(amount)
   const askValue = parse(ask)
   const reserveValue = parse(reserve)
-  const balance = asset ? asset.amount / 10 ** asset.precision : 0
+  const precision = asset?.precision ?? 0
+  const balance = asset ? asset.amount / 10 ** precision : 0
 
   let amountError: string | undefined
   if (amount && (amountValue === null || amountValue <= 0)) amountError = 'Enter an amount greater than 0.'
   else if (amountValue !== null && asset && amountValue > balance) {
-    amountError = `You hold ${formatAssetAmount(asset.amount, asset.precision, asset.ticker)}.`
+    amountError = `You hold ${formatAssetAmount(asset.amount, precision, asset.ticker)}.`
   } else if (active && !amount) amountError = 'Enter an amount greater than 0.'
 
   let askError: string | undefined
@@ -78,13 +83,12 @@ export function SellerForm({ walletId, profile, assets, market, draft, onSaved }
   else if (active && !ask) askError = 'Enter a price greater than 0.'
 
   let reserveError: string | undefined
-  if (reserve && reserveValue === null) reserveError = 'Enter a valid amount.'
+  if (reserve && reserveValue === null) reserveError = 'Enter a valid minimum.'
   else if (reserveValue !== null && askValue !== null && reserveValue > askValue) {
-    reserveError = 'Reserve must be at most the asking price.'
+    reserveError = 'Your minimum must not exceed the asking price.'
   }
 
   const hasErrors = Boolean(amountError || askError || reserveError)
-  const precision = asset?.precision ?? 0
   const request = {
     seller_active: active,
     offered_asset_id: asset?.asset_id ?? null,
@@ -95,6 +99,7 @@ export function SellerForm({ walletId, profile, assets, market, draft, onSaved }
   }
   const dirty = (Object.keys(request) as (keyof typeof request)[]).some((k) => request[k] !== profile[k])
   const canSave = dirty && !hasErrors
+  const unit = askValue && request.offered_amount > 0 ? formatUnitPrice(askValue, request.offered_amount, precision) : null
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
@@ -121,15 +126,18 @@ export function SellerForm({ walletId, profile, assets, market, draft, onSaved }
             checked={active}
             onChange={edit(setActive)}
             label={active ? 'Selling is on' : 'Selling is off'}
-            description="Your agent answers incoming offers."
+            description="Your agent answers buyers."
           />
         </CardContent>
       </Card>
 
       <Card>
-        <CardContent className="flex flex-col gap-1 pt-4">
-          <span className="text-xs font-medium text-hint">Asset to sell</span>
-          {sellable.length > 1 ? (
+        <CardContent className="flex flex-col gap-3 pt-4">
+          <div className="flex items-center justify-between gap-3">
+            <CardTitle>What you sell</CardTitle>
+            {sellable.length === 1 && asset && <AssetBadge ticker={asset.ticker} asset_id={asset.asset_id} showTicker />}
+          </div>
+          {sellable.length > 1 && (
             <SegmentedControl
               fullWidth
               layoutId={`seller-asset-${walletId}`}
@@ -137,69 +145,66 @@ export function SellerForm({ walletId, profile, assets, market, draft, onSaved }
               value={assetId}
               onChange={edit(setAssetId)}
             />
-          ) : asset ? (
-            <AssetBadge ticker={asset.ticker} asset_id={asset.asset_id} showTicker />
-          ) : (
-            <p className="text-sm text-hint">You hold no RGB assets to sell yet.</p>
           )}
-          <Input
-            className="amount"
-            label="Amount offered"
-            inputMode="decimal"
-            placeholder="0"
-            value={amount}
-            suffix={asset?.ticker}
-            disabled={!asset}
-            error={show ? amountError : undefined}
-            hint={asset ? `Available: ${formatAssetAmount(asset.amount, asset.precision, asset.ticker)}` : undefined}
-            containerClassName="mt-3"
-            onChange={(e) => edit(setAmount)(e.target.value)}
-          />
-          <Input
-            className="amount"
-            label="Asking price (public)"
-            inputMode="decimal"
-            placeholder="0.00"
-            value={ask}
-            prefix="$"
-            error={show ? askError : undefined}
-            hint="Total price for the whole lot. Visible to buyers."
-            onChange={(e) => edit(setAsk)(e.target.value)}
-          />
-          <Input
-            className="amount"
-            label="Minimum reserve"
-            inputMode="decimal"
-            placeholder="0.00"
-            value={reserve}
-            prefix={<Lock size={14} aria-hidden="true" />}
-            suffix="USD"
-            error={show ? reserveError : undefined}
-            hint="Never shared. Used only by your local agent."
-            onChange={(e) => edit(setReserve)(e.target.value)}
-          />
+          {sellable.length === 0 ? (
+            <p className="text-sm text-hint">You hold no RGB assets to sell yet.</p>
+          ) : (
+            <NumberField
+              label="Amount"
+              placeholder="0"
+              value={amount}
+              suffix={asset?.ticker}
+              disabled={!asset}
+              invalid={show && Boolean(amountError)}
+              aside={
+                asset && (
+                  <button
+                    type="button"
+                    className="pressable pressable-flat amount rounded-full px-1.5 text-xs font-medium text-accent hover:bg-accent/10"
+                    onClick={() => edit(setAmount)(String(balance))}
+                  >
+                    Max {formatAssetAmount(asset.amount, precision)}
+                  </button>
+                )
+              }
+              onChange={(e) => edit(setAmount)(e.target.value)}
+            />
+          )}
+          <FormNote error={show ? amountError : undefined}>{asset && 'Buyers may take part of it, at the same unit price.'}</FormNote>
         </CardContent>
       </Card>
 
       <Card>
-        <CardContent className="flex flex-col gap-2 pt-4">
-          <span className="text-xs font-medium text-hint">Strategy</span>
-          <div className="flex flex-wrap gap-2">
-            {STRATEGIES.map((s) => (
-              <Chip key={s.id} active={prompt === s.prompt} onClick={() => edit(setPrompt)(s.prompt)}>
-                {s.label}
-              </Chip>
-            ))}
+        <CardContent className="flex flex-col gap-3 pt-4">
+          <CardTitle>Price for the whole lot</CardTitle>
+          <div className="grid grid-cols-2 gap-3">
+            <NumberField
+              label="Asking"
+              aside={<PrivacyTag kind="public" />}
+              placeholder="0"
+              prefix="$"
+              value={ask}
+              invalid={show && Boolean(askError)}
+              onChange={(e) => edit(setAsk)(e.target.value)}
+            />
+            <NumberField
+              label="Your minimum"
+              aside={<PrivacyTag kind="private" />}
+              placeholder="0"
+              prefix="$"
+              value={reserve}
+              invalid={show && Boolean(reserveError)}
+              onChange={(e) => edit(setReserve)(e.target.value)}
+            />
           </div>
-          <TextArea
-            aria-label="Instructions for your agent"
-            placeholder="Describe how your agent should negotiate."
-            rows={4}
-            maxLength={PROMPT_MAX_LENGTH}
-            value={prompt}
-            hint={`${prompt.length}/${PROMPT_MAX_LENGTH}`}
-            onChange={(e) => edit(setPrompt)(e.target.value)}
-          />
+          <FormNote error={show ? (askError ?? reserveError) : undefined}>{unit && `${unit} per ${asset?.ticker ?? 'unit'}`}</FormNote>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="flex flex-col gap-3 pt-4">
+          <CardTitle>Strategy</CardTitle>
+          <StrategyPicker role="seller" layoutId={`seller-strategy-${walletId}`} value={prompt} onChange={edit(setPrompt)} />
         </CardContent>
       </Card>
 

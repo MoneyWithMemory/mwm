@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { forwardRef, useId, type TextareaHTMLAttributes } from 'react'
+import { forwardRef, useCallback, useId, useLayoutEffect, useRef, type TextareaHTMLAttributes } from 'react'
 import { cn } from '@/lib/cn'
 import { DUR, EASE_OUT } from '@/lib/motion'
 
@@ -9,6 +9,8 @@ export interface TextAreaProps extends TextareaHTMLAttributes<HTMLTextAreaElemen
   error?: string
   shake?: boolean
   containerClassName?: string
+  /** It grows with its text from `rows` up to this many lines, then scrolls. */
+  maxRows?: number
 }
 
 const shakeVariants = {
@@ -28,12 +30,37 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(function 
     id: explicitId,
     disabled = false,
     rows = 3,
+    maxRows = 8,
     className,
     containerClassName,
+    onInput,
     ...rest
   },
   ref
 ) {
+  const inner = useRef<HTMLTextAreaElement | null>(null)
+  const setRef = useCallback(
+    (element: HTMLTextAreaElement | null) => {
+      inner.current = element
+      if (typeof ref === 'function') ref(element)
+      else if (ref) ref.current = element
+    },
+    [ref],
+  )
+
+  // No resize handle: the box fits its text, then scrolls past maxRows.
+  const fit = useCallback(() => {
+    const element = inner.current
+    if (!element) return
+    const style = getComputedStyle(element)
+    const max = parseFloat(style.lineHeight) * maxRows + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
+    element.style.height = 'auto'
+    element.style.height = `${Math.min(element.scrollHeight, max)}px`
+    element.style.overflowY = element.scrollHeight > max ? 'auto' : 'hidden'
+  }, [maxRows])
+
+  useLayoutEffect(fit, [fit, rest.value])
+
   const autoId = useId()
   const textareaId = explicitId ?? `textarea-${autoId}`
   const hintId = `hint-${autoId}`
@@ -61,13 +88,17 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(function 
       >
         <textarea
           id={textareaId}
-          ref={ref}
+          ref={setRef}
           rows={rows}
+          onInput={(event) => {
+            fit()
+            onInput?.(event)
+          }}
           disabled={disabled}
           aria-invalid={hasError}
           aria-describedby={hasError || hint ? hintId : undefined}
           className={cn(
-            'select-text w-full bg-transparent p-3 text-sm text-fg placeholder:text-hint outline-none resize-y',
+            'select-text w-full resize-none bg-transparent p-3 text-sm leading-5 text-fg placeholder:text-hint outline-none',
             className
           )}
           {...rest}

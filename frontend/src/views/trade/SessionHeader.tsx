@@ -1,7 +1,7 @@
 import { ArrowLeft } from 'lucide-react'
 import type { SessionView } from '@/api'
 import { Avatar, Badge, IconButton, TrustBadge } from '@/components/ui'
-import { formatAssetAmount } from '@/lib/format'
+import { formatAssetAmount, formatUsd } from '@/lib/format'
 import { useWalletContext } from '@/lib/navigation'
 import { SESSION_STATE_LABEL, SESSION_STATE_VARIANT } from '../shared/sessionState'
 
@@ -27,6 +27,7 @@ export function SessionHeader({ session, name, alias }: { session: SessionView; 
           <span className="amount text-xs text-hint">
             {session.my_role === 'buyer' ? 'Buying' : 'Selling'}{' '}
             {formatAssetAmount(session.rgb_amount, session.asset.precision, session.asset.ticker)}
+            {session.list_price_usd ? ` · list ${formatUsd(session.list_price_usd)}` : ''}
           </span>
           <TrustBadge tier={trust.trust_tier} reliabilityPct={trust.reliability_pct} size="sm" className="self-start" />
         </div>

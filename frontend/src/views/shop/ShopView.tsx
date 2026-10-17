@@ -15,7 +15,7 @@ const FILTERS = [
   { value: 'all', label: 'All' },
   { value: 'sell', label: 'For sale' },
   { value: 'want', label: 'Wanted' },
-  { value: 'mine', label: 'Mine' },
+  { value: 'mine', label: 'Yours' },
 ] as const
 
 function ListSkeleton() {

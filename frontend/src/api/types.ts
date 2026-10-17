@@ -339,6 +339,8 @@ export interface SessionView extends SessionSummary {
   queue_position?: number | null
   /** Safety cap on rounds for this backend (default MAX_ROUNDS). */
   max_rounds?: number
+  /** The seller's public list price for this amount (pro rata when it is part of the lot). */
+  list_price_usd?: number
 }
 
 // ── Requests ───────────────────────────────────────────────────────

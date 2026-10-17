@@ -22,10 +22,10 @@ Every non-2xx response has this body:
 
 | Status | Codes |
 |---|---|
-| 400 | `invalid_asset`, `invalid_amount`, `invalid_limits`, `invalid_label`, `invalid_profile`, `invalid_address`, `own_address`, `invalid_price`, `desk_listing`, `self_trade`, `sign_error`, `wallet_creation_failed` |
+| 400 | `invalid_asset`, `invalid_amount`, `amount_too_small`, `invalid_limits`, `invalid_label`, `invalid_profile`, `invalid_address`, `own_address`, `invalid_price`, `desk_listing`, `self_trade`, `sign_error`, `wallet_creation_failed` |
 | 403 | `forbidden` (the wallet is not part of the session, or the listing is not its own) |
 | 404 | `wallet_not_found`, `session_not_found`, `listing_not_found`, `no_match` |
-| 409 | `seller_desk_inactive`, `insufficient_funds`, `not_awaiting_signatures`, `terms_hash_mismatch`, `already_signed`, `expired`, `not_cancellable` |
+| 409 | `seller_desk_inactive`, `exceeds_lot`, `insufficient_funds`, `not_awaiting_signatures`, `terms_hash_mismatch`, `already_signed`, `expired`, `not_cancellable` |
 | 500 | `internal_server_error` |
 
 The UI shows `message` to the user, so write it in plain English.
@@ -153,7 +153,11 @@ Validation errors (`400 invalid_profile`):
 - when the desk is active, `secret_min_reserve_usd` is higher than `asking_price_usd`;
 - `buyer_target_usd` is higher than `buyer_max_ceiling_usd`.
 
-The negotiator re-reads the seller's profile every round, so a price changed live applies from the next round.
+A session keeps the list price, reserve and strategy it started with: changes apply to the sessions created after them.
+
+`seller_ai_prompt` and `buyer_ai_prompt` are each owner's strategy for their own agent, passed to it as its owner's instructions (at most 500 characters). The UI offers Strict, Balanced and Flexible presets plus Other (free text); Balanced is the agents' default and is sent as `""`.
+
+After a settled sale the desk's lot shrinks by the amount sold and `asking_price_usd` and `secret_min_reserve_usd` scale with it (same unit prices). A sold-out desk switches off (`seller_active: false`, `offered_amount: 0`) and leaves the Shop.
 
 ### GET /api/wallets/{id}/contacts
 
@@ -202,10 +206,12 @@ The buyer starts a negotiation with a seller's address. The secret ceiling and t
 - The endpoint returns immediately with the `SessionView`, and the negotiation runs in the background.
 - Negotiations share one local model, so they run in arrival order, one at a time (`NEGOTIATION_CONCURRENCY`, default 1). While a session waits it stays `NEGOTIATING` with `rounds: []` and `thinking: null`, and `queue_position` is its 1-based place in line (`null` once its negotiation runs). If the seller no longer holds the lot when its turn comes, it moves to `BLOCKED_BY_GATE` with the reason `"The seller no longer holds this lot."`.
 - If either side is a ring member or Unverified, the session is created directly in `BLOCKED_BY_GATE`, with `rounds: []` and the reason in `gate.reasons`. No QVAC call happens.
-- **Pre-negotiation:** if the buyer's ceiling is below the seller's secret reserve no deal is possible, so the session is also born `BLOCKED_BY_GATE`, without QVAC, with the reason `"No deal possible: the buyer's maximum is below the seller's minimum."`. Neither number is revealed. The seller's `asking_price_usd` is the public list price: the seller's agent defends it, the buyer's agent works it down.
+- **Part of a lot:** `rgb_amount` may be any part of the desk's `offered_amount`, from the smallest part worth 1 USDT at the list price, `ceil(offered_amount / asking_price_usd)`, up to the whole lot. The session's list price and reserve are the desk's scaled to the amount: `list = floor(asking_price_usd * rgb_amount / offered_amount + 0.5)`, `reserve = min(ceil(secret_min_reserve_usd * rgb_amount / offered_amount), list)`. The whole lot keeps the desk's own prices. The `SessionView` carries the scaled `list_price_usd`.
+- **Pre-negotiation:** if the buyer's ceiling is below the seller's secret reserve (for this amount) no deal is possible, so the session is also born `BLOCKED_BY_GATE`, without QVAC, with the reason `"No deal possible: the buyer's maximum is below the seller's minimum."`. Neither number is revealed. The seller's `asking_price_usd` is the public list price: the seller's agent defends it, the buyer's agent works it down.
 - Errors:
-  - `400`: invalid amount or limits, or self-trade.
+  - `400`: invalid amount or limits, or self-trade. `400 amount_too_small`: below the smallest part worth 1 USDT.
   - `409 seller_desk_inactive`: the seller's desk is off, or the seller isn't selling this asset.
+  - `409 exceeds_lot`: more than the desk's `offered_amount`.
   - `409 insufficient_funds`: the seller doesn't hold the lot, or the buyer's USDT is below the ceiling.
 
 ### GET /api/sessions/{id}?wallet_id=
@@ -221,6 +227,7 @@ The session as seen by one participant (`403 forbidden` otherwise):
   "asset": { "asset_id": "rgb:NEiuTRxB-...", "ticker": "PEPE", "schema": "NIA", "precision": 0 },
   "rgb_amount": 1000000,
   "agreed_price_usd": 124,
+  "list_price_usd": 150,
   "created_at": 1792226800,
   "updated_at": 1792226809,
   "payment_asset": { "asset_id": "rgb:Cfkujjki-...", "ticker": "USDT", "schema": "NIA", "precision": 0 },
@@ -334,7 +341,7 @@ The buyer's agent looks for the best matching `sell` listing and opens a session
   "buyer_max_ceiling_usd": 135, "buyer_target_usd": 120, "buyer_ai_prompt": "Open low and concede in steps." }
 ```
 
-Candidates are `sell` listings that are not the buyer's, have the same asset, offer at least `rgb_amount`, whose owner trust tier is not `Ring Anomaly Detected`, and whose secret reserve is not above `buyer_max_ceiling_usd` (checked server-side, never returned). The price for the requested amount is `price_usd * rgb_amount / amount`; candidates above `1.5 * buyer_max_ceiling_usd` are dropped. The cheapest candidate wins, and the response is `{ "listing": ShopListing, "session": SessionView }` with the session created exactly as `POST /api/sessions` would (same gate, same errors). `404 no_match` when nothing fits. The UI takes the user straight to the session.
+Candidates are `sell` listings that are not the buyer's, have the same asset, offer at least `rgb_amount` (a part of a larger lot qualifies, from 1 USDT worth), whose owner trust tier is not `Ring Anomaly Detected`, and whose secret reserve for that amount is not above `buyer_max_ceiling_usd` (checked server-side, never returned). The price for the requested amount is `price_usd * rgb_amount / amount`; candidates above `1.5 * buyer_max_ceiling_usd` are dropped. The cheapest candidate wins, and the response is `{ "listing": ShopListing, "session": SessionView }` with the session created exactly as `POST /api/sessions` would (same gate, same errors). `404 no_match` when nothing fits. The UI takes the user straight to the session.
 
 ## Session state machine
 

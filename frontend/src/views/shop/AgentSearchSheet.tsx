@@ -1,9 +1,12 @@
-import { Lock } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import { useAgentSearch, type Market, type ShopListing, type WalletState } from '@/api'
-import { AssetBadge, Button, Input, SegmentedControl, Sheet, TextArea } from '@/components/ui'
+import { AssetBadge, Button, FormNote, NumberField, SegmentedControl, Sheet } from '@/components/ui'
 import { formatAssetAmount } from '@/lib/format'
+import { proRataPrice, suggestedLimits } from '@/lib/lots'
 import { useWalletContext } from '@/lib/navigation'
+import { BuyerLimits } from '../shared/BuyerLimits'
+import { StrategyPicker } from '../shared/StrategyPicker'
+import { useBuyerLimits } from '../shared/useBuyerLimits'
 
 const NUMBER = /^\d*\.?\d*$/
 
@@ -36,24 +39,40 @@ export function AgentSearchSheet({ open, onClose, market, wallet, listings }: Ag
     return lot > 0 ? String(lot / 10 ** precision) : ''
   }
   const [assetId, setAssetId] = useState(tradable[0]?.asset_id ?? '')
-  const [amount, setAmount] = useState(() => lotText(tradable[0]?.asset_id ?? ''))
-  const [amountEdited, setAmountEdited] = useState(false)
-  const [ceiling, setCeiling] = useState(String(wallet.agent_profile.buyer_max_ceiling_usd || ''))
-  const [target, setTarget] = useState(String(wallet.agent_profile.buyer_target_usd || ''))
+  // Until edited, the amount follows the largest lot on sale (the listings may arrive after mount).
+  const [typedAmount, setTypedAmount] = useState<string | null>(null)
+  const amount = typedAmount ?? lotText(assetId)
   const [prompt, setPrompt] = useState(wallet.agent_profile.buyer_ai_prompt)
   const [touched, setTouched] = useState(false)
 
   const asset = tradable.find((a) => a.asset_id === assetId)
   const amountValue = parse(amount)
   const atomic = amountValue === null || !asset ? null : Math.round(amountValue * 10 ** asset.precision)
-  const ceilingValue = parse(ceiling)
-  const targetValue = parse(target)
+  // Until edited, the limits follow the best list price for this amount among the sellers the
+  // agent may pick (a part of a larger lot included, rings left out).
+  const payment = market.assets.find((a) => a.source === 'fixed_peg')
+  const paymentBalance = wallet.assets.find((a) => a.asset_id === payment?.asset_id)
+  const available = paymentBalance ? paymentBalance.amount / 10 ** paymentBalance.precision : 0
+  const bestPrice = atomic && atomic > 0
+    ? Math.min(
+        ...listings
+          .filter((l) => l.kind === 'sell' && !l.is_mine && l.asset.asset_id === assetId && l.amount >= atomic)
+          .filter((l) => l.trust.trust_tier !== 'Ring Anomaly Detected')
+          .map((l) => proRataPrice(l.price_usd, l.amount, atomic)),
+      )
+    : Infinity
+  const limits = useBuyerLimits(
+    { target: String(wallet.agent_profile.buyer_target_usd || ''), ceiling: String(wallet.agent_profile.buyer_max_ceiling_usd || '') },
+    Number.isFinite(bestPrice) ? suggestedLimits(bestPrice, available) : null,
+  )
+  const ceilingValue = parse(limits.ceiling)
+  const targetValue = parse(limits.target)
 
   const amountError = atomic === null || atomic <= 0 ? 'Enter an amount greater than 0.' : undefined
-  const ceilingError = ceilingValue === null || ceilingValue <= 0 ? 'Enter a budget greater than 0.' : undefined
+  const ceilingError = ceilingValue === null || ceilingValue <= 0 ? 'Enter a maximum greater than 0.' : undefined
   let targetError: string | undefined
   if (targetValue === null || targetValue <= 0) targetError = 'Enter a target greater than 0.'
-  else if (ceilingValue !== null && targetValue > ceilingValue) targetError = 'Target must not exceed your maximum budget.'
+  else if (ceilingValue !== null && targetValue > ceilingValue) targetError = 'The target must not exceed your maximum.'
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
@@ -84,76 +103,59 @@ export function AgentSearchSheet({ open, onClose, market, wallet, listings }: Ag
       }}
       title="Find with my agent"
     >
-      <form className="flex flex-col gap-1" onSubmit={submit}>
-        <p className="pb-2 text-sm text-hint">
-          Your agent searches the Shop for the best fitting seller and starts negotiating for you.
-        </p>
-        <span className="text-xs font-medium text-hint">Asset</span>
-        {tradable.length > 1 ? (
-          <SegmentedControl
-            fullWidth
-            layoutId="shop-agent-asset"
-            options={tradable.map((a) => ({ value: a.asset_id, label: a.ticker }))}
-            value={assetId}
-            onChange={(id) => {
-              setAssetId(id)
-              if (!amountEdited) setAmount(lotText(id))
-            }}
+      <form className="flex flex-col gap-5" onSubmit={submit}>
+        <p className="text-sm text-hint">It picks the best fitting seller, a part of a larger lot included, and negotiates for you.</p>
+
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold">How much</h3>
+            {tradable.length === 1 && asset && <AssetBadge ticker={asset.ticker} asset_id={asset.asset_id} showTicker />}
+          </div>
+          {tradable.length > 1 && (
+            <SegmentedControl
+              fullWidth
+              layoutId="shop-agent-asset"
+              options={tradable.map((a) => ({ value: a.asset_id, label: a.ticker }))}
+              value={assetId}
+              onChange={setAssetId}
+            />
+          )}
+          <NumberField
+            label="Amount"
+            placeholder="0"
+            value={amount}
+            suffix={asset?.ticker}
+            invalid={touched && Boolean(amountError)}
+            onChange={(e) => setTypedAmount(e.target.value)}
           />
-        ) : asset ? (
-          <AssetBadge ticker={asset.ticker} asset_id={asset.asset_id} showTicker />
-        ) : (
-          <p className="text-sm text-hint">No tradable assets yet.</p>
-        )}
-        <Input
-          className="amount"
-          label="Amount"
-          inputMode="decimal"
-          placeholder="0"
-          value={amount}
-          suffix={asset?.ticker}
-          error={touched ? amountError : undefined}
-          hint={largestLot(assetId) > 0 && asset ? `Largest lot on sale: ${formatAssetAmount(largestLot(assetId), asset.precision, asset.ticker)}` : undefined}
-          containerClassName="mt-3"
-          onChange={(e) => {
-            setAmount(e.target.value)
-            setAmountEdited(true)
-          }}
+          <FormNote error={touched ? amountError : undefined}>
+            {largestLot(assetId) > 0 && asset && `Largest lot on sale: ${formatAssetAmount(largestLot(assetId), asset.precision, asset.ticker)}`}
+          </FormNote>
+        </div>
+
+        <BuyerLimits
+          target={limits.target}
+          ceiling={limits.ceiling}
+          onTarget={limits.onTarget}
+          onCeiling={limits.onCeiling}
+          targetError={targetError}
+          ceilingError={ceilingError}
+          show={touched}
         />
-        <Input
-          className="amount"
-          label="Maximum budget (secret)"
-          inputMode="decimal"
-          placeholder="0.00"
-          value={ceiling}
-          prefix={<Lock size={14} aria-hidden="true" />}
-          error={touched ? ceilingError : undefined}
-          hint="Stays on this device's agent."
-          onChange={(e) => setCeiling(e.target.value)}
-        />
-        <Input
-          className="amount"
-          label="Target price"
-          inputMode="decimal"
-          placeholder="0.00"
-          value={target}
-          prefix="$"
-          error={touched ? targetError : undefined}
-          onChange={(e) => setTarget(e.target.value)}
-        />
-        <TextArea
-          label="Instructions for your agent"
-          rows={2}
-          maxLength={500}
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-        />
-        <p className="min-h-4 text-xs text-danger" role="alert">
-          {error?.message}
-        </p>
-        <Button type="submit" fullWidth trailingArrow loading={pending}>
-          Search and negotiate
-        </Button>
+
+        <div className="flex flex-col gap-3">
+          <h3 className="text-sm font-semibold">Strategy</h3>
+          <StrategyPicker role="buyer" layoutId="shop-agent-strategy" value={prompt} onChange={setPrompt} />
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <p className="min-h-4 text-xs text-danger" role="alert">
+            {error?.message}
+          </p>
+          <Button type="submit" fullWidth trailingArrow loading={pending}>
+            Search and negotiate
+          </Button>
+        </div>
       </form>
     </Sheet>
   )

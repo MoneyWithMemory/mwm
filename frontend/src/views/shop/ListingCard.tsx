@@ -57,7 +57,7 @@ export function ListingCard({ listing, onEditOffer, onSellTo }: ListingCardProps
 
         {selling && !listing.is_mine && (
           <Button fullWidth trailingArrow onClick={() => navigate('trade', { counterpartyId: listing.owner_address })}>
-            Buy · {formatUsd(listing.price_usd)}
+            Buy
           </Button>
         )}
         {selling && listing.is_mine && onEditOffer && (

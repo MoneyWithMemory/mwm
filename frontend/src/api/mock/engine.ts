@@ -46,6 +46,7 @@ import {
   type MockWallet,
   type MockWant,
 } from './seed'
+import { minLotAmount, proRataPrice } from '@/lib/lots'
 import { canonicalJson, sha256Hex, sha256HexSync } from './sha256'
 
 /** In-memory backend shared by every pane in the tab. All timings in ms. */
@@ -82,6 +83,9 @@ interface MockSession {
   rgbAmount: number
   ceilingUsd: number
   targetUsd: number
+  /** The desk's list price and secret reserve for this amount (pro rata for part of the lot). */
+  listPriceUsd: number
+  reserveUsd: number
   state: SessionState
   rounds: MockRound[]
   thinking: Role | null
@@ -232,6 +236,7 @@ function sessionView(s: MockSession, role: Role): SessionView {
   return {
     ...summary,
     payment_asset: s.paymentAsset,
+    list_price_usd: s.listPriceUsd,
     counterparty_trust: counterpartyTrust,
     rounds: s.rounds.map((r) => ({
       n: r.n,
@@ -290,8 +295,28 @@ function trustReasons(address: string): string[] {
   return []
 }
 
-function sellerProfile(s: MockSession): AgentProfile {
-  return walletOrThrow(s.sellerId as WalletId).agent_profile
+/** As api_server._lot_prices: unit prices of the lot times the amount; the reserve rounds up. */
+function lotPrices(desk: AgentProfile, amount: number): { list: number; reserve: number } {
+  if (desk.offered_amount <= 0 || amount >= desk.offered_amount) {
+    return { list: desk.asking_price_usd, reserve: desk.secret_min_reserve_usd }
+  }
+  const list = proRataPrice(desk.asking_price_usd, desk.offered_amount, amount)
+  return { list, reserve: Math.min(Math.ceil((desk.secret_min_reserve_usd * amount) / desk.offered_amount), list) }
+}
+
+/** After a sale the lot shrinks at the same unit prices; a sold-out desk switches off. */
+function consumeLot(desk: AgentProfile, assetId: string, amount: number) {
+  if (desk.offered_asset_id !== assetId || desk.offered_amount <= 0) return
+  const left = Math.max(desk.offered_amount - amount, 0)
+  if (left === 0) {
+    desk.seller_active = false
+    desk.offered_amount = 0
+    return
+  }
+  const share = left / desk.offered_amount
+  desk.offered_amount = left
+  desk.asking_price_usd = Math.max(1, Math.floor(desk.asking_price_usd * share + 0.5))
+  desk.secret_min_reserve_usd = Math.min(Math.floor(desk.secret_min_reserve_usd * share + 0.5), desk.asking_price_usd)
 }
 
 function buyerTurn(s: MockSession) {
@@ -311,7 +336,7 @@ function buyerTurn(s: MockSession) {
   touch(s)
 
   schedule(s, TIMING.buyerThink, () => {
-    const lastAsk = previous?.seller_offer_usd ?? sellerProfile(s).asking_price_usd
+    const lastAsk = previous?.seller_offer_usd ?? s.listPriceUsd
     const prevBid = previous?.buyer_offer_usd ?? null
     const finalRound = round.n >= MAX_ROUNDS
     const closeEnough = prevBid !== null && lastAsk - prevBid <= CLOSE_GAP_USD
@@ -354,11 +379,9 @@ function sellerTurn(s: MockSession, round: MockRound, lastAsk: number) {
   touch(s)
 
   schedule(s, TIMING.sellerThink, () => {
-    // Re-read the desk every round: the seller may change price live.
-    const profile = sellerProfile(s)
     const bid = round.buyer_offer_usd as number
-    const prevAsk = Math.min(lastAsk, profile.asking_price_usd)
-    const reserve = profile.secret_min_reserve_usd
+    const prevAsk = Math.min(lastAsk, s.listPriceUsd)
+    const reserve = s.reserveUsd
     const finalRound = round.n >= MAX_ROUNDS
 
     if (bid >= reserve && (prevAsk - bid <= CLOSE_GAP_USD || finalRound)) {
@@ -407,7 +430,7 @@ async function runGate(s: MockSession) {
   const reasons = [...trustReasons(s.sellerAddress), ...trustReasons(buyer.summary.address)]
 
   if (price > s.ceilingUsd) reasons.push('Agreed price is above the buyer ceiling.')
-  if (price < seller.agent_profile.secret_min_reserve_usd) reasons.push('Agreed price is below the seller reserve.')
+  if (price < s.reserveUsd) reasons.push('Agreed price is below the seller reserve.')
   if (!Number.isInteger(s.rgbAmount) || s.rgbAmount <= 0 || !Number.isInteger(paymentAmount) || paymentAmount <= 0) {
     reasons.push('Amounts must be positive integers.')
   }
@@ -486,6 +509,7 @@ function applySettlement(s: MockSession) {
   buyer.balances[btc] = (buyer.balances[btc] ?? 0) - terms.network_fee_sat
   seller.balances[lot] -= terms.rgb_amount
   seller.balances[pay] = (seller.balances[pay] ?? 0) + terms.payment_amount
+  consumeLot(seller.agent_profile, lot, terms.rgb_amount)
   if (lot === ASSETS.pepe.asset_id) pepePriceUsd = terms.agreed_price_usd / boughtUnits
 
   const t = now()
@@ -598,6 +622,7 @@ export const mockEngine = {
     }
 
     const t = now()
+    const prices = seller ? lotPrices(seller.agent_profile, body.rgb_amount) : { list: 0, reserve: 0 }
     const s: MockSession = {
       id: `sess_${randomHex(6)}`,
       buyerId: buyer.summary.wallet_id,
@@ -608,6 +633,8 @@ export const mockEngine = {
       rgbAmount: body.rgb_amount,
       ceilingUsd: body.buyer_max_ceiling_usd,
       targetUsd: body.buyer_target_usd,
+      listPriceUsd: prices.list,
+      reserveUsd: prices.reserve,
       state: 'NEGOTIATING',
       rounds: [],
       thinking: null,
@@ -635,6 +662,9 @@ export const mockEngine = {
 
     const desk = seller.agent_profile
     if (!desk.seller_active || desk.offered_asset_id !== asset.asset_id) throw conflict('seller_desk_inactive', 'The counterparty is not selling this asset')
+    if (body.rgb_amount > desk.offered_amount) throw conflict('exceeds_lot', `The seller offers at most ${desk.offered_amount}`)
+    const minAmount = minLotAmount(desk.asking_price_usd, desk.offered_amount)
+    if (body.rgb_amount < minAmount) throw badRequest('amount_too_small', `Buy at least ${minAmount}: a smaller part costs less than 1 USDT`)
     if ((seller.balances[asset.asset_id] ?? 0) < body.rgb_amount) throw conflict('insufficient_funds', 'The seller does not hold that amount')
     if ((buyer.balances[ASSETS.usdt.asset_id] ?? 0) < body.buyer_max_ceiling_usd * 10 ** ASSETS.usdt.precision) {
       throw conflict('insufficient_funds', 'USDT balance is below the ceiling')
@@ -642,7 +672,7 @@ export const mockEngine = {
 
     sessions.set(s.id, s)
     // Pre-negotiation: no overlap between the buyer's maximum and the seller's minimum, so the agents never talk.
-    if (body.buyer_max_ceiling_usd < desk.secret_min_reserve_usd) {
+    if (body.buyer_max_ceiling_usd < s.reserveUsd) {
       block(s, [NO_OVERLAP_REASON])
       return sessionView(s, 'buyer')
     }
@@ -734,7 +764,11 @@ export const mockEngine = {
       .filter((l) => l.trust.trust_tier !== 'Ring Anomaly Detected')
       .filter((l) => priceFor(l) <= body.buyer_max_ceiling_usd * 1.5)
       // Server-side only: a desk whose secret floor is above the buyer's maximum could never close.
-      .filter((l) => (walletByAddress(l.owner_address)?.agent_profile.secret_min_reserve_usd ?? Infinity) <= body.buyer_max_ceiling_usd)
+      .filter((l) => {
+        const desk = walletByAddress(l.owner_address)?.agent_profile
+        if (!desk || body.rgb_amount < minLotAmount(desk.asking_price_usd, desk.offered_amount)) return false
+        return lotPrices(desk, body.rgb_amount).reserve <= body.buyer_max_ceiling_usd
+      })
       .sort((a, b) => priceFor(a) - priceFor(b))
     const best = fits[0]
     if (!best) throw notFound('no_match', 'No matching listing right now')

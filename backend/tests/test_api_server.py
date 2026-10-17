@@ -20,9 +20,10 @@ def _desk_asset() -> str:
     return client.get("/api/wallets/wallet_b").json()["agent_profile"]["offered_asset_id"]
 
 
-def _reset_desk(asking: int = 150, reserve: int = 110) -> None:
+def _reset_desk(asking: int = 150, reserve: int = 110, allow_partial: bool = False) -> None:
     client.put("/api/wallets/wallet_b/agent_profile", json={
         "seller_active": True, "asking_price_usd": asking, "secret_min_reserve_usd": reserve, "offered_amount": 1_000_000,
+        "allow_partial": allow_partial,
     })
 
 
@@ -482,7 +483,7 @@ def test_shop_wants_create_filter_and_close():
 def test_agent_search_skips_rings_and_opens_a_session(monkeypatch):
     monkeypatch.setattr("backend.qvac_negotiator.negotiator.use_mock", True)
     _fund_wallets(monkeypatch)
-    client.put("/api/wallets/wallet_b/agent_profile", json={"seller_active": True, "asking_price_usd": 150, "secret_min_reserve_usd": 110})
+    client.put("/api/wallets/wallet_b/agent_profile", json={"seller_active": True, "asking_price_usd": 150, "secret_min_reserve_usd": 110, "allow_partial": True})
     req = {
         "buyer_wallet_id": "wallet_a",
         "asset_id": _desk_asset(),
@@ -503,11 +504,11 @@ def test_agent_search_skips_rings_and_opens_a_session(monkeypatch):
     assert client.post("/api/shop/agent_search", json={**req, "asset_id": "rgb:other"}).json()["code"] == "no_match"
     # Wallet B's floor for half the lot (140 * 0.5 = 70) above the buyer's maximum: no desk can
     # close, so no session is opened. Just above it, the half lot is negotiated at half the price.
-    _reset_desk(asking=150, reserve=140)
+    _reset_desk(asking=150, reserve=140, allow_partial=True)
     assert client.post("/api/shop/agent_search", json={**req, "buyer_max_ceiling_usd": 65, "buyer_target_usd": 60}).json()["code"] == "no_match"
     body = client.post("/api/shop/agent_search", json={**req, "buyer_max_ceiling_usd": 75, "buyer_target_usd": 60}).json()
     assert (body["session"]["state"], body["session"]["list_price_usd"]) == ("NEGOTIATING", 75)
-    _reset_desk()
+    _reset_desk(allow_partial=True)
     assert client.post("/api/shop/agent_search", json={**req, "rgb_amount": 5_000_000}).json()["code"] == "no_match"
     resp = client.post("/api/shop/agent_search", json={**req, "buyer_max_ceiling_usd": 40, "buyer_target_usd": 30})
     assert (resp.status_code, resp.json()["code"]) == (404, "no_match")
@@ -584,7 +585,7 @@ def test_agent_profile_rejects_inconsistent_limits():
 
 def test_partial_lot_is_priced_pro_rata(monkeypatch):
     _fund_wallets(monkeypatch)
-    _reset_desk(asking=150, reserve=110)
+    _reset_desk(asking=150, reserve=110, allow_partial=True)
     wallets = client.get("/api/wallets").json()
     seller_addr = next(w["address"] for w in wallets if w["wallet_id"] == "wallet_b")
 
@@ -604,6 +605,56 @@ def test_partial_lot_is_priced_pro_rata(monkeypatch):
     smallest = client.post("/api/sessions", json=_session_request(seller_addr, rgb_amount=6_667, buyer_max_ceiling_usd=5, buyer_target_usd=1)).json()
     assert (smallest["state"], smallest["list_price_usd"]) == ("NEGOTIATING", 1)
     client.post(f"/api/sessions/{smallest['session_id']}/cancel", json={"wallet_id": "wallet_a"})
+
+
+def test_partial_purchase_needs_the_sellers_consent(monkeypatch):
+    from backend.wallet_state import AgentProfile
+
+    _fund_wallets(monkeypatch)
+    assert AgentProfile.model_fields["allow_partial"].default is False  # off unless the seller opts in
+    _reset_desk()
+    wallets = client.get("/api/wallets").json()
+    seller_addr = next(w["address"] for w in wallets if w["wallet_id"] == "wallet_b")
+
+    def public_flags():
+        desk = next(c for c in client.get("/api/wallets/wallet_a/contacts").json() if c["address"] == seller_addr)["desk"]
+        listing = next(l for l in client.get("/api/shop?wallet_id=wallet_a&kind=sell").json() if l["listing_id"] == "desk_wallet_b")
+        return desk["allow_partial"], listing["allow_partial"]
+
+    def cancel(session):
+        client.post(f"/api/sessions/{session['session_id']}/cancel", json={"wallet_id": "wallet_a"})
+
+    search = {
+        "buyer_wallet_id": "wallet_a", "asset_id": _desk_asset(), "rgb_amount": 500_000,
+        "buyer_max_ceiling_usd": 135, "buyer_target_usd": 120, "buyer_ai_prompt": "",
+    }
+
+    # Whole lot only: one unit short is refused, more than the lot is still exceeds_lot.
+    assert public_flags() == (False, False)
+    resp = client.post("/api/sessions", json=_session_request(seller_addr, rgb_amount=999_999))
+    assert (resp.status_code, resp.json()["code"]) == (409, "partial_not_allowed")
+    resp = client.post("/api/sessions", json=_session_request(seller_addr, rgb_amount=1_000_001))
+    assert (resp.status_code, resp.json()["code"]) == (409, "exceeds_lot")
+    whole = client.post("/api/sessions", json=_session_request(seller_addr)).json()
+    assert (whole["state"], whole["rgb_amount"], whole["list_price_usd"]) == ("NEGOTIATING", 1_000_000, 150)
+    cancel(whole)
+    assert client.post("/api/shop/agent_search", json=search).json()["code"] == "no_match"
+    found = client.post("/api/shop/agent_search", json={**search, "rgb_amount": 1_000_000}).json()
+    assert found["listing"]["listing_id"] == "desk_wallet_b"
+    cancel(found["session"])
+
+    # With the seller's consent a part is sold at the pro-rata list price, by hand or by the agent.
+    assert client.put("/api/wallets/wallet_b/agent_profile", json={"allow_partial": True}).json()["allow_partial"] is True
+    assert public_flags() == (True, True)
+    half = client.post("/api/sessions", json=_session_request(seller_addr, rgb_amount=500_000, buyer_max_ceiling_usd=70, buyer_target_usd=60)).json()
+    assert (half["state"], half["rgb_amount"], half["list_price_usd"]) == ("NEGOTIATING", 500_000, 75)
+    cancel(half)
+    found = client.post("/api/shop/agent_search", json=search).json()
+    assert (found["listing"]["listing_id"], found["session"]["list_price_usd"]) == ("desk_wallet_b", 75)
+    cancel(found["session"])
+    resp = client.post("/api/sessions", json=_session_request(seller_addr, rgb_amount=1_000_001))
+    assert (resp.status_code, resp.json()["code"]) == (409, "exceeds_lot")
+    _reset_desk()
 
 
 def test_session_view_shows_every_round(monkeypatch):

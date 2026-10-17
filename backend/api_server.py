@@ -181,6 +181,7 @@ class UpdateAgentProfileRequest(BaseModel):
     buyer_max_ceiling_usd: Optional[int] = None
     buyer_target_usd: Optional[int] = None
     buyer_ai_prompt: Optional[str] = None
+    allow_partial: Optional[bool] = None
 
 class CreateSessionRequest(BaseModel):
     buyer_wallet_id: str
@@ -349,6 +350,7 @@ def _public_desk(wallet_id: str) -> Optional[Dict[str, Any]]:
         },
         "offered_amount": profile.offered_amount,
         "asking_price_usd": profile.asking_price_usd,
+        "allow_partial": profile.allow_partial,
     }
 
 def _trust_audit(rep) -> Dict[str, Any]:
@@ -840,6 +842,11 @@ def create_session(req: CreateSessionRequest):
             status_code=409,
             detail={"code": "exceeds_lot", "message": f"The seller offers at most {seller_profile.offered_amount}"},
         )
+    if req.rgb_amount < seller_profile.offered_amount and not seller_profile.allow_partial:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "partial_not_allowed", "message": f"The seller sells only the whole lot of {seller_profile.offered_amount}"},
+        )
     min_amount = _min_lot_amount(seller_profile)
     if req.rgb_amount < min_amount:
         raise HTTPException(
@@ -1030,6 +1037,7 @@ def _sell_listings(viewer_id: str) -> List[Dict[str, Any]]:
             "asset": desk["asset"],
             "amount": desk["offered_amount"],
             "price_usd": desk["asking_price_usd"],
+            "allow_partial": desk["allow_partial"],
             "note": None,
             "trust": _trust_audit(memory_graph.get_reputation(owner_id)),
             "created_at": None,
@@ -1053,6 +1061,8 @@ def _want_listing(want: Want, viewer_id: str) -> Dict[str, Any]:
         "asset": _asset_ref(want.asset_id),
         "amount": want.amount,
         "price_usd": int(price) if float(price).is_integer() else price,
+        # A request is answered with its whole amount.
+        "allow_partial": False,
         "note": want.note,
         "trust": _trust_audit(rep),
         "created_at": want.created_at,
@@ -1138,8 +1148,8 @@ def _desk_profile(listing: Dict[str, Any]) -> AgentProfile:
 def agent_search(req: AgentSearchRequest):
     """
     The buyer's agent picks the cheapest fitting Seller Desk (by unit price, a part of a larger lot
-    included) and opens a session. Rings are skipped, and so are desks whose secret floor for this
-    amount is above the buyer's maximum (no deal would be possible).
+    included where the seller allows it) and opens a session. Rings are skipped, and so are desks
+    whose secret floor for this amount is above the buyer's maximum (no deal would be possible).
     """
     _require_wallet(req.buyer_wallet_id)
 
@@ -1151,6 +1161,7 @@ def agent_search(req: AgentSearchRequest):
         if not l["is_mine"]
         and l["asset"]["asset_id"] == req.asset_id
         and l["amount"] >= req.rgb_amount
+        and (l["allow_partial"] or req.rgb_amount == l["amount"])
         and l["trust"]["trust_tier"] != TrustTier.RING_ANOMALY
         and price_for(l) <= 1.5 * req.buyer_max_ceiling_usd
         and req.rgb_amount >= _min_lot_amount(_desk_profile(l))

@@ -66,6 +66,8 @@ class AgentProfile(BaseModel):
     buyer_max_ceiling_usd: int
     buyer_target_usd: int
     buyer_ai_prompt: str
+    # The seller's consent to sell part of the lot (pro rata); off: buyers take the whole lot.
+    allow_partial: bool = False
 
 class WalletState(BaseModel):
     wallet_id: str

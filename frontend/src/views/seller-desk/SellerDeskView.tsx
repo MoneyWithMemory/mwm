@@ -1,17 +1,45 @@
+import { useWallet } from '@/api'
+import { ErrorState, Skeleton } from '@/components/ui'
 import { useWalletContext } from '@/lib/navigation'
+import { IncomingSessions } from './IncomingSessions'
+import { SellerForm } from './SellerForm'
 
-// Stub (M1.1). Owned by Domi from here on: see M2.2.
+function SellerDeskSkeleton() {
+  return (
+    <div className="flex flex-col gap-4" role="status" aria-label="Loading seller desk">
+      <Skeleton className="h-16 rounded-card" />
+      <Skeleton className="h-80 rounded-card" />
+      <Skeleton className="h-52 rounded-card" />
+      <Skeleton className="h-10" />
+    </div>
+  )
+}
+
 export function SellerDeskView() {
-  const { canGoBack, back } = useWalletContext()
+  const { walletId } = useWalletContext()
+  const wallet = useWallet(walletId)
+  const state = wallet.data
 
   return (
-    <div className="flex flex-col gap-3 p-4">
-      <h1 className="text-lg font-semibold">Seller Desk</h1>
-      <p className="text-sm opacity-70">Offer, public asking price, secret reserve and AI strategy.</p>
-      {canGoBack && (
-        <button type="button" className="pressable self-start rounded-lg bg-black/10 px-3 py-2 text-sm" onClick={back}>
-          Back
-        </button>
+    <div className="flex flex-col justify-start gap-5 p-4">
+      <header className="flex flex-col gap-1">
+        <h1 className="text-lg font-semibold">Seller Desk</h1>
+        <p className="text-sm text-hint">Let your local agent sell for you.</p>
+      </header>
+
+      {state ? (
+        <>
+          <SellerForm key={walletId} walletId={walletId} profile={state.agent_profile} assets={state.assets} />
+          <IncomingSessions aliases={state.local_aliases} />
+        </>
+      ) : wallet.error ? (
+        <ErrorState
+          title="Couldn't load your seller profile"
+          message="Check your connection and try again."
+          onRetry={wallet.refresh}
+        />
+      ) : (
+        <SellerDeskSkeleton />
       )}
     </div>
   )

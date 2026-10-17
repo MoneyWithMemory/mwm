@@ -7,11 +7,20 @@ import { formatAssetAmount } from '@/lib/format'
 import { textSwap } from '@/lib/motion'
 import { PROMPT_MAX_LENGTH, STRATEGIES } from './strategies'
 
+/** Starting values that differ from the saved profile, e.g. answering a request in the Shop. */
+export interface SellerDraft {
+  offered_asset_id?: string
+  offered_amount?: number
+  asking_price_usd?: number
+}
+
 interface SellerFormProps {
   walletId: string
   profile: AgentProfile
   assets: AssetBalance[]
   market: Market
+  draft?: SellerDraft
+  onSaved?: () => void
 }
 
 const NUMBER = /^\d*\.?\d*$/
@@ -27,18 +36,19 @@ function toText(value: number): string {
   return value > 0 ? String(value) : ''
 }
 
-export function SellerForm({ walletId, profile, assets, market }: SellerFormProps) {
+export function SellerForm({ walletId, profile, assets, market, draft, onSaved }: SellerFormProps) {
   // Only negotiable assets can be sold: BTC pays fees and the pegged asset is the payment currency.
   const negotiable = new Set(market.assets.filter((a) => a.source === 'p2p_negotiation').map((a) => a.asset_id))
   const sellable = assets.filter((a) => negotiable.has(a.asset_id))
   const { run, pending, error } = useUpdateAgentProfile()
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
-  const [active, setActive] = useState(profile.seller_active)
-  const [assetId, setAssetId] = useState(profile.offered_asset_id ?? sellable[0]?.asset_id ?? '')
+  // A draft (answering a request) switches selling on and starts from the request's lot and price.
+  const [active, setActive] = useState(draft ? true : profile.seller_active)
+  const [assetId, setAssetId] = useState(draft?.offered_asset_id ?? profile.offered_asset_id ?? sellable[0]?.asset_id ?? '')
   const asset = sellable.find((a) => a.asset_id === assetId)
-  const [amount, setAmount] = useState(toText(profile.offered_amount / 10 ** (asset?.precision ?? 0)))
-  const [ask, setAsk] = useState(toText(profile.asking_price_usd))
+  const [amount, setAmount] = useState(toText((draft?.offered_amount ?? profile.offered_amount) / 10 ** (asset?.precision ?? 0)))
+  const [ask, setAsk] = useState(toText(draft?.asking_price_usd ?? profile.asking_price_usd))
   const [reserve, setReserve] = useState(toText(profile.secret_min_reserve_usd))
   const [prompt, setPrompt] = useState(profile.seller_ai_prompt)
   const [touched, setTouched] = useState(false)
@@ -94,6 +104,7 @@ export function SellerForm({ walletId, profile, assets, market }: SellerFormProp
         setSaved(true)
         clearTimeout(timer.current)
         timer.current = setTimeout(() => setSaved(false), 1600)
+        onSaved?.()
       },
       () => {},
     )

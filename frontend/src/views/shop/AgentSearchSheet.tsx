@@ -1,7 +1,8 @@
 import { Lock } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
-import { useAgentSearch, type Market, type WalletState } from '@/api'
+import { useAgentSearch, type Market, type ShopListing, type WalletState } from '@/api'
 import { AssetBadge, Button, Input, SegmentedControl, Sheet, TextArea } from '@/components/ui'
+import { formatAssetAmount } from '@/lib/format'
 import { useWalletContext } from '@/lib/navigation'
 
 const NUMBER = /^\d*\.?\d*$/
@@ -18,15 +19,25 @@ interface AgentSearchSheetProps {
   onClose: () => void
   market: Market
   wallet: WalletState
+  /** Current Shop listings, to prefill the amount with the largest lot on sale. */
+  listings: ShopListing[]
 }
 
 /** The buyer's agent searches the Shop and opens a negotiation with the best matching Seller Desk. */
-export function AgentSearchSheet({ open, onClose, market, wallet }: AgentSearchSheetProps) {
+export function AgentSearchSheet({ open, onClose, market, wallet, listings }: AgentSearchSheetProps) {
   const { navigate } = useWalletContext()
   const { run, pending, error, reset } = useAgentSearch()
   const tradable = market.assets.filter((a) => a.source === 'p2p_negotiation')
+  const largestLot = (id: string) =>
+    Math.max(0, ...listings.filter((l) => l.kind === 'sell' && !l.is_mine && l.asset.asset_id === id).map((l) => l.amount))
+  const lotText = (id: string) => {
+    const lot = largestLot(id)
+    const precision = tradable.find((a) => a.asset_id === id)?.precision ?? 0
+    return lot > 0 ? String(lot / 10 ** precision) : ''
+  }
   const [assetId, setAssetId] = useState(tradable[0]?.asset_id ?? '')
-  const [amount, setAmount] = useState('')
+  const [amount, setAmount] = useState(() => lotText(tradable[0]?.asset_id ?? ''))
+  const [amountEdited, setAmountEdited] = useState(false)
   const [ceiling, setCeiling] = useState(String(wallet.agent_profile.buyer_max_ceiling_usd || ''))
   const [target, setTarget] = useState(String(wallet.agent_profile.buyer_target_usd || ''))
   const [prompt, setPrompt] = useState(wallet.agent_profile.buyer_ai_prompt)
@@ -84,7 +95,10 @@ export function AgentSearchSheet({ open, onClose, market, wallet }: AgentSearchS
             layoutId="shop-agent-asset"
             options={tradable.map((a) => ({ value: a.asset_id, label: a.ticker }))}
             value={assetId}
-            onChange={setAssetId}
+            onChange={(id) => {
+              setAssetId(id)
+              if (!amountEdited) setAmount(lotText(id))
+            }}
           />
         ) : asset ? (
           <AssetBadge ticker={asset.ticker} asset_id={asset.asset_id} showTicker />
@@ -99,8 +113,12 @@ export function AgentSearchSheet({ open, onClose, market, wallet }: AgentSearchS
           value={amount}
           suffix={asset?.ticker}
           error={touched ? amountError : undefined}
+          hint={largestLot(assetId) > 0 && asset ? `Largest lot on sale: ${formatAssetAmount(largestLot(assetId), asset.precision, asset.ticker)}` : undefined}
           containerClassName="mt-3"
-          onChange={(e) => setAmount(e.target.value)}
+          onChange={(e) => {
+            setAmount(e.target.value)
+            setAmountEdited(true)
+          }}
         />
         <Input
           className="amount"

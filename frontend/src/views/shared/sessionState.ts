@@ -23,3 +23,10 @@ export const SESSION_STATE_VARIANT: Record<SessionState, BadgeVariant> = {
   FAILED: 'danger',
   EXPIRED: 'default',
 }
+
+/** Gate reason of the pre-negotiation check: the buyer's maximum is below the seller's minimum. */
+export const NO_OVERLAP_PREFIX = 'No deal possible'
+
+export function isNoOverlap(reasons: string[] | undefined): boolean {
+  return (reasons ?? []).some((reason) => reason.startsWith(NO_OVERLAP_PREFIX))
+}

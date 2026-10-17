@@ -4,10 +4,24 @@ import {
   useCreateSession,
   type Contact,
   type Market,
+  type PublicDesk,
   type WalletState,
 } from '@/api'
-import { AssetBadge, Avatar, Button, Card, CardContent, IconButton, Input, SegmentedControl, Sheet, TextArea, TrustBadge } from '@/components/ui'
-import { formatAssetAmount, formatUsd, shortAddress } from '@/lib/format'
+import {
+  AssetBadge,
+  Avatar,
+  Button,
+  Card,
+  CardContent,
+  Disclosure,
+  IconButton,
+  Input,
+  SegmentedControl,
+  Sheet,
+  TextArea,
+  TrustBadge,
+} from '@/components/ui'
+import { formatAssetAmount, formatUnitPrice, formatUsd, shortAddress } from '@/lib/format'
 import { useWalletContext } from '@/lib/navigation'
 
 const NUMBER = /^\d*\.?\d*$/
@@ -22,6 +36,34 @@ function parse(text: string): number | null {
   if (!value || !NUMBER.test(value)) return null
   const n = Number(value)
   return Number.isFinite(n) ? n : null
+}
+
+/** The offer being answered: who sells, what, and the public list price. */
+function OfferSummary({ contact, desk }: { contact: Contact; desk: PublicDesk }) {
+  const unit = formatUnitPrice(desk.asking_price_usd, desk.offered_amount, desk.asset.precision)
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-3 pt-4">
+        <div className="flex items-center gap-3">
+          <Avatar seed={contact.address} label={contact.alias ?? undefined} size="lg" />
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
+            <span className="truncate text-sm font-semibold">{contact.alias ?? shortAddress(contact.address)}</span>
+            <TrustBadge tier={contact.trust.trust_tier} reliabilityPct={contact.trust.reliability_pct} size="sm" className="self-start" />
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-3 rounded-control bg-surface-muted/60 p-3">
+          <AssetBadge ticker={desk.asset.ticker} asset_id={desk.asset.asset_id} showTicker />
+          <div className="flex flex-col items-end">
+            <span className="amount text-sm font-semibold">{formatAssetAmount(desk.offered_amount, desk.asset.precision, desk.asset.ticker)}</span>
+            <span className="amount text-xs text-hint">
+              List price {formatUsd(desk.asking_price_usd)}
+              {unit && ` · ${unit} each`}
+            </span>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
 }
 
 interface SetupFormProps {
@@ -45,6 +87,8 @@ export function SetupForm({ wallet, contacts, market, initialAddress, onCreated 
   const [address, setAddress] = useState(initialAddress ?? '')
   const [pickerOpen, setPickerOpen] = useState(false)
   const initialContact = choices.find((c) => c.address === initialAddress)
+  // Arriving from an offer (Shop or Contacts): the lot and the asset are the offer's, only the limits are asked.
+  const offer = initialContact?.desk ? { contact: initialContact, desk: initialContact.desk } : null
   const [assetId, setAssetId] = useState(initialContact?.desk?.asset.asset_id ?? tradable[0]?.asset_id ?? '')
   const [amount, setAmount] = useState(deskAmountText(initialContact))
   const [ceiling, setCeiling] = useState(String(wallet.agent_profile.buyer_max_ceiling_usd || ''))
@@ -99,6 +143,34 @@ export function SetupForm({ wallet, contacts, market, initialAddress, onCreated 
 
   const show = touched
 
+  const limits = (
+    <>
+      <Input
+        className="amount"
+        label="Maximum budget (secret)"
+        inputMode="decimal"
+        placeholder="0.00"
+        value={ceiling}
+        prefix={<Lock size={14} aria-hidden="true" />}
+        suffix={payment?.ticker}
+        error={show ? ceilingError : undefined}
+        hint={offer ? `The seller never sees it. List price is ${formatUsd(offer.desk.asking_price_usd)}.` : "Stays on this device's agent."}
+        onChange={(e) => edit(setCeiling)(e.target.value)}
+      />
+      <Input
+        className="amount"
+        label="Target price"
+        inputMode="decimal"
+        placeholder="0.00"
+        value={target}
+        prefix="$"
+        error={show ? targetError : undefined}
+        hint="What you would like to pay for the whole lot."
+        onChange={(e) => edit(setTarget)(e.target.value)}
+      />
+    </>
+  )
+
   return (
     <form className="flex flex-col justify-start gap-4 p-4" onSubmit={submit}>
       <header className="flex items-center gap-2">
@@ -108,108 +180,95 @@ export function SetupForm({ wallet, contacts, market, initialAddress, onCreated 
           </IconButton>
         )}
         <div className="flex flex-col">
-          <h1 className="text-lg font-semibold">New deal</h1>
-          <p className="text-sm text-hint">Your local agent negotiates for you.</p>
+          <h1 className="text-lg font-semibold">{offer ? `Buy ${offer.desk.asset.ticker}` : 'New deal'}</h1>
+          <p className="text-sm text-hint">Your agent negotiates within your limits.</p>
         </div>
       </header>
 
-      <section className="flex flex-col gap-2" aria-label="Counterparty">
-        <h2 className="px-1 text-sm font-semibold text-hint">Counterparty</h2>
-        <Card interactive onClick={() => setPickerOpen(true)} aria-label="Choose counterparty" className="flex items-center gap-3 p-3">
-          {contact ? (
-            <>
-              <Avatar seed={contact.address} label={contact.alias ?? undefined} size="lg" />
-              <div className="flex min-w-0 flex-1 flex-col gap-1">
-                <span className="truncate text-sm font-semibold">{contact.alias ?? shortAddress(contact.address)}</span>
-                <TrustBadge tier={contact.trust.trust_tier} reliabilityPct={contact.trust.reliability_pct} size="sm" className="self-start" />
-              </div>
-            </>
-          ) : (
-            <span className="flex-1 text-sm text-hint">Choose a counterparty</span>
-          )}
-          <ChevronRight size={16} className="shrink-0 text-hint" aria-hidden="true" />
-        </Card>
-        <p className="min-h-4 px-1 text-xs text-danger">{show && !address ? 'Choose who you want to trade with.' : ''}</p>
-      </section>
+      {offer ? (
+        <>
+          <OfferSummary contact={offer.contact} desk={offer.desk} />
+          <Card>
+            <CardContent className="flex flex-col gap-1 pt-4">{limits}</CardContent>
+          </Card>
+        </>
+      ) : (
+        <>
+          <section className="flex flex-col gap-2" aria-label="Counterparty">
+            <h2 className="px-1 text-sm font-semibold text-hint">Counterparty</h2>
+            <Card interactive onClick={() => setPickerOpen(true)} aria-label="Choose counterparty" className="flex items-center gap-3 p-3">
+              {contact ? (
+                <>
+                  <Avatar seed={contact.address} label={contact.alias ?? undefined} size="lg" />
+                  <div className="flex min-w-0 flex-1 flex-col gap-1">
+                    <span className="truncate text-sm font-semibold">{contact.alias ?? shortAddress(contact.address)}</span>
+                    <TrustBadge tier={contact.trust.trust_tier} reliabilityPct={contact.trust.reliability_pct} size="sm" className="self-start" />
+                  </div>
+                </>
+              ) : (
+                <span className="flex-1 text-sm text-hint">Choose a counterparty</span>
+              )}
+              <ChevronRight size={16} className="shrink-0 text-hint" aria-hidden="true" />
+            </Card>
+            <p className="min-h-4 px-1 text-xs text-danger">{show && !address ? 'Choose who you want to trade with.' : ''}</p>
+          </section>
 
-      <Card>
-        <CardContent className="flex flex-col gap-1 pt-4">
-          <span className="text-xs font-medium text-hint">Asset to buy</span>
-          {tradable.length > 1 ? (
-            <SegmentedControl
-              fullWidth
-              layoutId={`trade-asset-${wallet.wallet_id}`}
-              options={tradable.map((a) => ({ value: a.asset_id, label: a.ticker }))}
-              value={assetId}
-              onChange={edit(setAssetId)}
-            />
-          ) : asset ? (
-            <AssetBadge ticker={asset.ticker} asset_id={asset.asset_id} showTicker />
-          ) : (
-            <p className="text-sm text-hint">No tradable assets yet.</p>
-          )}
-          <Input
-            className="amount"
-            label="Amount"
-            inputMode="decimal"
-            placeholder="0"
-            value={amount}
-            suffix={asset?.ticker}
-            error={show ? amountError : undefined}
-            hint={
-              contact?.desk
-                ? `Listed: ${formatAssetAmount(contact.desk.offered_amount, contact.desk.asset.precision, contact.desk.asset.ticker)} for ${formatUsd(contact.desk.asking_price_usd)}`
-                : undefined
-            }
-            containerClassName="mt-3"
-            onChange={(e) => edit(setAmount)(e.target.value)}
-          />
-          <Input
-            className="amount"
-            label="Maximum budget (secret)"
-            inputMode="decimal"
-            placeholder="0.00"
-            value={ceiling}
-            prefix={<Lock size={14} aria-hidden="true" />}
-            suffix={payment?.ticker}
-            error={show ? ceilingError : undefined}
-            hint="Stays on this device's agent."
-            onChange={(e) => edit(setCeiling)(e.target.value)}
-          />
-          <Input
-            className="amount"
-            label="Target price"
-            inputMode="decimal"
-            placeholder="0.00"
-            value={target}
-            prefix="$"
-            error={show ? targetError : undefined}
-            hint="What you would like to pay for the whole lot."
-            onChange={(e) => edit(setTarget)(e.target.value)}
-          />
-        </CardContent>
-      </Card>
+          <Card>
+            <CardContent className="flex flex-col gap-1 pt-4">
+              <span className="text-xs font-medium text-hint">Asset to buy</span>
+              {tradable.length > 1 ? (
+                <SegmentedControl
+                  fullWidth
+                  layoutId={`trade-asset-${wallet.wallet_id}`}
+                  options={tradable.map((a) => ({ value: a.asset_id, label: a.ticker }))}
+                  value={assetId}
+                  onChange={edit(setAssetId)}
+                />
+              ) : asset ? (
+                <AssetBadge ticker={asset.ticker} asset_id={asset.asset_id} showTicker />
+              ) : (
+                <p className="text-sm text-hint">No tradable assets yet.</p>
+              )}
+              <Input
+                className="amount"
+                label="Amount"
+                inputMode="decimal"
+                placeholder="0"
+                value={amount}
+                suffix={asset?.ticker}
+                error={show ? amountError : undefined}
+                hint={
+                  contact?.desk
+                    ? `Listed: ${formatAssetAmount(contact.desk.offered_amount, contact.desk.asset.precision, contact.desk.asset.ticker)} for ${formatUsd(contact.desk.asking_price_usd)}`
+                    : undefined
+                }
+                containerClassName="mt-3"
+                onChange={(e) => edit(setAmount)(e.target.value)}
+              />
+              {limits}
+            </CardContent>
+          </Card>
+        </>
+      )}
 
-      <Card>
-        <CardContent className="pt-4">
-          <TextArea
-            label="Instructions for your agent"
-            placeholder="Describe how your agent should negotiate."
-            rows={3}
-            maxLength={500}
-            value={prompt}
-            hint={`${prompt.length}/500`}
-            onChange={(e) => edit(setPrompt)(e.target.value)}
-          />
-        </CardContent>
-      </Card>
+      <Disclosure title="Agent instructions" summary={prompt || 'Default strategy'}>
+        <TextArea
+          aria-label="Instructions for your agent"
+          placeholder="Describe how your agent should negotiate."
+          rows={3}
+          maxLength={500}
+          value={prompt}
+          hint={`${prompt.length}/500`}
+          onChange={(e) => edit(setPrompt)(e.target.value)}
+        />
+      </Disclosure>
 
       <div className="flex flex-col gap-2">
         <p className="min-h-4 text-xs text-danger" role="alert">
           {error?.message}
         </p>
         <Button type="submit" fullWidth trailingArrow loading={pending} disabled={touched && !valid}>
-          Start negotiation
+          Let my agent negotiate
         </Button>
       </div>
 

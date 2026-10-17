@@ -1,7 +1,8 @@
-import { Ban, CircleAlert, ShieldAlert, TimerOff, type LucideIcon } from 'lucide-react'
+import { Ban, CircleAlert, Scale, ShieldAlert, TimerOff, type LucideIcon } from 'lucide-react'
 import type { SessionView } from '@/api'
 import { Button, Card, CardContent, TrustBadge } from '@/components/ui'
 import { useWalletContext } from '@/lib/navigation'
+import { isNoOverlap } from '../shared/sessionState'
 import { TxidRow } from './TxidRow'
 
 interface Notice {
@@ -13,6 +14,16 @@ interface Notice {
 function noticeFor(session: SessionView): Notice | null {
   switch (session.state) {
     case 'BLOCKED_BY_GATE':
+      if (isNoOverlap(session.gate?.reasons)) {
+        return {
+          icon: Scale,
+          title: 'No deal at these limits',
+          body:
+            session.my_role === 'buyer'
+              ? 'Your maximum is below what this seller accepts, so the agents did not start. No funds moved.'
+              : "The buyer's maximum is below your minimum, so the agents did not start. No funds moved.",
+        }
+      }
       return {
         icon: ShieldAlert,
         title: 'Trade blocked',
@@ -34,11 +45,12 @@ function noticeFor(session: SessionView): Notice | null {
 }
 
 export function TerminalNotice({ session }: { session: SessionView }) {
-  const { reset } = useWalletContext()
+  const { reset, replace } = useWalletContext()
   const notice = noticeFor(session)
   if (!notice) return null
   const Icon = notice.icon
-  const reasons = session.state === 'BLOCKED_BY_GATE' ? (session.gate?.reasons ?? []) : []
+  const noOverlap = session.state === 'BLOCKED_BY_GATE' && isNoOverlap(session.gate?.reasons)
+  const reasons = session.state === 'BLOCKED_BY_GATE' && !noOverlap ? (session.gate?.reasons ?? []) : []
 
   return (
     <Card>
@@ -56,7 +68,7 @@ export function TerminalNotice({ session }: { session: SessionView }) {
             <p className="text-xs text-hint">This transaction was broadcast before the failure. Check it before trying again.</p>
           </div>
         )}
-        {session.state === 'BLOCKED_BY_GATE' && (
+        {session.state === 'BLOCKED_BY_GATE' && !noOverlap && (
           <TrustBadge tier={session.counterparty_trust.trust_tier} reliabilityPct={session.counterparty_trust.reliability_pct} />
         )}
         {reasons.length > 0 && (
@@ -68,14 +80,25 @@ export function TerminalNotice({ session }: { session: SessionView }) {
             ))}
           </ul>
         )}
-        <div className="flex w-full gap-2 pt-1">
-          <Button variant="secondary" fullWidth onClick={() => reset('wallet')}>
-            Back to Wallet
-          </Button>
-          <Button fullWidth onClick={() => reset('shop')}>
-            Find another deal
-          </Button>
-        </div>
+        {noOverlap && session.my_role === 'buyer' ? (
+          <div className="flex w-full gap-2 pt-1">
+            <Button variant="secondary" fullWidth onClick={() => reset('shop')}>
+              Find another offer
+            </Button>
+            <Button fullWidth trailingArrow onClick={() => replace('trade', { counterpartyId: session.counterparty_address })}>
+              Change my limits
+            </Button>
+          </div>
+        ) : (
+          <div className="flex w-full gap-2 pt-1">
+            <Button variant="secondary" fullWidth onClick={() => reset('wallet')}>
+              Back to Wallet
+            </Button>
+            <Button fullWidth onClick={() => reset('shop')}>
+              Find another deal
+            </Button>
+          </div>
+        )}
       </CardContent>
     </Card>
   )

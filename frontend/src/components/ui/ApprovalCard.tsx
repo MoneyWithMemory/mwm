@@ -1,12 +1,10 @@
 import { CheckCircle2, Clock, FileCheck2, ShieldCheck, XCircle } from 'lucide-react'
-import { useState } from 'react'
 import type { CanonicalSwapTerms, Role } from '@/api/types'
 import { cn } from '@/lib/cn'
-import { formatSats, formatUsd, shortAddress } from '@/lib/format'
+import { formatAssetAmount, formatSats, formatUsd, shortAddress } from '@/lib/format'
 import { AssetBadge } from './AssetBadge'
 import { Button } from './Button'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from './Card'
-import { Checkbox } from './Checkbox'
 import { CopyButton } from './CopyButton'
 
 export interface ApprovalCardProps {
@@ -25,9 +23,8 @@ export interface ApprovalCardProps {
 }
 
 /**
- * P2P Trade terms review and signing approval card.
- * Enforces explicit user confirmation ("I reviewed the terms") before enabling the sign CTA.
- * Shows live signature status of the counterparty.
+ * P2P Trade terms review and signing approval card: the terms summary is the review, and one
+ * tap on "Approve & Sign" signs them. Shows live signature status of the counterparty.
  */
 export function ApprovalCard({
   terms,
@@ -43,7 +40,6 @@ export function ApprovalCard({
   onCancel,
   className,
 }: ApprovalCardProps) {
-  const [reviewed, setReviewed] = useState(false)
   const otherRole: Role = myRole === 'buyer' ? 'seller' : 'buyer'
   const otherRoleLabel = otherRole === 'buyer' ? 'Buyer' : 'Seller'
 
@@ -77,8 +73,8 @@ export function ApprovalCard({
               />
               <span className="amount">
                 {myRole === 'buyer'
-                  ? `${terms.rgb_amount.toLocaleString()} ${assetTicker}`
-                  : `${terms.payment_amount.toLocaleString()} ${paymentTicker}`}
+                  ? formatAssetAmount(terms.rgb_amount, 0, assetTicker)
+                  : formatAssetAmount(terms.payment_amount, 0, paymentTicker)}
               </span>
             </div>
           </div>
@@ -93,8 +89,8 @@ export function ApprovalCard({
               />
               <span className="amount">
                 {myRole === 'buyer'
-                  ? `${terms.payment_amount.toLocaleString()} ${paymentTicker}`
-                  : `${terms.rgb_amount.toLocaleString()} ${assetTicker}`}
+                  ? formatAssetAmount(terms.payment_amount, 0, paymentTicker)
+                  : formatAssetAmount(terms.rgb_amount, 0, assetTicker)}
               </span>
             </div>
           </div>
@@ -148,17 +144,10 @@ export function ApprovalCard({
           )}
         </div>
 
-        {/* Review confirmation checkbox */}
         {!mySigned && (
-          <div className="pt-1">
-            <Checkbox
-              id="review-terms"
-              checked={reviewed}
-              onChange={setReviewed}
-              label="I reviewed the canonical terms and agree to sign."
-              description="Signatures are cryptographically binding on Bitcoin regtest."
-            />
-          </div>
+          <p className="text-[11px] leading-relaxed text-hint">
+            Signing approves exactly these terms (terms hash above). The swap starts once both sides sign.
+          </p>
         )}
       </CardContent>
 
@@ -173,7 +162,6 @@ export function ApprovalCard({
             variant="primary"
             size="md"
             fullWidth
-            disabled={!reviewed}
             loading={signing}
             onClick={onSign}
           >

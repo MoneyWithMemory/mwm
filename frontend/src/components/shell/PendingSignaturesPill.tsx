@@ -39,11 +39,12 @@ export function PendingSignaturesPill({ activeWalletId, onSwitch }: PendingSigna
           animate="animate"
           exit="exit"
           onClick={open}
+          aria-label={`${label} has terms to sign: open the deal`}
           className="pressable badge-nowrap flex min-w-0 origin-right items-center gap-1.5 rounded-full bg-warning/15 px-3 py-1.5 text-xs font-medium text-warning"
         >
           <PenLine size={14} className="shrink-0" aria-hidden="true" />
           <span className="truncate">
-            {label} · signature needed{others.length > 1 ? ` (${others.length})` : ''}
+            {label} · to sign{others.length > 1 ? ` (${others.length})` : ''}
           </span>
         </motion.button>
       )}

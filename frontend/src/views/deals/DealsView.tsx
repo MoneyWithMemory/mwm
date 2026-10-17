@@ -1,9 +1,10 @@
 import { ChevronRight } from 'lucide-react'
-import { TERMINAL_STATES, useSessions, useWallet, type SessionSummary } from '@/api'
+import { TERMINAL_STATES, useSessions, type SessionSummary } from '@/api'
 import { Avatar, Badge, Button, EmptyState, ErrorState, Skeleton } from '@/components/ui'
-import { formatAssetAmount, formatUsd, shortAddress } from '@/lib/format'
+import { formatAssetAmount, formatUsd } from '@/lib/format'
 import { useWalletContext } from '@/lib/navigation'
 import { SESSION_STATE_LABEL, SESSION_STATE_VARIANT } from '../shared/sessionState'
+import { useCounterpartyName } from '../shared/useCounterpartyName'
 
 function DealRow({ deal, name, alias, onOpen }: { deal: SessionSummary; name: string; alias?: string; onOpen: () => void }) {
   return (
@@ -27,7 +28,11 @@ function DealRow({ deal, name, alias, onOpen }: { deal: SessionSummary; name: st
             {deal.agreed_price_usd !== null && ` · ${formatUsd(deal.agreed_price_usd)}`}
           </span>
         </span>
-        <Badge variant={SESSION_STATE_VARIANT[deal.state]}>{SESSION_STATE_LABEL[deal.state]}</Badge>
+        {deal.needs_my_signature ? (
+          <Badge variant="warning">To sign</Badge>
+        ) : (
+          <Badge variant={SESSION_STATE_VARIANT[deal.state]}>{SESSION_STATE_LABEL[deal.state]}</Badge>
+        )}
         <ChevronRight size={16} className="shrink-0 text-hint" aria-hidden="true" />
       </button>
     </li>
@@ -47,20 +52,18 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 export function DealsView() {
   const { walletId, navigate, reset } = useWalletContext()
   const sessions = useSessions(walletId)
-  const wallet = useWallet(walletId)
+  const counterpartyName = useCounterpartyName(walletId)
 
   const deals = [...(sessions.data ?? [])].sort((a, b) => b.updated_at - a.updated_at)
   const inProgress = deals.filter((d) => !TERMINAL_STATES.includes(d.state))
   const finished = deals.filter((d) => TERMINAL_STATES.includes(d.state))
-  const aliases = wallet.data?.local_aliases ?? {}
-
   const row = (deal: SessionSummary) => {
-    const alias = aliases[deal.counterparty_address]
+    const { name, alias } = counterpartyName(deal.counterparty_address)
     return (
       <DealRow
         key={deal.session_id}
         deal={deal}
-        name={alias ?? shortAddress(deal.counterparty_address)}
+        name={name}
         alias={alias}
         onOpen={() => navigate('trade', { sessionId: deal.session_id })}
       />

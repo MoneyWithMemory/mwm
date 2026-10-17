@@ -68,6 +68,19 @@ export const badgePop: Variants = {
   exit: { scale: 0.6, opacity: 0, transition: close },
 }
 
+/** Accordion body: one reversible motion, same 250ms both ways (no open/close split). */
+export const accordion: Variants = {
+  initial: { height: 0, opacity: 0 },
+  animate: { height: 'auto', opacity: 1, transition: open },
+  exit: { height: 0, opacity: 0, transition: open },
+}
+
+/** A new item entering a live list (e.g. a negotiation round). */
+export const listItem: Variants = {
+  initial: { opacity: 0, y: -DIST.base, filter: 'blur(2px)' },
+  animate: { opacity: 1, y: 0, filter: 'blur(0px)', transition: open, transitionEnd: { filter: 'none' } },
+}
+
 /** Text/label swap (Save → Saved), with AnimatePresence mode="wait". */
 export const textSwap: Variants = {
   initial: { y: DIST.micro, opacity: 0, filter: 'blur(2px)' },

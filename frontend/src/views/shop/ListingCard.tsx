@@ -6,8 +6,15 @@ import { formatAssetAmount, formatUsd, shortAddress } from '@/lib/format'
 import { useWalletContext } from '@/lib/navigation'
 import { unitPriceText } from './unitPrice'
 
-/** onSell opens the Sell tab: the way to answer a request, or to edit your own offer. */
-export function ListingCard({ listing, onSell }: { listing: ShopListing; onSell?: () => void }) {
+interface ListingCardProps {
+  listing: ShopListing
+  /** Opens the wallet's own Seller Desk (its sell listing). */
+  onEditOffer?: () => void
+  /** Answers someone's request: opens the Seller Desk prefilled with it. */
+  onSellTo?: (listing: ShopListing) => void
+}
+
+export function ListingCard({ listing, onEditOffer, onSellTo }: ListingCardProps) {
   const { walletId, navigate } = useWalletContext()
   const close = useCloseListing()
   const selling = listing.kind === 'sell'
@@ -21,16 +28,15 @@ export function ListingCard({ listing, onSell }: { listing: ShopListing; onSell?
   return (
     <Card>
       <CardContent className="flex flex-col gap-3 pt-4">
-        <div className="flex items-center gap-2">
-          <Badge variant={selling ? 'accent' : 'warning'}>{selling ? 'For sale' : 'Wanted'}</Badge>
-          {listing.is_mine && <Badge variant="outline">Yours</Badge>}
-        </div>
-
         <div className="flex items-center gap-3">
           <Avatar seed={listing.owner_address} label={listing.owner_alias ?? undefined} />
           <div className="flex min-w-0 flex-1 flex-col gap-1">
             <span className="truncate text-sm font-semibold">{name}</span>
             <TrustBadge tier={listing.trust.trust_tier} reliabilityPct={listing.trust.reliability_pct} size="sm" className="self-start" />
+          </div>
+          <div className="flex shrink-0 flex-col items-end gap-1">
+            <Badge variant={selling ? 'accent' : 'warning'}>{selling ? 'For sale' : 'Wanted'}</Badge>
+            {listing.is_mine && <Badge variant="outline" size="sm">Yours</Badge>}
           </div>
         </div>
 
@@ -41,7 +47,7 @@ export function ListingCard({ listing, onSell }: { listing: ShopListing; onSell?
               {formatAssetAmount(listing.amount, listing.asset.precision, listing.asset.ticker)}
             </span>
             <span className="amount text-xs text-hint">
-              {selling ? 'Asking' : 'Offering'} {formatUsd(listing.price_usd)}
+              {selling ? 'List price' : 'Offering'} {formatUsd(listing.price_usd)}
               {unit && ` · ${unit} each`}
             </span>
           </div>
@@ -51,17 +57,17 @@ export function ListingCard({ listing, onSell }: { listing: ShopListing; onSell?
 
         {selling && !listing.is_mine && (
           <Button fullWidth trailingArrow onClick={() => navigate('trade', { counterpartyId: listing.owner_address })}>
-            Buy
+            Buy · {formatUsd(listing.price_usd)}
           </Button>
         )}
-        {selling && listing.is_mine && onSell && (
-          <Button fullWidth variant="secondary" onClick={onSell}>
-            Edit my offer
+        {selling && listing.is_mine && onEditOffer && (
+          <Button fullWidth variant="secondary" onClick={onEditOffer}>
+            Edit offer
           </Button>
         )}
-        {!selling && !listing.is_mine && onSell && (
-          <Button fullWidth variant="secondary" onClick={onSell}>
-            Sell to them
+        {!selling && !listing.is_mine && onSellTo && (
+          <Button fullWidth variant="secondary" onClick={() => onSellTo(listing)}>
+            Sell to them · {formatUsd(listing.price_usd)}
           </Button>
         )}
         {!selling && listing.is_mine && (

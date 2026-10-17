@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useMarket, useWallet } from '@/api'
-import { AmountCountUp, ErrorState } from '@/components/ui'
-import { useViewParams, useWalletContext } from '@/lib/navigation'
+import { QrCode } from 'lucide-react'
+import { AmountCountUp, Button, ErrorState } from '@/components/ui'
+import { useWalletContext } from '@/lib/navigation'
 import { ActivityList } from './ActivityList'
 import { Insights } from './insights/Insights'
 import { AssetList } from './AssetList'
@@ -12,15 +13,12 @@ import { WalletSkeleton } from './WalletSkeleton'
 import { totalValueUsd } from './valuation'
 
 export function WalletView() {
-  const { walletId, current } = useWalletContext()
-  const params = useViewParams('wallet')
+  const { walletId } = useWalletContext()
   const wallet = useWallet(walletId)
   const market = useMarket()
   // Read once per mount: the weekly buckets only need day-level accuracy.
   const [clock] = useState(() => Date.now())
-  // The island's Receive action opens this sheet through the navigation entry; closing it dismisses that entry.
-  const [dismissed, setDismissed] = useState<unknown>(null)
-  const receiveOpen = params?.sheet === 'receive' && dismissed !== current
+  const [receiveOpen, setReceiveOpen] = useState(false)
   const [rename, setRename] = useState<{ address: string; open: boolean } | null>(null)
 
   const state = wallet.data
@@ -49,12 +47,18 @@ export function WalletView() {
     // pane, two columns (main 2fr, side 1fr) once the pane is wide enough. DOM order is the mobile order.
     <div className="@container">
       <div className="flex flex-col justify-start gap-5 p-4 @4xl:grid @4xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] @4xl:items-start @4xl:gap-6 @4xl:p-6">
-        <header className="flex flex-col gap-1 @4xl:col-span-2">
-          <p className="text-sm text-hint">{state.label}</p>
-          <p className="text-hero">
-            {market.data ? <AmountCountUp value={total} prefix="$" /> : <span className="amount text-hint">—</span>}
-          </p>
-          <p className="text-xs text-hint">Total balance</p>
+        <header className="flex items-start justify-between gap-3 @4xl:col-span-2">
+          <div className="flex min-w-0 flex-col gap-1">
+            <p className="text-sm text-hint">{state.label}</p>
+            <p className="text-hero">
+              {market.data ? <AmountCountUp value={total} prefix="$" /> : <span className="amount text-hint">—</span>}
+            </p>
+            <p className="text-xs text-hint">Total balance</p>
+          </div>
+          <Button variant="secondary" size="sm" onClick={() => setReceiveOpen(true)}>
+            <QrCode size={16} aria-hidden="true" />
+            Receive
+          </Button>
         </header>
 
         <div className="min-w-0 @4xl:col-start-1 @4xl:row-start-2">
@@ -73,7 +77,7 @@ export function WalletView() {
         </div>
       </div>
 
-      <ReceiveSheet open={receiveOpen} onClose={() => setDismissed(current)} address={state.address} />
+      <ReceiveSheet open={receiveOpen} onClose={() => setReceiveOpen(false)} address={state.address} />
       {rename && (
         <RenameSheet
           key={rename.address}

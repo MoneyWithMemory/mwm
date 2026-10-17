@@ -1,9 +1,19 @@
 {
-  "models": {
-    "buyer-agent": {
-      "path": "QWEN3_4B_INST_Q4_K_M",
-      "context_window": 8192,
-      "gpu_layers": 99
+  "serve": {
+    "load": {
+      "lazy": true,
+      "concurrency": 1,
+      "timeoutMs": 900000
+    },
+    "models": {
+      "buyer-agent": {
+        "model": "QWEN3_4B_INST_Q4_K_M",
+        "preload": true,
+        "config": {
+          "ctx_size": 8192,
+          "gpu_layers": 99
+        }
+      }
     }
   }
 }

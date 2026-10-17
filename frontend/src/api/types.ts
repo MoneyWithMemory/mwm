@@ -314,6 +314,8 @@ export interface SessionSummary {
   agreed_price_usd: number | null
   created_at: number
   updated_at: number
+  /** True while the terms wait for the requesting wallet's signature. */
+  needs_my_signature?: boolean
 }
 
 /** GET /api/sessions/{id}?wallet_id=: the session as seen by one wallet. */

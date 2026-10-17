@@ -373,3 +373,17 @@ def test_thinking_is_null_outside_negotiation():
     store.cancel_session("sess_think", cancelled_by="wallet_a")
     session.thinking = "seller"  # an agent turn that was in flight sets it after the cancel
     assert session.to_session_view("wallet_a")["thinking"] is None
+
+
+def test_needs_my_signature_follows_each_side():
+    store = SessionStore()
+    terms, h = _awaiting_session(store, "sess_needs")
+    session = store.get_session("sess_needs")
+    assert session.to_summary("wallet_a")["needs_my_signature"] is False  # still negotiating
+    store.set_awaiting_signatures("sess_needs", 125, 125, terms, h)
+    assert session.to_summary("wallet_a")["needs_my_signature"] is True
+    assert session.to_session_view("wallet_b")["needs_my_signature"] is True
+    store.sign_session("sess_needs", "wallet_a", h)
+    assert session.to_summary("wallet_a")["needs_my_signature"] is False
+    assert session.to_summary("wallet_b")["needs_my_signature"] is True
+    assert session.to_summary("wallet_sybil")["needs_my_signature"] is False

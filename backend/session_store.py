@@ -103,6 +103,16 @@ class Session(BaseModel):
         data["my_private_thought"] = my_latest_thought
         return data
 
+    def needs_signature_from(self, viewer_wallet_id: Optional[str]) -> bool:
+        """True while these terms wait for this wallet's signature (and have not expired)."""
+        if self.status != SessionStatus.AWAITING_SIGNATURES or int(time.time()) > self.expiry_unix:
+            return False
+        if viewer_wallet_id in (self.buyer_wallet_id, self.buyer_address):
+            return not self.buyer_signed
+        if viewer_wallet_id in (self.seller_wallet_id, self.seller_address):
+            return not self.seller_signed
+        return False
+
     def to_session_view(self, viewer_wallet_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Produce SessionView matching the exact frontend types.ts contract.
@@ -235,6 +245,7 @@ class Session(BaseModel):
             "settlement_steps": settlement_steps,
             "txid": self.txid,
             "failure": failure,
+            "needs_my_signature": self.needs_signature_from(viewer_wallet_id),
         }
 
     def to_summary(self, viewer_wallet_id: Optional[str] = None) -> Dict[str, Any]:
@@ -258,6 +269,7 @@ class Session(BaseModel):
             "agreed_price_usd": self.agreed_price_usd,
             "created_at": self.created_at_unix,
             "updated_at": self.updated_at_unix,
+            "needs_my_signature": self.needs_signature_from(viewer_wallet_id),
         }
 
 

@@ -256,7 +256,7 @@ Field rules:
 - **`gate`:** `null` until the gate runs. `gate.trust_tier` is the tier of the viewer's counterparty.
 - **Settlement:** `settlement_steps` stays empty until `SETTLING`. `txid` is set from step 6 (broadcast). `failure` is `{code, message}` when the state is `FAILED`.
 
-`GET /api/sessions?wallet_id=` returns `SessionSummary` items. Each has the first nine fields above, from `session_id` to `updated_at`.
+`GET /api/sessions?wallet_id=` returns `SessionSummary` items. Each has the first nine fields above, from `session_id` to `updated_at`, plus `needs_my_signature`: true while the terms wait for the requesting wallet's signature (also on `SessionView`).
 
 ### GET /api/negotiations/queue
 

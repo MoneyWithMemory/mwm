@@ -221,6 +221,7 @@ function summaryView(s: MockSession, role: Role): SessionSummary {
     agreed_price_usd: s.agreedPriceUsd,
     created_at: s.createdAt,
     updated_at: s.updatedAt,
+    needs_my_signature: s.state === 'AWAITING_SIGNATURES' && !(role === 'buyer' ? s.buyerSigned : s.sellerSigned),
   }
 }
 

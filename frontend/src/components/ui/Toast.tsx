@@ -132,7 +132,7 @@ function ToastCard({
       exit="exit"
       layout
       className={cn(
-        'pointer-events-auto flex items-start gap-3 w-full max-w-sm rounded-card bg-surface p-3.5 shadow-raised border text-fg select-none',
+        'pointer-events-auto flex items-start gap-3 w-full max-w-sm rounded-card surface-glass p-3.5 shadow-raised border text-fg select-none',
         style.border
       )}
     >

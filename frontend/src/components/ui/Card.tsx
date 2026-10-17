@@ -15,7 +15,8 @@ export function Card({ interactive, onClick, className, children, ...rest }: Car
       role={isClickable ? 'button' : undefined}
       tabIndex={isClickable ? 0 : undefined}
       className={cn(
-        'rounded-card bg-surface text-fg shadow-card border border-separator/40 overflow-hidden',
+        // shadow-card carries the 1px hairline border.
+        'rounded-card bg-surface text-fg shadow-card overflow-hidden',
         isClickable && 'pressable cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-accent',
         className
       )}

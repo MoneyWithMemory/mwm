@@ -90,7 +90,7 @@ export function Tabs<T extends string = string>({
               <motion.span
                 layoutId={activeLayoutId}
                 transition={SPRING_TABS}
-                className="absolute inset-0 bg-surface rounded-[calc(var(--radius-control)-4px)] shadow-card -z-10"
+                className="absolute inset-0 bg-surface-raised rounded-[calc(var(--radius-control)-4px)] shadow-card -z-10"
                 aria-hidden="true"
               />
             )}
@@ -106,7 +106,7 @@ export function Tabs<T extends string = string>({
               <span
                 className={cn(
                   'badge-nowrap rounded-full px-1.5 py-0.2 text-[10px] font-semibold leading-none',
-                  isActive ? 'bg-accent/15 text-accent' : 'bg-surface/60 text-hint'
+                  isActive ? 'bg-accent/15 text-accent' : 'bg-surface-muted text-hint'
                 )}
               >
                 {tab.badge}

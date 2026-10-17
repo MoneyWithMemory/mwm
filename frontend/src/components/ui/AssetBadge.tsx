@@ -20,8 +20,8 @@ export interface AssetBadgeProps {
 
 const CIRCLE_SIZES: Record<AssetBadgeSize, string> = {
   sm: 'size-6 text-[11px]',
-  md: 'size-8 text-xs font-bold',
-  lg: 'size-10 text-sm font-bold',
+  md: 'size-8 text-xs font-semibold',
+  lg: 'size-10 text-sm font-semibold',
 }
 
 const TEXT_SIZES: Record<AssetBadgeSize, string> = {
@@ -55,13 +55,13 @@ export function AssetBadge({
   let symbolContent: string = ticker.charAt(0).toUpperCase()
 
   if (isBtc) {
-    bgClass = 'bg-btc text-on-accent'
+    bgClass = 'bg-btc text-on-asset'
     symbolContent = '₿'
   } else if (isUsdt) {
-    bgClass = 'bg-usdt text-on-accent'
+    bgClass = 'bg-usdt text-on-asset'
     symbolContent = '₮'
   } else if (isPepe) {
-    bgClass = 'bg-pepe text-on-accent'
+    bgClass = 'bg-pepe text-on-asset'
     symbolContent = 'P'
   } else {
     const hue = hueFor(asset_id || ticker)
@@ -73,7 +73,7 @@ export function AssetBadge({
     <span
       style={customStyle}
       className={cn(
-        'inline-flex shrink-0 items-center justify-center rounded-full font-bold select-none leading-none shadow-sm',
+        'inline-flex shrink-0 items-center justify-center rounded-full font-semibold select-none leading-none',
         CIRCLE_SIZES[size],
         bgClass
       )}

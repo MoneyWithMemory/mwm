@@ -7,13 +7,15 @@ interface CounterpartySignSheetProps {
   sessionId: string
   /** The counterparty, when its wallet lives on this device (demo): it signs with its own approval. */
   counterparty: WalletSummary
+  /** The wallet this screen belongs to, i.e. the other side as the counterparty sees it. */
+  otherLabel?: string
 }
 
 /**
  * Lets the other side of a deal sign from the same screen when both wallets are on this device.
  * The signature is still the counterparty's own, over its own view of the terms (2/2 holds).
  */
-export function CounterpartySignSheet({ open, onClose, sessionId, counterparty }: CounterpartySignSheetProps) {
+export function CounterpartySignSheet({ open, onClose, sessionId, counterparty, otherLabel }: CounterpartySignSheetProps) {
   const session = useSession(open ? sessionId : null, counterparty.wallet_id).data
   const sign = useSign()
 
@@ -34,9 +36,7 @@ export function CounterpartySignSheet({ open, onClose, sessionId, counterparty }
   return (
     <Sheet open={open} onClose={onClose} title={`Sign as ${counterparty.label}`}>
       <div className="flex flex-col gap-3">
-        <p className="text-sm text-hint">
-          {counterparty.label} is also on this device, so it can approve these terms here, with its own signature.
-        </p>
+        <p className="text-sm text-hint">{counterparty.label} is on this device too: it signs here, with its own key.</p>
         {session?.terms ? (
           <ApprovalCard
             terms={session.terms}
@@ -46,6 +46,7 @@ export function CounterpartySignSheet({ open, onClose, sessionId, counterparty }
             myRole={session.my_role}
             mySigned={mySigned}
             counterpartySigned={otherSigned}
+            counterpartyLabel={otherLabel}
             signing={sign.pending}
             onSign={onSign}
           />

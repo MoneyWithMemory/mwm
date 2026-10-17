@@ -13,10 +13,12 @@ export const EASE_BOUNCE = [0.34, 1.36, 0.64, 1] as const
 
 /** Seconds. close = quick (150ms): closing is always faster than opening. */
 export const DUR = {
+  stagger: 0.04,  // --duration-stagger: per-item offset in a cascade
+  micro: 0.08,    // --duration-micro: intent delay, success check stroke delay
   quick: 0.15,    // --duration-quick: close, press, text swap
   iconSwap: 0.17, // icon and state swaps (CLAUDE.md 160–180ms)
   open: 0.25,     // --duration-fast: sheet/modal/dropdown open, page slide
-  medium: 0.35,   // --duration-medium: error shake, checkbox draw
+  medium: 0.35,   // --duration-medium: error shake, checkbox draw, chat bubble slide-in
   badge: 0.5,     // --duration-very-slow: badge appear
 } as const
 
@@ -47,6 +49,9 @@ export const SPRING_TABS = { type: 'spring', stiffness: 450, damping: 35 } as co
 
 /** whileHover / whileTap on motion buttons. */
 export const SPRING_SNAPPY = { type: 'spring', stiffness: 450, damping: 28 } as const satisfies Transition
+
+/** Markers gliding along a track (--spring-spread): soft, no overshoot you can read as a number. */
+export const SPRING_GLIDE = { type: 'spring', stiffness: 180, damping: 22, mass: 0.8 } as const satisfies Transition
 
 /** Pass to <MotionConfig> at the app root so Framer Motion honours prefers-reduced-motion. */
 export const MOTION_CONFIG = { reducedMotion: 'user' } as const
@@ -79,6 +84,50 @@ export const accordion: Variants = {
 export const listItem: Variants = {
   initial: { opacity: 0, y: -DIST.base, filter: 'blur(2px)' },
   animate: { opacity: 1, y: 0, filter: 'blur(0px)', transition: open, transitionEnd: { filter: 'none' } },
+}
+
+/**
+ * Chat bubble arriving from its own side, like a message: `custom` is { side, delay }, side -1
+ * for the left column and 1 for the right. Set transform-origin on the bubble's tail corner.
+ * Leaves without travel, so a fold or a typing indicator never flings content across the chat.
+ */
+export const chatBubble: Variants = {
+  initial: ({ side }: { side: number }) => ({ opacity: 0, x: side * DIST.large, scale: SCALE.overlay, filter: 'blur(2px)' }),
+  animate: ({ delay = 0 }: { delay?: number }) => ({
+    opacity: 1,
+    x: 0,
+    scale: 1,
+    filter: 'blur(0px)',
+    transition: { duration: DUR.medium, ease: EASE_OUT, delay },
+    transitionEnd: { filter: 'none' },
+  }),
+  exit: { opacity: 0, scale: SCALE.overlay, transition: close },
+}
+
+/** Success check (transitions-dev 10): fades, turns upright and rises with a bob; pair with checkStroke. */
+export const successCheck: Variants = {
+  initial: { opacity: 0, rotate: 80, y: DIST.large, filter: 'blur(8px)' },
+  animate: {
+    opacity: 1,
+    rotate: 0,
+    y: 0,
+    filter: 'blur(0px)',
+    transition: { duration: DUR.badge, ease: EASE_OUT, y: { duration: DUR.badge, ease: EASE_BOUNCE } },
+    transitionEnd: { filter: 'none' },
+  },
+}
+
+/** The check's path, drawn once the badge is on its way (80ms beat). */
+export const checkStroke: Variants = {
+  initial: { pathLength: 0 },
+  animate: { pathLength: 1, transition: { duration: DUR.badge, ease: EASE_OUT, delay: DUR.micro } },
+}
+
+/** Two views taking turns in the same slot (chat ↔ detailed flow), with AnimatePresence mode="wait". */
+export const viewSwap: Variants = {
+  initial: { opacity: 0, y: DIST.base, filter: 'blur(2px)' },
+  animate: { opacity: 1, y: 0, filter: 'blur(0px)', transition: open, transitionEnd: { filter: 'none' } },
+  exit: { opacity: 0, filter: 'blur(2px)', transition: close },
 }
 
 /** Text/label swap (Save → Saved), with AnimatePresence mode="wait". */

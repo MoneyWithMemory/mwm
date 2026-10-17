@@ -15,7 +15,12 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react(), tailwindcss()],
     resolve: {
-      alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+      alias: {
+        '@': fileURLToPath(new URL('./src', import.meta.url)),
+        // Tether WDK browser shims, see src/wdk/README.md.
+        'sodium-universal': fileURLToPath(new URL('./src/wdk/sodium-memzero.ts', import.meta.url)),
+        ws: fileURLToPath(new URL('./src/wdk/ws-browser.ts', import.meta.url)),
+      },
     },
     server: { host: true, port: 5173, strictPort: true, proxy },
     preview: { host: true, port: 4173, strictPort: true, proxy },

@@ -49,8 +49,8 @@ export function Toggle({
       onClick={handleToggle}
       onKeyDown={handleKeyDown}
       className={cn(
-        'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full p-0.5 transition-colors duration-quick ease-smooth-out select-none outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2',
-        checked ? 'bg-accent' : 'bg-surface-muted',
+        'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full p-0.5 transition-colors duration-quick ease-smooth-out select-none outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface',
+        checked ? 'bg-accent' : 'bg-surface-raised',
         disabled && 'opacity-50 cursor-not-allowed pointer-events-none'
       )}
     >
@@ -58,7 +58,7 @@ export function Toggle({
         layout
         transition={SPRING_TABS}
         className={cn(
-          'pointer-events-none block size-5 rounded-full bg-on-accent shadow-card',
+          'pointer-events-none block size-5 rounded-full bg-fg shadow-card',
           checked ? 'ml-auto' : 'mr-auto'
         )}
       />

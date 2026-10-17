@@ -1,24 +1,26 @@
 import { useState } from 'react'
 import { useMarket, useWallet } from '@/api'
 import { AmountCountUp, ErrorState } from '@/components/ui'
-import { useWalletContext } from '@/lib/navigation'
+import { useViewParams, useWalletContext } from '@/lib/navigation'
 import { ActivityList } from './ActivityList'
 import { Insights } from './insights/Insights'
 import { AssetList } from './AssetList'
 import { BalanceChart } from './BalanceChart'
 import { ReceiveSheet } from './ReceiveSheet'
 import { RenameSheet } from '../shared/RenameSheet'
-import { WalletActions } from './WalletActions'
 import { WalletSkeleton } from './WalletSkeleton'
 import { totalValueUsd } from './valuation'
 
 export function WalletView() {
-  const { walletId, navigate } = useWalletContext()
+  const { walletId, current } = useWalletContext()
+  const params = useViewParams('wallet')
   const wallet = useWallet(walletId)
   const market = useMarket()
   // Read once per mount: the weekly buckets only need day-level accuracy.
   const [clock] = useState(() => Date.now())
-  const [receiveOpen, setReceiveOpen] = useState(false)
+  // The island's Receive action opens this sheet through the navigation entry; closing it dismisses that entry.
+  const [dismissed, setDismissed] = useState<unknown>(null)
+  const receiveOpen = params?.sheet === 'receive' && dismissed !== current
   const [rename, setRename] = useState<{ address: string; open: boolean } | null>(null)
 
   const state = wallet.data
@@ -47,21 +49,13 @@ export function WalletView() {
     // pane, two columns (main 2fr, side 1fr) once the pane is wide enough. DOM order is the mobile order.
     <div className="@container">
       <div className="flex flex-col justify-start gap-5 p-4 @4xl:grid @4xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] @4xl:items-start @4xl:gap-6 @4xl:p-6">
-        <div className="flex flex-col gap-5 @4xl:col-span-2 @4xl:flex-row @4xl:items-end @4xl:justify-between">
-          <header className="flex flex-col gap-1">
-            <p className="text-sm text-hint">{state.label}</p>
-            <p className="text-hero">
-              {market.data ? <AmountCountUp value={total} prefix="$" /> : <span className="amount text-hint">—</span>}
-            </p>
-            <p className="text-xs text-hint">Total balance</p>
-          </header>
-          <WalletActions
-            className="@4xl:justify-end @4xl:gap-8"
-            onReceive={() => setReceiveOpen(true)}
-            onTrade={() => navigate('trade')}
-            onSellerDesk={() => navigate('seller-desk')}
-          />
-        </div>
+        <header className="flex flex-col gap-1 @4xl:col-span-2">
+          <p className="text-sm text-hint">{state.label}</p>
+          <p className="text-hero">
+            {market.data ? <AmountCountUp value={total} prefix="$" /> : <span className="amount text-hint">—</span>}
+          </p>
+          <p className="text-xs text-hint">Total balance</p>
+        </header>
 
         <div className="min-w-0 @4xl:col-start-1 @4xl:row-start-2">
           <BalanceChart walletId={walletId} points={state.history_points} assets={state.assets} />
@@ -79,7 +73,7 @@ export function WalletView() {
         </div>
       </div>
 
-      <ReceiveSheet open={receiveOpen} onClose={() => setReceiveOpen(false)} address={state.address} />
+      <ReceiveSheet open={receiveOpen} onClose={() => setDismissed(current)} address={state.address} />
       {rename && (
         <RenameSheet
           key={rename.address}

@@ -91,8 +91,9 @@ Senza QVAC metti `QVAC_MOCK=1` al posto di `QVAC_BASE_URL=...`.
 All'avvio (lifespan → `RgbSwapEngine.setup_demo_environment`) il backend prepara da solo la demo. `backend/seed.py` contiene solo i parametri dei wallet seed e non va eseguito.
 * Finanzia Wallet A e Wallet B con `initial_btc_sats` di `backend/seed.py` (1.000.000 sats = 0,01 BTC ciascuno) e crea su entrambi 5 UTXO colorabili da 10.000 sats.
 * Emette 1.000.000 PEPE su Wallet B (se B non ne ha già almeno 1.000.000) e 10.000 USDT su Wallet A (se A non ne ha già almeno 10.000 spendibili).
+* Precarica nello Shop le due richieste demo del mock del frontend (`want_seed_1`, `want_seed_2`).
 
-Nei log compare `Demo environment ready: PEPE=... USDT=...`. Finanziamento e UTXO si ripetono a ogni avvio.
+Nei log compare `Demo environment ready: PEPE=... USDT=...`. Ai riavvii successivi i BTC arrivano solo se un wallet ne ha meno di metà di quelli iniziali, e le UTXO colorabili vengono solo riportate a 5.
 
 Se regtest non risponde all'avvio, nei log compare `Demo environment setup deferred (regtest offline or starting)`. Il setup **non viene ritentato**, i wallet aperti con electrs spento restano offline e `/api/market` mostra asset id segnaposto (`rgb:pepe_nia`, `rgb:usdt_nia`). Avvia regtest e riavvia il server.
 
@@ -167,4 +168,6 @@ rm -rf "${MWM_DATA_DIR:-$HOME/.mwm/data}"
 5. **Indirizzi allineati a Tether WDK**:
    Con `vanilla_keychain=0` il ramo vanilla è `m/84'/1'/0'/0/*`, quindi il primo indirizzo restituito per un wallet nuovo è `m/84'/1'/0'/0/0`, lo stesso che Tether WDK deriva nel browser dalla stessa mnemonic (`POST /api/wallets/create`). `get_address()` di rgb-lib avanza di un indice a ogni chiamata, anche tra un riavvio e l'altro. Il backend lo memorizza per processo, quindi dopo un riavvio i wallet seed mostrano l'indirizzo successivo dello stesso wallet.
 6. **Stato su disco e in memoria**:
-   Su disco ci sono solo i wallet rgb-lib in `$MWM_DATA_DIR` (le mnemonic sono in chiaro in `keys.json`: solo regtest). Sessioni, profili agente, alias, activity, history, memory graph e prezzo PEPE vivono in memoria e si azzerano a ogni riavvio.
+   Su disco ci sono solo i wallet rgb-lib in `$MWM_DATA_DIR` (le mnemonic sono in chiaro in `keys.json`, con permessi 0600: solo regtest). Sessioni, richieste dello Shop, profili agente, alias, activity, history, memory graph e prezzo PEPE vivono in memoria e si azzerano a ogni riavvio.
+7. **Shop**:
+   Le vendite (`sell`) sono i Seller Desk attivi, costruiti al volo dai profili agente con i soli campi pubblici; le richieste (`want`) stanno in `backend/shop.py`. `POST /api/shop/agent_search` sceglie il desk più conveniente per la quantità richiesta, scarta i ring e quelli sopra 1,5 volte il tetto del compratore, poi crea la sessione con la stessa logica di `POST /api/sessions` (stesso gate, stessi errori).

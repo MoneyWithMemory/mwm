@@ -22,10 +22,11 @@ Every non-2xx response has this body:
 
 | Status | Codes |
 |---|---|
-| 400 | `invalid_asset`, `invalid_amount`, `invalid_limits`, `invalid_label`, `invalid_profile`, `self_trade` |
+| 400 | `invalid_asset`, `invalid_amount`, `invalid_limits`, `invalid_label`, `invalid_profile`, `self_trade`, `sign_error`, `wallet_creation_failed` |
 | 403 | `forbidden` (the wallet is not part of the session) |
 | 404 | `wallet_not_found`, `session_not_found` |
 | 409 | `seller_desk_inactive`, `insufficient_funds`, `not_awaiting_signatures`, `terms_hash_mismatch`, `already_signed`, `expired`, `not_cancellable` |
+| 500 | `internal_server_error` |
 
 The UI shows `message` to the user, so write it in plain English.
 

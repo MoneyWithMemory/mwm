@@ -1,0 +1,32 @@
+import type { AssetBalance, HistoryPoint, Market } from '@/api'
+import { formatAssetAmount, formatSats } from '@/lib/format'
+
+/** USD value of a balance, or null while the asset has no price (e.g. PEPE before its first trade). */
+export function assetValueUsd(asset: AssetBalance, market: Market | undefined): number | null {
+  if (!market) return null
+  if (asset.schema === 'BTC') return asset.amount / market.sats_per_usd
+  const price = market.assets.find((p) => p.asset_id === asset.asset_id)?.price_usd ?? null
+  return price === null ? null : (asset.amount / 10 ** asset.precision) * price
+}
+
+export function totalValueUsd(assets: AssetBalance[], market: Market | undefined): number {
+  return assets.reduce((sum, asset) => sum + (assetValueUsd(asset, market) ?? 0), 0)
+}
+
+/** BTC is shown in sats (it only pays fees); every other asset in display units. */
+export function formatBalance(asset: { schema: string; precision: number; ticker: string }, amount: number): string {
+  return asset.schema === 'BTC' ? formatSats(amount) : formatAssetAmount(amount, asset.precision, asset.ticker)
+}
+
+/**
+ * The backend records a history point only when a swap settles, so after a deposit the last point
+ * is behind the balances shown everywhere else. Close the series with a point for right now, built
+ * from the current balances, whenever they differ from the last recorded one.
+ */
+export function withCurrentPoint(points: HistoryPoint[], assets: AssetBalance[], totalUsd: number, nowSeconds: number): HistoryPoint[] {
+  const last = points[points.length - 1]
+  const balances = Object.fromEntries(assets.map((a) => [a.asset_id, a.amount]))
+  const sameBalances = last && assets.every((a) => (last.balances[a.asset_id] ?? 0) === a.amount)
+  if (!last || (sameBalances && Math.abs(last.total_usd - totalUsd) < 0.005)) return points
+  return [...points, { t: Math.max(nowSeconds, last.t + 1), balances, total_usd: totalUsd }]
+}

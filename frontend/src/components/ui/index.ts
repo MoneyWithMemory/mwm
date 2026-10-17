@@ -1,0 +1,33 @@
+// UI kit barrel: views import from '@/components/ui'.
+// Existing core primitives (M1.6):
+export { Avatar } from './Avatar'
+export { OverlayLayer } from './OverlayLayer'
+export { Sheet } from './Sheet'
+
+// M1.3 UI kit components:
+export { AmountCountUp, type AmountCountUpProps } from './AmountCountUp'
+export { ApprovalCard, type ApprovalCardProps } from './ApprovalCard'
+export { AssetBadge, type AssetBadgeProps, type AssetBadgeSize } from './AssetBadge'
+export { Badge, type BadgeProps, type BadgeSize, type BadgeVariant } from './Badge'
+export { Button, type ButtonSize, type ButtonVariant } from './Button'
+export { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from './Card'
+export { Checkbox, type CheckboxProps } from './Checkbox'
+export { Chip, type ChipProps } from './Chip'
+export { CopyButton, type CopyButtonProps } from './CopyButton'
+export { EmptyState, type EmptyStateProps } from './EmptyState'
+export { ErrorState, type ErrorStateProps } from './ErrorState'
+export { IconButton, type IconButtonSize, type IconButtonVariant } from './IconButton'
+export { IconSwap } from './IconSwap'
+export { Input, type InputProps } from './Input'
+export { Modal } from './Modal'
+export { SegmentedControl, type SegmentOption, type SegmentedControlProps } from './SegmentedControl'
+export { Skeleton, type SkeletonProps, type SkeletonVariant } from './Skeleton'
+export { StepList, type StepListProps } from './StepList'
+export { Tabs, type TabItem, type TabsProps } from './Tabs'
+export { TextArea, type TextAreaProps } from './TextArea'
+export { ThinkingDots, ThinkingState, type ThinkingStateProps } from './ThinkingState'
+export { ToastProvider } from './Toast'
+export { toast, useToast, type ToastItem, type ToastType } from './toastStore'
+export { Toggle, type ToggleProps } from './Toggle'
+export { TrustBadge, type TrustBadgeProps } from './TrustBadge'
+

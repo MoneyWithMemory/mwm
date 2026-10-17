@@ -1,0 +1,317 @@
+@import "tailwindcss";
+/* Inter, bundled locally (the demo may run without internet); Apple devices use SF Pro first. */
+@import "@fontsource-variable/inter/wght.css";
+
+/*
+ * Single source of truth for design and motion tokens (M1.2).
+ * Components read these through Tailwind utilities (bg-surface, text-hint,
+ * rounded-card, ease-smooth-out, ...) or var(--...). Mirror for Framer
+ * Motion: src/lib/motion.ts.
+ */
+
+/* ── Color palette: dark premium, lavender accent (Drop 4) ───────
+ * Dark is the only scheme: the lavender accent fails AA as text on white.
+ * Contrast (WCAG): hint 7.2:1 on bg, 6.6:1 on surface; on-accent 8.8:1 on accent;
+ * success / danger / warning at least 5.8:1 on bg, surface and surface-muted.
+ */
+:root {
+  color-scheme: dark;
+  --palette-bg: #08080f;             /* deep blue-black app background */
+  --palette-surface: #14141f;        /* cards and panels */
+  --palette-surface-muted: #1d1d2b;  /* inputs, chips, segmented track */
+  --palette-surface-raised: #2a2a3d; /* selected segment or tab on a muted track */
+  --palette-fg: #f4f4f8;             /* primary text */
+  --palette-hint: #9a9aad;           /* secondary text, placeholders */
+  --palette-separator: rgb(255 255 255 / 0.08);  /* hairlines and 1px card borders */
+  --palette-accent: #b9a8f6;         /* lavender: lines, active indicators, CTAs */
+  --palette-accent-pressed: #a08cf0;
+  --palette-success: #5fd39a;        /* the accent never signals success or errors */
+  --palette-danger: #f0707a;
+  --palette-warning: #e8b04a;
+  --palette-overlay: rgb(4 4 10 / 0.66);  /* sheet/modal backdrop */
+}
+
+/* static: every token is emitted, so components can also read it with var(). */
+@theme static {
+  --color-bg: var(--palette-bg);
+  --color-surface: var(--palette-surface);
+  --color-surface-muted: var(--palette-surface-muted);
+  --color-surface-raised: var(--palette-surface-raised);
+  --color-fg: var(--palette-fg);
+  --color-hint: var(--palette-hint);
+  --color-separator: var(--palette-separator);
+  --color-accent: var(--palette-accent);
+  --color-accent-pressed: var(--palette-accent-pressed);
+  --color-on-accent: #14102b;  /* dark text on lavender (and on danger) */
+  --color-success: var(--palette-success);
+  --color-danger: var(--palette-danger);
+  --color-warning: var(--palette-warning);
+  --color-overlay: var(--palette-overlay);
+
+  /* Charts: selected-point marker and the series gradient (blue-lavender to peach-pink). */
+  --color-accent-cool: #6fc8f4;
+  --color-chart-from: #a9bdf5;
+  --color-chart-to: #f2cbd6;
+
+  /* Trust tiers (TrustBadge): High Authenticity / Ring Anomaly Detected / Unverified */
+  --color-trust-high: var(--palette-success);
+  --color-trust-ring: var(--palette-danger);
+  --color-trust-unverified: var(--palette-hint);
+}
+
+@theme static {
+  /* Asset badges: same in both schemes. Other assets get a color derived from asset_id. */
+  --color-btc: #f7931a;
+  --color-usdt: #26a17b;
+  --color-pepe: #4c9a2a;  /* proposed, pending confirmation */
+  --color-on-asset: #ffffff;  /* ticker letters on the asset colors above */
+
+  /* Typography: SF Pro on Apple devices, Inter elsewhere; weights 400 / 500 / 600 only.
+     Amounts use .amount (tabular numbers). */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Inter Variable", Inter, system-ui, "Segoe UI", Roboto, sans-serif;
+  --text-hero: 2.5rem;
+  --text-hero--line-height: 1.1;
+  --text-hero--letter-spacing: -0.025em;
+  --text-hero--font-weight: 600;
+
+  /* Radii (pills and chips use rounded-full) */
+  --radius-control: 0.875rem; /* buttons, inputs, segmented controls: 14px */
+  --radius-card: 1.25rem;     /* cards, modals, toasts: 20px */
+  --radius-sheet: 1.5rem;     /* top corners of bottom sheets: 24px */
+
+  /* Shadows. The inset hairline is the 1px low-opacity card border, so every
+     shadow-card surface gets it without a layout change. */
+  --shadow-card: inset 0 0 0 1px rgb(255 255 255 / 0.06), 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-raised: inset 0 0 0 1px rgb(255 255 255 / 0.08), 0 10px 30px -12px rgb(0 0 0 / 0.7); /* hover lift */
+  --shadow-overlay: inset 0 1px 0 rgb(255 255 255 / 0.06), 0 -16px 48px rgb(0 0 0 / 0.6);      /* sheets, modals */
+  /* Lavender glow, barely there: only the primary CTA, the active state and a selected detail. */
+  --shadow-glow: inset 0 0 0 1px rgb(185 168 246 / 0.25), 0 8px 28px -10px rgb(185 168 246 / 0.55);
+  --shadow-glow-soft: 0 0 20px -6px rgb(185 168 246 / 0.45);
+
+  /* Easings (also available as ease-* utilities) */
+  --ease-smooth-out: cubic-bezier(0.22, 1, 0.36, 1);  /* default: open/close, slide, resize, hover */
+  --ease-exponential: cubic-bezier(0.16, 1, 0.3, 1);  /* dialog and card reveal */
+  --ease-bounce: cubic-bezier(0.34, 1.36, 0.64, 1);   /* badge pop, number bump */
+  --ease-bounce-strong: cubic-bezier(0.34, 3.85, 0.64, 1);  /* bouncy hover-out return */
+  --ease-in-out: ease-in-out;  /* icon swap, text swap */
+  --ease-out: ease-out;        /* tooltips */
+  --ease-in: initial;          /* removed: ease-in is banned on interactive UI */
+}
+
+/* ── Motion scale (transitions-dev) ─────────────────────────────── */
+:root {
+  /* Durations */
+  --duration-stagger: 40ms;    /* per-item stagger offset */
+  --duration-micro: 80ms;      /* intent delay, shake segment */
+  --duration-quick: 150ms;     /* close, press, hover-in, text swap */
+  --duration-fast: 250ms;      /* open, hover-out, tabs, page slide */
+  --duration-medium: 350ms;    /* panel and toast close */
+  --duration-slow: 400ms;      /* panel open, skeleton reveal */
+  --duration-very-slow: 500ms; /* success check, emphasis */
+  --ease-linear: linear;       /* shimmer, skeleton pulse, spinner */
+  /* Distances */
+  --distance-micro: 4px;   /* text swap */
+  --distance-small: 6px;   /* error shake (small segment) */
+  --distance-base: 8px;    /* page slide, list item entry */
+  --distance-medium: 12px; /* text reveal */
+  --distance-large: 30px;  /* success badge rise, sheet entry */
+  /* Scales: overlays never start from 0 */
+  --scale-large: 0.96;     /* modal and sheet open/close */
+  --scale-medium: 0.97;    /* dropdown open */
+  --scale-small: 0.98;     /* tooltip open */
+  --scale-tiny: 0.99;      /* dropdown close */
+  --scale-hover: 1.015;    /* hover lift */
+  --scale-press: 0.97;     /* :active on buttons, cards, tabs */
+  --scale-press-icon: 0.9; /* :active on icon-only triggers */
+  /* Blur */
+  --blur-small: 2px;       /* icon swap, text swap, panel reveal */
+  --blur-medium: 3px;      /* page slide, text reveal */
+  --blur-large: 8px;       /* success check */
+  /* Floating tab bar (BottomNav island): its height and the gap below it */
+  --island-height: 4.25rem;  /* 48px items + 6px padding + raised center button headroom */
+  --island-gap: max(env(safe-area-inset-bottom), 12px);
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    scrollbar-color: rgb(255 255 255 / 0.14) transparent;
+  }
+
+  ::selection {
+    background-color: rgb(185 168 246 / 0.32);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* App chrome: no accidental selection, callouts or tap flashes on mobile. */
+  .ui-shell {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Selectable content: inputs, agent thoughts, negotiation rounds, addresses, hashes. */
+  .ui-shell :is(input, textarea, [contenteditable="true"]),
+  .select-text {
+    -webkit-user-select: text;
+    user-select: text;
+    -webkit-touch-callout: default;
+  }
+
+  /*
+   * Clickable surfaces. Hover-in and press are quick, hover-out settles
+   * softer (the transition of the state being entered applies). Owns the
+   * element's transition: don't add transition-* utilities on top.
+   */
+  .pressable,
+  .pressable-icon {
+    --pressable-shadow: var(--shadow-raised);
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    transition:
+      transform var(--duration-fast) var(--ease-smooth-out),
+      box-shadow var(--duration-fast) var(--ease-smooth-out),
+      background-color var(--duration-quick) var(--ease-smooth-out),
+      border-color var(--duration-quick) var(--ease-smooth-out),
+      color var(--duration-quick) var(--ease-smooth-out),
+      opacity var(--duration-quick) var(--ease-smooth-out);
+  }
+
+  /* Flat variant for text/ghost triggers: lift without a shadow. */
+  .pressable-flat {
+    --pressable-shadow: none;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .pressable:hover:not(:disabled, [aria-disabled="true"]),
+    .pressable-icon:hover:not(:disabled, [aria-disabled="true"]) {
+      transform: scale(var(--scale-hover));
+      box-shadow: var(--pressable-shadow);
+      transition-duration: var(--duration-quick);
+    }
+  }
+
+  .pressable:active:not(:disabled, [aria-disabled="true"]) {
+    transform: scale(var(--scale-press));
+    transition-duration: var(--duration-quick);
+  }
+
+  .pressable-icon:active:not(:disabled, [aria-disabled="true"]) {
+    transform: scale(var(--scale-press-icon));
+    transition-duration: var(--duration-quick);
+  }
+
+  .badge-nowrap {
+    white-space: nowrap;
+  }
+
+  /* Avatar color from a per-seed hue (set inline as --avatar-hue by <Avatar>). */
+  .avatar {
+    background-color: hsl(var(--avatar-hue) 42% 38%);
+    color: var(--color-fg);
+  }
+
+  /* App background: a faint dark-violet halo over the blue-black base. */
+  .app-backdrop {
+    background-color: var(--color-bg);
+    background-image:
+      radial-gradient(120% 55% at 50% -12%, rgb(124 98 230 / 0.14), transparent 62%),
+      radial-gradient(70% 40% at 100% 0%, rgb(111 200 244 / 0.04), transparent 70%);
+  }
+
+  /* BottomNav island: drops and fades while scrolling down, back on scroll up. */
+  .nav-island {
+    transition:
+      transform var(--duration-fast) var(--ease-smooth-out),
+      opacity var(--duration-fast) var(--ease-smooth-out);
+  }
+
+  .nav-island[data-hidden="true"] {
+    transform: translateY(1.5rem);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /*
+   * BottomNav island hit targets:
+   * Extends clickable areas with ::before so 100% of the island pill (corners,
+   * padding, and gaps between buttons) activates the nearest item with zero dead zones.
+   */
+  .nav-island-btn {
+    position: relative;
+    min-height: 48px;
+    min-width: 44px;
+  }
+
+  .nav-island-btn::before {
+    content: "";
+    position: absolute;
+    top: -8px;
+    bottom: -8px;
+    left: -2px;
+    right: -2px;
+    z-index: 2;
+  }
+
+  .nav-island-btn:first-child::before {
+    left: -8px;
+    border-top-left-radius: 9999px;
+    border-bottom-left-radius: 9999px;
+  }
+
+  .nav-island-btn:last-child::before {
+    right: -8px;
+    border-top-right-radius: 9999px;
+    border-bottom-right-radius: 9999px;
+  }
+
+  /* Keeps the last row of a pane reachable above the island. */
+  .pane-scroll-island {
+    padding-bottom: calc(var(--island-height) + var(--island-gap) + 0.75rem);
+  }
+
+  /* Translucent chrome over scrolling content (tab bar, side nav, toasts). */
+  .surface-glass {
+    background-color: rgb(20 20 31 / 0.72);
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+    backdrop-filter: blur(20px) saturate(140%);
+  }
+
+  /* Balances, prices, sats: digits keep their width while values change. */
+  .amount {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --scale-hover: 1;
+    --scale-press: 0.99;
+    --scale-press-icon: 0.97;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}

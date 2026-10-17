@@ -10,7 +10,7 @@ import { BalanceChart } from './BalanceChart'
 import { ReceiveSheet } from './ReceiveSheet'
 import { RenameSheet } from '../shared/RenameSheet'
 import { WalletSkeleton } from './WalletSkeleton'
-import { totalValueUsd } from './valuation'
+import { totalValueUsd, withCurrentPoint } from './valuation'
 
 export function WalletView() {
   const { walletId } = useWalletContext()
@@ -41,6 +41,7 @@ export function WalletView() {
 
   const total = totalValueUsd(state.assets, market.data)
   const nowSeconds = Math.floor(clock / 1000)
+  const points = market.data ? withCurrentPoint(state.history_points, state.assets, total, nowSeconds) : state.history_points
 
   return (
     // Laid out by the pane's own width, not the viewport: one column in a phone or half-screen
@@ -62,7 +63,7 @@ export function WalletView() {
         </header>
 
         <div className="min-w-0 @4xl:col-start-1 @4xl:row-start-2">
-          <BalanceChart walletId={walletId} points={state.history_points} assets={state.assets} />
+          <BalanceChart walletId={walletId} points={points} assets={state.assets} />
         </div>
         <div className="flex min-w-0 flex-col gap-5 @4xl:col-start-2 @4xl:row-span-2 @4xl:row-start-2">
           <AssetList assets={state.assets} costBasis={state.avg_cost_basis} market={market.data} />

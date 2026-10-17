@@ -22,6 +22,10 @@ The browser always calls same-origin `/api/...`; Vite proxies it to `VITE_API_TA
 
 To keep the mock as the default and switch to the real backend only on demand, put the two variables in `frontend/.env.lan.local` (also git-ignored) and run `npm run dev -- --mode lan`.
 
+## Contract check
+
+`node scripts/contract-check.mjs http://<backend>:8000` checks a live backend against `src/api/types.ts` and `API_CONTRACT.md` (shapes, asset ids, masking, gate, terms hash, signing guards). It creates one blocked and one cancelled session. Add `--e2e` to sign both sides and wait for the on-chain settlement: this moves regtest balances and sets the PEPE price. Needs Node 23.6 or newer; exits with 1 on any failure.
+
 ## Layout
 
 - `src/views/**`: the four pane views (Wallet, Trade, Seller Desk, Contacts) and the split view.

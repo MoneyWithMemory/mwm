@@ -49,8 +49,8 @@ export function Checkbox({
       onClick={handleToggle}
       onKeyDown={handleKeyDown}
       className={cn(
-        'relative inline-flex size-5 shrink-0 items-center justify-center rounded-md border-2 transition-colors duration-quick ease-smooth-out select-none outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2',
-        checked ? 'bg-accent border-accent text-on-accent' : 'bg-surface border-separator/80 text-transparent',
+        'relative inline-flex size-5 shrink-0 items-center justify-center rounded-md border-2 transition-colors duration-quick ease-smooth-out select-none outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface',
+        checked ? 'bg-accent border-accent text-on-accent' : 'bg-surface-muted border-hint/50 text-transparent',
         disabled && 'opacity-50 cursor-not-allowed pointer-events-none'
       )}
     >

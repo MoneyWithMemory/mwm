@@ -10,13 +10,17 @@ export interface TrustBadgeProps {
   className?: string
 }
 
+const TIER_STYLE: Record<TrustTier, { color: string; Icon: typeof HelpCircle }> = {
+  'High Authenticity': { color: 'bg-success/15 text-success border-success/30', Icon: ShieldCheck },
+  'Ring Anomaly Detected': { color: 'bg-danger/15 text-danger border-danger/30', Icon: ShieldAlert },
+  Unverified: { color: 'bg-surface-muted text-hint border-separator', Icon: HelpCircle },
+}
+
 /**
- * Trust indicator driven by Layer-0 memory graph.
- * Enforces strict privacy rules: NEVER exposes loop % or raw transaction counts.
- * Displays only:
- * - High Authenticity (Reliability N%)
- * - Ring Anomaly Detected (Reliability N%)
- * - Unverified
+ * Trust indicator driven by the Layer-0 memory graph. Shows the full tier name plus
+ * the reliability (never loop % or raw trade counts): "High Authenticity · 92%",
+ * "Ring Anomaly Detected · 14%", "Unverified". On narrow screens the percentage wraps
+ * to a second line; each segment itself never breaks.
  */
 export function TrustBadge({
   tier,
@@ -25,50 +29,27 @@ export function TrustBadge({
   showIcon = true,
   className,
 }: TrustBadgeProps) {
-  let colorClass: string
-  let IconComponent: typeof HelpCircle
-  let label: string
-
-  if (tier === 'High Authenticity') {
-    colorClass = 'bg-success/15 text-success border-success/30'
-    IconComponent = ShieldCheck
-    label =
-      reliabilityPct !== null && reliabilityPct !== undefined
-        ? `High Authenticity · ${Math.round(reliabilityPct)}%`
-        : tier
-  } else if (tier === 'Ring Anomaly Detected') {
-    colorClass = 'bg-danger/15 text-danger border-danger/30'
-    IconComponent = ShieldAlert
-    label =
-      reliabilityPct !== null && reliabilityPct !== undefined
-        ? `Ring Anomaly · ${Math.round(reliabilityPct)}%`
-        : tier
-  } else {
-    colorClass = 'bg-surface-muted text-hint border-separator/40'
-    IconComponent = HelpCircle
-    label = 'Unverified'
-  }
-
+  const { color, Icon } = TIER_STYLE[tier]
+  const pct = tier !== 'Unverified' && reliabilityPct !== null && reliabilityPct !== undefined ? Math.round(reliabilityPct) : null
   const isSmall = size === 'sm'
 
   return (
     <span
-      title={tier}
+      title={pct === null ? tier : `${tier} · ${pct}% reliability`}
       className={cn(
-        'badge-nowrap inline-flex items-center gap-1.5 font-medium rounded-full border select-none shrink-0 leading-none',
+        'inline-flex max-w-full items-center gap-1.5 font-medium rounded-full border select-none shrink-0 leading-tight',
         isSmall ? 'px-2 py-0.5 text-[11px]' : 'px-2.5 py-1 text-xs',
-        colorClass,
+        color,
         className
       )}
     >
-      {showIcon && (
-        <IconComponent
-          size={isSmall ? 12 : 14}
-          aria-hidden={true}
-          className="shrink-0 text-current"
-        />
-      )}
-      <span>{label}</span>
+      {showIcon && <Icon size={isSmall ? 12 : 14} aria-hidden={true} className="shrink-0 text-current" />}
+      <span className="flex min-w-0 flex-wrap items-center gap-x-1">
+        <span className="badge-nowrap">{tier}</span>
+        {/* The space is not rendered in flex layout but keeps the text readable when read aloud or copied. */}
+        {pct !== null && ' '}
+        {pct !== null && <span className="badge-nowrap amount">· {pct}%</span>}
+      </span>
     </span>
   )
 }

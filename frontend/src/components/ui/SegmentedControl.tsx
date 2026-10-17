@@ -62,7 +62,7 @@ export function SegmentedControl<T extends string = string>({
               <motion.span
                 layoutId={activeLayoutId}
                 transition={SPRING_TABS}
-                className="absolute inset-0 bg-surface rounded-[calc(var(--radius-control)-2px)] shadow-card -z-10"
+                className="absolute inset-0 bg-surface-raised rounded-[calc(var(--radius-control)-2px)] shadow-card -z-10"
                 aria-hidden="true"
               />
             )}

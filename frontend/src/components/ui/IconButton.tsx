@@ -4,7 +4,7 @@ import { cn } from '@/lib/cn'
 import { IconSwap } from './IconSwap'
 
 export type IconButtonVariant = 'ghost' | 'secondary' | 'primary'
-export type IconButtonSize = 'sm' | 'md' | 'lg'
+export type IconButtonSize = 'sm' | 'md' | 'lg' | 'xl'
 
 interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: IconButtonVariant
@@ -25,7 +25,11 @@ const SIZES: Record<IconButtonSize, string> = {
   sm: 'size-7 text-xs',
   md: 'size-9 text-sm',
   lg: 'size-11 text-base',
+  /** 56px: the round Wallet actions. */
+  xl: 'size-14 text-lg',
 }
+
+const SPINNER_SIZE: Record<IconButtonSize, number> = { sm: 14, md: 16, lg: 20, xl: 24 }
 
 /**
  * Compact circular icon button for secondary actions, close buttons, and toolbars.
@@ -61,7 +65,7 @@ export function IconButton({
     >
       <IconSwap iconKey={loading ? 'loading' : 'icon'}>
         {loading ? (
-          <Loader2 size={size === 'sm' ? 14 : size === 'md' ? 16 : 20} className="animate-spin text-current" />
+          <Loader2 size={SPINNER_SIZE[size]} className="animate-spin text-current" />
         ) : (
           children
         )}

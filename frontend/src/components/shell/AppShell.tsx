@@ -17,43 +17,42 @@ import { WalletSwitcher } from './WalletSwitcher'
 const SPLIT_QUERY = '(min-width: 1024px)'
 
 /**
- * Telegram Wallet style shell: one wallet pane in a phone-width column, or
- * Wallet A | Wallet B side by side on wide screens.
+ * Dark wallet shell. Phone and half-screen widths: one pane in a single column with the
+ * bottom tab bar. From 1024px: a discreet top bar, and either one pane with a sidebar
+ * (single view) or Wallet A | Wallet B, each pane with its own tab bar (split view).
  */
 export function AppShell() {
   const [layout, setLayout] = useState<Layout>('single')
   const [walletId, setWalletId] = useState<WalletId>(DEMO_WALLETS[0].id)
   const wide = useMediaQuery(SPLIT_QUERY)
-  const effective: Layout = wide ? layout : 'single'
+  const split = wide && layout === 'split'
 
   return (
     <MotionConfig reducedMotion={MOTION_CONFIG.reducedMotion}>
-      <OverlayLayer className="ui-shell flex h-dvh flex-col bg-bg pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]">
+      <OverlayLayer className="ui-shell app-backdrop flex h-dvh flex-col pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]">
         <ToastProvider>
-          <div className={cn('mx-auto flex min-h-0 w-full flex-1 flex-col', effective === 'split' ? 'max-w-6xl' : 'max-w-[480px]')}>
-            <header className="flex items-center gap-2 px-3 py-2">
-              {effective === 'single' ? (
-                <WalletSwitcher walletId={walletId} onSelect={setWalletId} />
-              ) : (
-                <span className="badge-nowrap px-1.5 text-sm font-semibold">MwM Wallet</span>
-              )}
+          <div className={cn('mx-auto flex min-h-0 w-full flex-1 flex-col', split ? 'max-w-6xl px-4' : wide ? 'max-w-[800px] px-4' : 'max-w-[480px]')}>
+            <header className={cn('flex items-center gap-3 py-2', wide ? 'h-14' : 'px-3')}>
+              {wide && <span className="badge-nowrap text-sm font-semibold tracking-tight">MwM Wallet</span>}
+              {wide && !split && <span className="h-4 w-px bg-separator" aria-hidden="true" />}
+              {!split && <WalletSwitcher walletId={walletId} onSelect={setWalletId} />}
               <div className="ml-auto flex items-center gap-2">
                 <HealthDot />
-                {wide && <SplitToggle layout={layout} onToggle={() => setLayout(layout === 'split' ? 'single' : 'split')} />}
+                {wide && <SplitToggle layout={layout} onToggle={() => setLayout(split ? 'single' : 'split')} />}
               </div>
             </header>
 
-            <main className="flex min-h-0 flex-1 flex-col overflow-hidden bg-surface sm:mb-3 sm:rounded-card sm:shadow-card">
+            <main className={cn('flex min-h-0 flex-1 flex-col overflow-hidden', wide && 'pb-4')}>
               <AnimatePresence mode="wait" initial={false}>
                 <motion.div
-                  key={effective === 'split' ? 'split' : walletId}
+                  key={split ? 'split' : walletId}
                   variants={fade}
                   initial="initial"
                   animate="animate"
                   exit="exit"
                   className="flex min-h-0 flex-1 flex-col"
                 >
-                  {effective === 'split' ? <SplitView /> : <WalletPane walletId={walletId} />}
+                  {split ? <SplitView /> : <WalletPane walletId={walletId} nav={wide ? 'side' : 'bottom'} />}
                 </motion.div>
               </AnimatePresence>
             </main>

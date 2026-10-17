@@ -39,7 +39,7 @@ export function StepList({ steps, className }: StepListProps) {
           circleBg = 'bg-success/15 text-success border-success/30'
           indicatorContent = <CheckCircle size={16} aria-hidden="true" />
         } else if (isRunning) {
-          circleBg = 'bg-accent/15 text-accent border-accent/40 shadow-sm'
+          circleBg = 'bg-accent/15 text-accent border-accent/40 shadow-glow-soft'
           indicatorContent = <Loader2 size={16} className="animate-spin" aria-hidden="true" />
         } else if (isFailed) {
           circleBg = 'bg-danger/15 text-danger border-danger/40'

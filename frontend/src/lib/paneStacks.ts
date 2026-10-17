@@ -10,6 +10,17 @@ import type { NavEntry } from './navigation'
 const ROOT: NavEntry = { view: 'wallet', params: undefined }
 const stacks = new Map<string, NavEntry[]>()
 const listeners = new Map<string, Set<() => void>>()
+// Where each open view was left, by entry: Back and wallet switches return to the same place.
+const scrollOffsets = new WeakMap<NavEntry, number>()
+
+export function saveScroll(entry: NavEntry, top: number): void {
+  scrollOffsets.set(entry, top)
+}
+
+/** The entry's last scroll offset; 0 for a view opened anew. */
+export function savedScroll(entry: NavEntry): number {
+  return scrollOffsets.get(entry) ?? 0
+}
 
 export function getStack(walletId: string): NavEntry[] {
   let stack = stacks.get(walletId)

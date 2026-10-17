@@ -3,7 +3,7 @@ import { useCallback, useMemo, useRef, useState, type ComponentType, type UIEven
 import { OverlayLayer } from '@/components/ui/OverlayLayer'
 import { cn } from '@/lib/cn'
 import { pageSlide } from '@/lib/motion'
-import { setStack, updateStack, usePaneStack } from '@/lib/paneStacks'
+import { savedScroll, saveScroll, setStack, updateStack, usePaneStack } from '@/lib/paneStacks'
 import {
   WalletContext,
   type NavEntry,
@@ -77,8 +77,17 @@ export function WalletPane({ walletId, nav = 'bottom', autoHideIsland = true }: 
   // content. Tied to the view key, so a new view always starts with the island visible.
   const [islandHiddenFor, setIslandHiddenFor] = useState<string | null>(null)
   const lastScrollTop = useRef(0)
+  // When a page mounts it opens where its entry was left (Back, wallet switch), else at the top:
+  // set before paint, so Back shows the list in place instead of jumping to its top.
+  const restoreScroll = useCallback((page: HTMLDivElement | null) => {
+    if (!page) return
+    page.scrollTop = savedScroll(current)
+    lastScrollTop.current = page.scrollTop
+  }, [current])
   const onScroll = (event: UIEvent<HTMLDivElement>) => {
     const { scrollTop: top, clientHeight, scrollHeight } = event.currentTarget
+    saveScroll(current, top)
+    if (nav !== 'bottom' || !autoHideIsland) return
     const delta = top - lastScrollTop.current
     if (Math.abs(delta) < SCROLL_STEP) return
     lastScrollTop.current = top
@@ -100,15 +109,20 @@ export function WalletPane({ walletId, nav = 'bottom', autoHideIsland = true }: 
           <AnimatePresence mode="popLayout" initial={false} custom={slide.direction}>
             <motion.div
               key={viewKey}
+              ref={restoreScroll}
               custom={slide.direction}
               variants={pageSlide}
               initial="initial"
               animate="animate"
               exit="exit"
-              onScroll={nav === 'bottom' && autoHideIsland ? onScroll : undefined}
+              onScroll={onScroll}
               className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain', nav === 'bottom' && 'pane-scroll-island')}
             >
-              <View />
+              {/* Each page keeps the context it was rendered with: a page that is leaving still
+                  shows its own entry (a deal does not turn into the new-deal form on its way out). */}
+              <WalletContext.Provider value={value}>
+                <View />
+              </WalletContext.Provider>
             </motion.div>
           </AnimatePresence>
           {nav === 'bottom' && <BottomNav hidden={autoHideIsland && islandHiddenFor === viewKey} />}

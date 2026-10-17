@@ -120,7 +120,11 @@ class WalletManager:
             skip_consistency_check=True,
             vanilla_sync_lookback=10,
         )
-        online = wallet.go_online(online_opts)
+        online = None
+        try:
+            online = wallet.go_online(online_opts)
+        except Exception as exc:
+            logger.warning(f"Wallet {wallet_id} go_online deferred ({exc})")
 
         address = wallet.get_address()
         self._addresses[wallet_id] = address

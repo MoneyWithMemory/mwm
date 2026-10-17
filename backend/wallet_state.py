@@ -100,7 +100,7 @@ class WalletStateManager:
             secret_min_reserve_usd=110,
             seller_ai_prompt="",
             buyer_max_ceiling_usd=135,
-            buyer_target_usd=100,
+            buyer_target_usd=120,
             buyer_ai_prompt="You are an autonomous buyer agent on Bitcoin regtest. Minimize acquisition cost of PEPE-RGB while closing efficiently.",
         )
         self._aliases["wallet_a"] = {}

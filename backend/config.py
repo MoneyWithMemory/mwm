@@ -56,6 +56,7 @@ class Settings(BaseModel):
     DEMO_SELLER_ASK_USD: int = 150
     DEMO_SELLER_MIN_RESERVE_USD: int = 110
     DEMO_BUYER_MAX_BUDGET_USD: int = 135
+    DEMO_BUYER_TARGET_USD: int = 120
     DEMO_BUYER_INITIAL_BID_USD: int = 95
 
     def get_api_key(self) -> str:

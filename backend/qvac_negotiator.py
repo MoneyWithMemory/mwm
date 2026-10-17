@@ -302,9 +302,10 @@ class QvacNegotiator:
             raw_result = mock_negotiate(ctx)
         else:
             try:
+                api_key = self.api_key or settings.get_api_key()
                 headers = {
                     "Content-Type": "application/json",
-                    "Authorization": f"Bearer {self.api_key}",
+                    "Authorization": f"Bearer {api_key}",
                 }
                 payload = {
                     "model": self.model,

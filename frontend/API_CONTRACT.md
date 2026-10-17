@@ -330,12 +330,20 @@ When the state reaches `SETTLED`, the backend updates for both wallets:
 
 Every successful mutation triggers an immediate refetch. Polling pauses while the tab is hidden.
 
+## Confirmed with the backend
+
+On 2026-10-17 the backend (`backend/api_server.py`) confirmed and implemented these points:
+
+- **Seller Desk:** `PUT /api/wallets/{id}/agent_profile` replaces `POST /api/seller-desk`.
+- **Signing:** `sign` takes `{wallet_id, terms_hash}`. A hash that differs from the active one gets `409 terms_hash_mismatch`.
+- **Seeded wallets:** `wallet_a`, `wallet_b` and `wallet_sybil`.
+- **Assets and fee:** USDT-RGB and PEPE use precision 0, BTC is the pseudo-asset `btc`, and `network_fee_sat` is 2000.
+- **Gate outcomes:**
+  - a ring member or Unverified counterparty blocks the session at creation, without calling QVAC;
+  - no agreement within 4 rounds ends in `BLOCKED_BY_GATE`.
+- **Terms TTL:** 600 s (`expiry_unix = now + 600`).
+- **PEPE price:** `null` until the first trade, then `agreed_price_usd / rgb_amount`.
+
 ## Open points
 
-- **Seller Desk endpoint:** the frontend uses `PUT /api/wallets/{id}/agent_profile`, while the backend plan lists `POST /api/seller-desk`. Please align on the PUT.
-- **Signature binding:** `sign` sends `{wallet_id, terms_hash}`. Please confirm that the backend checks it against the active hash.
-- **Sybil id:** please confirm `wallet_sybil`.
-- **Seed data:** please confirm precision 0 for USDT-RGB and PEPE, BTC as asset id `btc`, and `network_fee_sat` = 2000.
-- **Trust check at creation:** please confirm that a ring or Unverified counterparty blocks the session at creation, and that "no agreement within 4 rounds" ends in `BLOCKED_BY_GATE`.
-- **Terms TTL:** the duration behind `expiry_unix` is still to be decided. The mock uses 10 minutes.
 - **Secrets in `GET /api/wallets/{id}`:** the response includes the owner's secrets and there is no auth. That is acceptable for the regtest demo on a LAN, as long as the README states it.

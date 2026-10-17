@@ -18,7 +18,7 @@ class Settings(BaseModel):
     API_PORT: int = Field(default_factory=lambda: int(os.getenv("API_PORT", "8000")))
 
     # QVAC Local AI Inference
-    QVAC_BASE_URL: str = Field(default_factory=lambda: os.getenv("QVAC_BASE_URL", "http://192.168.7.184:11435/v1"))
+    QVAC_BASE_URL: str = Field(default_factory=lambda: os.getenv("QVAC_BASE_URL", "http://127.0.0.1:11435/v1"))
     QVAC_API_KEY: str = Field(default_factory=lambda: os.getenv("QVAC_API_KEY", ""))
     QVAC_MODEL: str = Field(default_factory=lambda: os.getenv("QVAC_MODEL", "buyer-agent"))
     QVAC_TIMEOUT: int = Field(default_factory=lambda: int(os.getenv("QVAC_TIMEOUT", "120")))

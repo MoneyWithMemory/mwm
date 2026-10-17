@@ -71,7 +71,7 @@ Variabili lette dal backend (`backend/config.py`):
 
 | Variabile | Default | Note |
 |---|---|---|
-| `QVAC_BASE_URL` | IP di LAN usato in sviluppo | **Impostala sempre**: `http://127.0.0.1:11435/v1` se QVAC gira sulla stessa macchina, altrimenti `http://<IP_HOST_QVAC>:11435/v1` |
+| `QVAC_BASE_URL` | `http://127.0.0.1:11435/v1` | Va bene se QVAC gira sulla stessa macchina; altrimenti `http://<IP_HOST_QVAC>:11435/v1` |
 | `QVAC_API_KEY` | vuota | Se è vuota il backend legge `~/.mwm/qvac.key` (una riga). Non committarla mai |
 | `QVAC_MODEL` | `buyer-agent` | Nome del modello in `qvac.config.json` |
 | `QVAC_MOCK` | `0` | `1` = negoziatore mock deterministico senza chiamate a QVAC (`/api/health` riporta `qvac: true`) |

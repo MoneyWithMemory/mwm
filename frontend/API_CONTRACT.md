@@ -200,6 +200,7 @@ The buyer starts a negotiation with a seller's address. The secret ceiling and t
 ```
 
 - The endpoint returns immediately with the `SessionView`, and the negotiation runs in the background.
+- Negotiations share one local model, so they run in arrival order, one at a time (`NEGOTIATION_CONCURRENCY`, default 1). While a session waits it stays `NEGOTIATING` with `rounds: []` and `thinking: null`, and `queue_position` is its 1-based place in line (`null` once its negotiation runs). If the seller no longer holds the lot when its turn comes, it moves to `BLOCKED_BY_GATE` with the reason `"The seller no longer holds this lot."`.
 - If either side is a ring member or Unverified, the session is created directly in `BLOCKED_BY_GATE`, with `rounds: []` and the reason in `gate.reasons`. No QVAC call happens.
 - Errors:
   - `400`: invalid amount or limits, or self-trade.
@@ -255,6 +256,10 @@ Field rules:
 - **Settlement:** `settlement_steps` stays empty until `SETTLING`. `txid` is set from step 6 (broadcast). `failure` is `{code, message}` when the state is `FAILED`.
 
 `GET /api/sessions?wallet_id=` returns `SessionSummary` items. Each has the first nine fields above, from `session_id` to `updated_at`.
+
+### GET /api/negotiations/queue
+
+`{ "running": ["sess_..."], "waiting": ["sess_...", "sess_..."] }`: the negotiations using QVAC now and those waiting, in arrival order.
 
 ### POST /api/sessions/{id}/sign
 
@@ -336,7 +341,7 @@ Candidates are `sell` listings that are not the buyer's, have the same asset, of
 create ──► NEGOTIATING ──► AWAITING_SIGNATURES ──► SETTLING ──► SETTLED
    │            │                 │                    └──────► FAILED
    │            │                 ├──► EXPIRED   (now > terms.expiry_unix before both signatures)
-   │            ├──► BLOCKED_BY_GATE   (gate failed, or no agreement within 4 rounds)
+   │            ├──► BLOCKED_BY_GATE   (gate failed, offers stalled, or no agreement within the round cap)
    │            └──► CANCELLED_BY_USER   (also from AWAITING_SIGNATURES)
    └──► BLOCKED_BY_GATE   (counterparty is a ring member or Unverified)
 ```
@@ -352,11 +357,11 @@ Every session read carries `wallet_id`, and the response depends on it:
 
 ## Negotiation (QVAC)
 
-- There are at most 4 rounds. In each round the buyer speaks first, then the seller. The only actions are `OFFER` and `ACCEPT`, never `REJECT`.
+- Rounds continue until agreement, up to a safety cap of `max_rounds` (backend `NEGOTIATION_MAX_ROUNDS`, default 10; every `SessionView` carries it). In each round the buyer speaks first, then the seller. The only actions are `OFFER` and `ACCEPT`, never `REJECT`.
 - **Rationality:** every buyer `OFFER` is below the seller's last offer, and every seller `OFFER` is above the buyer's last offer. Offers move monotonically towards each other.
 - **Leak guard:** the public JSON never contains the speaker's secret, compared as integers rather than substrings.
 - **Model output:** `{private_thought, action, offer_usd, public_message}` with `reasoning_budget: 0`. `private_thought` becomes `my_private_thought` for its own side only.
-- **No agreement:** if there is no agreement after round 4, the session moves to `BLOCKED_BY_GATE` with the reason `"No agreement within 4 rounds."`.
+- **No agreement:** if neither side moves for two full rounds, the session moves to `BLOCKED_BY_GATE` with the reason `"No agreement: the offers stopped moving."`; if the cap is reached, the reason is `"No agreement within 10 rounds."` (with the actual cap). On the seller's turn in the last round, a bid at or above the reserve is accepted.
 
 ## Deterministic gate
 
@@ -409,7 +414,7 @@ On 2026-10-17 the backend (`backend/api_server.py`) confirmed and implemented th
 - **Assets and fee:** USDT-RGB and PEPE use precision 0, BTC is the pseudo-asset `btc`, and `network_fee_sat` is 2000.
 - **Gate outcomes:**
   - a ring member or Unverified counterparty blocks the session at creation, without calling QVAC;
-  - no agreement within 4 rounds ends in `BLOCKED_BY_GATE`.
+  - no agreement (offers stalled for two rounds, or the round cap) ends in `BLOCKED_BY_GATE`.
 - **Terms TTL:** 600 s (`expiry_unix = now + 600`).
 - **PEPE price:** `null` until the first trade, then `agreed_price_usd / rgb_amount`.
 

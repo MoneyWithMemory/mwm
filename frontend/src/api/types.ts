@@ -243,7 +243,8 @@ export type Role = 'buyer' | 'seller'
 /** Intermediate rounds only OFFER or ACCEPT, never REJECT. */
 export type AgentAction = 'OFFER' | 'ACCEPT'
 
-export const MAX_ROUNDS = 4
+/** Default backend cap (NEGOTIATION_MAX_ROUNDS); each SessionView carries the live value in max_rounds. */
+export const MAX_ROUNDS = 10
 
 export interface Round {
   /** 1..MAX_ROUNDS */
@@ -332,6 +333,10 @@ export interface SessionView extends SessionSummary {
   txid: string | null
   /** Set when state is FAILED. */
   failure: ApiErrorBody | null
+  /** 1-based place in the negotiation queue while waiting for its turn; null once running. */
+  queue_position?: number | null
+  /** Safety cap on rounds for this backend (default MAX_ROUNDS). */
+  max_rounds?: number
 }
 
 // ── Requests ───────────────────────────────────────────────────────

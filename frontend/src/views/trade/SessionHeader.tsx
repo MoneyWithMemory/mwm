@@ -28,8 +28,8 @@ export function SessionHeader({ session, name, alias }: { session: SessionView; 
             {session.my_role === 'buyer' ? 'Buying' : 'Selling'}{' '}
             {formatAssetAmount(session.rgb_amount, session.asset.precision, session.asset.ticker)}
           </span>
+          <TrustBadge tier={trust.trust_tier} reliabilityPct={trust.reliability_pct} size="sm" className="self-start" />
         </div>
-        <TrustBadge tier={trust.trust_tier} reliabilityPct={trust.reliability_pct} size="sm" />
       </div>
     </header>
   )

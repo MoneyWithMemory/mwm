@@ -1,7 +1,7 @@
 import { Check, Lock } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { useUpdateAgentProfile, type AgentProfile, type AssetBalance } from '@/api'
+import { useUpdateAgentProfile, type AgentProfile, type AssetBalance, type Market } from '@/api'
 import { AssetBadge, Button, Card, CardContent, Chip, Input, SegmentedControl, TextArea, Toggle } from '@/components/ui'
 import { formatAssetAmount } from '@/lib/format'
 import { textSwap } from '@/lib/motion'
@@ -11,6 +11,7 @@ interface SellerFormProps {
   walletId: string
   profile: AgentProfile
   assets: AssetBalance[]
+  market: Market
 }
 
 const NUMBER = /^\d*\.?\d*$/
@@ -26,8 +27,10 @@ function toText(value: number): string {
   return value > 0 ? String(value) : ''
 }
 
-export function SellerForm({ walletId, profile, assets }: SellerFormProps) {
-  const sellable = assets.filter((a) => a.schema !== 'BTC')
+export function SellerForm({ walletId, profile, assets, market }: SellerFormProps) {
+  // Only negotiable assets can be sold: BTC pays fees and the pegged asset is the payment currency.
+  const negotiable = new Set(market.assets.filter((a) => a.source === 'p2p_negotiation').map((a) => a.asset_id))
+  const sellable = assets.filter((a) => negotiable.has(a.asset_id))
   const { run, pending, error } = useUpdateAgentProfile()
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
@@ -135,6 +138,7 @@ export function SellerForm({ walletId, profile, assets }: SellerFormProps) {
             placeholder="0"
             value={amount}
             suffix={asset?.ticker}
+            disabled={!asset}
             error={show ? amountError : undefined}
             hint={asset ? `Available: ${formatAssetAmount(asset.amount, asset.precision, asset.ticker)}` : undefined}
             containerClassName="mt-3"

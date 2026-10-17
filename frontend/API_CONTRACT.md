@@ -22,9 +22,9 @@ Every non-2xx response has this body:
 
 | Status | Codes |
 |---|---|
-| 400 | `invalid_asset`, `invalid_amount`, `invalid_limits`, `invalid_label`, `invalid_profile`, `self_trade`, `sign_error`, `wallet_creation_failed` |
-| 403 | `forbidden` (the wallet is not part of the session) |
-| 404 | `wallet_not_found`, `session_not_found` |
+| 400 | `invalid_asset`, `invalid_amount`, `invalid_limits`, `invalid_label`, `invalid_profile`, `invalid_address`, `own_address`, `invalid_price`, `desk_listing`, `self_trade`, `sign_error`, `wallet_creation_failed` |
+| 403 | `forbidden` (the wallet is not part of the session, or the listing is not its own) |
+| 404 | `wallet_not_found`, `session_not_found`, `listing_not_found`, `no_match` |
 | 409 | `seller_desk_inactive`, `insufficient_funds`, `not_awaiting_signatures`, `terms_hash_mismatch`, `already_signed`, `expired`, `not_cancellable` |
 | 500 | `internal_server_error` |
 
@@ -47,6 +47,10 @@ The UI shows `message` to the user, so write it in plain English.
 | GET | `/api/sessions/{id}?wallet_id=` | | `SessionView` (that wallet's perspective) |
 | POST | `/api/sessions/{id}/sign` | `{wallet_id, terms_hash}` | `SessionView` |
 | POST | `/api/sessions/{id}/cancel` | `{wallet_id}` | `SessionView` |
+| GET | `/api/shop?wallet_id=&kind=&asset_id=&q=` | | `ShopListing[]` |
+| POST | `/api/shop/wants` | `CreateWantRequest` | `ShopListing` |
+| POST | `/api/shop/{listing_id}/close` | `{wallet_id}` | `ShopListing` |
+| POST | `/api/shop/agent_search` | `AgentSearchRequest` | `AgentSearchResult` |
 
 ### GET /api/health
 
@@ -134,6 +138,8 @@ Creates a wallet from a Tether WDK mnemonic.
 ### PUT /api/wallets/{id}/aliases
 
 Sets a local alias. An empty `name` removes it. The response is the full updated alias map.
+
+A non-empty `name` also **adds the address to the wallet's contacts** (this is how "Add contact" works: by pasted code or scanned QR). `GET /api/wallets/{id}/contacts` must therefore include every address that has an alias, plus the demo wallets. An unknown address has trust `Unverified` and `desk: null`. Errors: `400 invalid_address` (not `bcrt1…`) and `400 own_address`.
 
 ```json
 { "address": "bcrt1qlnpz...8fdzuf", "name": "PEPE Desk" }
@@ -272,6 +278,58 @@ Field rules:
 
 Allowed for either participant while the state is `NEGOTIATING` or `AWAITING_SIGNATURES`; otherwise the response is `409 not_cancellable`.
 
+## Shop
+
+The Shop is the one place to buy, sell or ask for something. **Agents read the same endpoints the UI does**, so there is nothing agent-only to build. Nothing secret ever appears in it: not the seller's reserve, not the buyer's maximum budget, not any agent prompt.
+
+`ShopListing` (see `src/api/types.ts`):
+
+| Field | Meaning |
+|---|---|
+| `listing_id` | `desk_<wallet_id>` for a Seller Desk, `want_<id>` for a request |
+| `kind` | `sell` or `want` |
+| `owner_address`, `owner_alias` | the owner, and the requesting wallet's local alias for it |
+| `is_mine` | true for the requesting wallet's own listings |
+| `asset`, `amount` | the asset and the lot size in atomic units |
+| `price_usd` | **public** price for the whole lot: the ask for `sell`, the target for `want` |
+| `note` | optional text, 140 characters at most |
+| `trust` | the owner's `TrustAudit` (never loop percentages or raw counts) |
+| `created_at` | unix seconds, `null` for Seller Desks (they are live, not posted) |
+
+### GET /api/shop?wallet_id=&kind=&asset_id=&q=
+
+- `sell` listings are the **active Seller Desks**: `seller_active`, an offered asset and amount. Public fields only.
+- `want` listings are the open requests.
+- `kind` and `asset_id` filter exactly; `q` is a case-insensitive match over the owner alias, the owner address, the ticker and the note.
+- The requesting wallet's own listings are included, flagged `is_mine`.
+
+### POST /api/shop/wants
+
+```json
+{ "wallet_id": "wallet_a", "asset_id": "rgb:...", "amount": 250000, "target_usd": 55, "note": "A smaller lot is fine too." }
+```
+
+Creates an open request owned by that wallet's address. `400 invalid_asset` (unknown or BTC), `400 invalid_amount` (not a positive integer), `400 invalid_price` (`target_usd` ≤ 0).
+
+### POST /api/shop/{listing_id}/close
+
+```json
+{ "wallet_id": "wallet_a" }
+```
+
+Closes the wallet's own request. `403 forbidden` if it is not the owner, `404 listing_not_found` if it does not exist or is closed, `400 desk_listing` for a `desk_<id>` listing (turn the Seller Desk off instead).
+
+### POST /api/shop/agent_search
+
+The buyer's agent looks for the best matching `sell` listing and opens a session with it.
+
+```json
+{ "buyer_wallet_id": "wallet_a", "asset_id": "rgb:...", "rgb_amount": 1000000,
+  "buyer_max_ceiling_usd": 135, "buyer_target_usd": 120, "buyer_ai_prompt": "Open low and concede in steps." }
+```
+
+Candidates are `sell` listings that are not the buyer's, have the same asset, offer at least `rgb_amount`, and whose owner trust tier is not `Ring Anomaly Detected`. The price for the requested amount is `price_usd * rgb_amount / amount`; candidates above `1.5 * buyer_max_ceiling_usd` are dropped. The cheapest candidate wins, and the response is `{ "listing": ShopListing, "session": SessionView }` with the session created exactly as `POST /api/sessions` would (same gate, same errors). `404 no_match` when nothing fits. The UI takes the user straight to the session.
+
 ## Session state machine
 
 ```
@@ -354,6 +412,8 @@ On 2026-10-17 the backend (`backend/api_server.py`) confirmed and implemented th
 - **PEPE price:** `null` until the first trade, then `agreed_price_usd / rgb_amount`.
 
 ## Open points
+
+- **Added on 2026-10-17 (Shop and contacts), not in the backend yet:** the four `/api/shop` endpoints and contacts by alias. The mock in `src/api/mock/engine.ts` is the reference implementation.
 
 - **Added on 2026-10-17, not in the backend yet:** `precision` on every `GET /api/market` asset, and `desk` on every `GET /api/wallets/{id}/contacts` item.
 - **Secrets in `GET /api/wallets/{id}`:** the response includes the owner's secrets and there is no auth. That is acceptable for the regtest demo on a LAN, as long as the README states it.

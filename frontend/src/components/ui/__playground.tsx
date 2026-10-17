@@ -56,6 +56,7 @@ const MOCK_STEPS: SettlementStep[] = [
 export function UiPlayground() {
   const [modalOpen, setModalOpen] = useState(false)
   const [sheetOpen, setSheetOpen] = useState(false)
+  const [longSheetOpen, setLongSheetOpen] = useState(false)
   const [btnLoading, setBtnLoading] = useState(false)
   const [activeTab, setActiveTab] = useState<'wallet' | 'trade' | 'contacts'>('wallet')
   const [activeSegment, setActiveSegment] = useState<'all' | 'usdt' | 'pepe'>('all')
@@ -69,8 +70,9 @@ export function UiPlayground() {
 
   return (
     <ToastProvider>
-      <OverlayLayer className="min-h-screen bg-bg p-4 sm:p-8 text-fg ui-shell">
-        <div className="mx-auto max-w-xl space-y-8 pb-20">
+      <OverlayLayer className="h-dvh flex flex-col overflow-hidden bg-bg text-fg ui-shell">
+        <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-8 pb-20">
+          <div className="mx-auto max-w-xl space-y-8">
           {/* Header */}
           <div className="border-b border-separator/40 pb-4">
             <div className="flex items-center justify-between">
@@ -382,12 +384,15 @@ export function UiPlayground() {
           {/* Section: Overlays (Modal & Sheet) */}
           <section className="space-y-3">
             <h2 className="text-xs font-semibold uppercase tracking-wider text-hint">Overlays (Sheet & Modal)</h2>
-            <Card className="p-4 flex items-center gap-3">
+            <Card className="p-4 flex flex-wrap items-center gap-3">
               <Button variant="secondary" onClick={() => setModalOpen(true)}>
                 Open Modal (Center Scale)
               </Button>
               <Button variant="secondary" onClick={() => setSheetOpen(true)}>
-                Open Bottom Sheet
+                Open Short Sheet (Receive)
+              </Button>
+              <Button variant="secondary" onClick={() => setLongSheetOpen(true)}>
+                Open Long Sheet (All transactions)
               </Button>
             </Card>
           </section>
@@ -442,7 +447,7 @@ export function UiPlayground() {
           </div>
         </Modal>
 
-        {/* Sheet instance */}
+        {/* Short Sheet instance */}
         <Sheet open={sheetOpen} onClose={() => setSheetOpen(false)} title="Receive RGB Assets">
           <div className="space-y-3 text-xs text-hint leading-relaxed">
             <p>
@@ -456,6 +461,24 @@ export function UiPlayground() {
             </Button>
           </div>
         </Sheet>
+
+        {/* Long Sheet instance: All transactions */}
+        <Sheet open={longSheetOpen} onClose={() => setLongSheetOpen(false)} title="All transactions">
+          <div className="space-y-2 py-1">
+            {Array.from({ length: 30 }).map((_, i) => (
+              <div key={i} className="flex items-center justify-between p-2.5 rounded-card bg-surface-muted/50 text-xs">
+                <div>
+                  <div className="font-medium text-fg">Transaction #{i + 1}</div>
+                  <div className="text-hint text-[11px]">bcrt1q...{1000 + i} · Confirmed</div>
+                </div>
+                <div className="text-right font-mono text-fg">
+                  +{(100 + i * 10).toLocaleString()} USDT
+                </div>
+              </div>
+            ))}
+          </div>
+        </Sheet>
+        </div>
       </OverlayLayer>
     </ToastProvider>
   )

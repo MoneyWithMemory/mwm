@@ -280,13 +280,6 @@
     border-bottom-right-radius: 9999px;
   }
 
-  .nav-island-btn-center::before {
-    top: -16px;
-    bottom: -8px;
-    left: -2px;
-    right: -2px;
-  }
-
   /* Keeps the last row of a pane reachable above the island. */
   .pane-scroll-island {
     padding-bottom: calc(var(--island-height) + var(--island-gap) + 0.75rem);

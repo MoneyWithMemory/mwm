@@ -25,6 +25,8 @@ if [ -z "${REGTEST_SCRIPT:-}" ]; then
         export REGTEST_SCRIPT="${REPO_PYTHON_DIR}/rgb-lib-python/rgb-lib/tests/regtest.sh"
     elif [ -f "${REPO_PYTHON_DIR}/rgb-lib/tests/regtest.sh" ]; then
         export REGTEST_SCRIPT="${REPO_PYTHON_DIR}/rgb-lib/tests/regtest.sh"
+    elif [ -f "${REPO_PYTHON_DIR}/scripts/regtest.sh" ]; then
+        export REGTEST_SCRIPT="${REPO_PYTHON_DIR}/scripts/regtest.sh"
     fi
 fi
 

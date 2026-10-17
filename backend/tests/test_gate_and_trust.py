@@ -30,40 +30,49 @@ def test_memory_graph_trust_tiers():
     assert rep_unknown.is_trusted is False
 
 def test_canonical_terms_hash_deterministic():
-    terms1 = {
-        "seller_wallet_id": "wallet_b",
-        "buyer_wallet_id": "wallet_a",
-        "price_usd": 125,
-        "asset_ticker": "PEPE",
-        "asset_amount": 1000000,
-        "payment_ticker": "USDT",
+    from backend.deterministic_gate import CanonicalSwapTerms
+    terms1 = CanonicalSwapTerms(
+        session_id="sess_123",
+        asset_id="rgb:pepe_test_asset_id",
+        rgb_amount=1_000_000,
+        payment_asset_id="rgb:usdt_test_asset_id",
+        payment_amount=125,
+        agreed_price_usd=125,
+        network_fee_sat=2000,
+        buyer_address="bcrt1qbuyeraddress",
+        seller_address="bcrt1qselleraddress",
+        expiry_unix=1700000000,
+    )
+    terms2_dict = {
+        "expiry_unix": 1700000000,
+        "seller_address": "bcrt1qselleraddress",
+        "buyer_address": "bcrt1qbuyeraddress",
+        "network_fee_sat": 2000,
+        "agreed_price_usd": 125,
         "payment_amount": 125,
-    }
-    # Same dictionary with different insertion order
-    terms2 = {
-        "payment_amount": 125,
-        "price_usd": 125,
-        "asset_amount": 1000000,
-        "buyer_wallet_id": "wallet_a",
-        "payment_ticker": "USDT",
-        "asset_ticker": "PEPE",
-        "seller_wallet_id": "wallet_b",
+        "payment_asset_id": "rgb:usdt_test_asset_id",
+        "rgb_amount": 1_000_000,
+        "asset_id": "rgb:pepe_test_asset_id",
+        "session_id": "sess_123",
     }
     hash1 = compute_terms_hash(terms1)
-    hash2 = compute_terms_hash(terms2)
+    hash2 = compute_terms_hash(terms2_dict)
     assert hash1 == hash2
     assert len(hash1) == 64
 
 def test_gate_blocks_sybil_counterparty():
     res = evaluate_gate(
-        buyer_wallet_id="wallet_a",
-        seller_wallet_id="wallet_sybil",
-        active_signer_wallet_id="wallet_a",
-        agreed_price_usd=120,
-        asset_ticker="PEPE",
-        asset_amount=1_000_000,
-        payment_ticker="USDT",
+        session_id="sess_test",
+        asset_id="rgb:pepe",
+        rgb_amount=1_000_000,
+        payment_asset_id="rgb:usdt",
         payment_amount=120,
+        agreed_price_usd=120,
+        network_fee_sat=2000,
+        buyer_address="wallet_a",
+        seller_address="wallet_sybil",
+        expiry_unix=1700000000,
+        active_signer_address="wallet_a",
         buyer_max_budget_usd=135,
         seller_min_reserve_usd=110,
     )
@@ -73,14 +82,17 @@ def test_gate_blocks_sybil_counterparty():
 
 def test_gate_blocks_budget_exceeded():
     res = evaluate_gate(
-        buyer_wallet_id="wallet_a",
-        seller_wallet_id="wallet_b",
-        active_signer_wallet_id="wallet_a",
-        agreed_price_usd=140,  # Exceeds buyer ceiling 135
-        asset_ticker="PEPE",
-        asset_amount=1_000_000,
-        payment_ticker="USDT",
+        session_id="sess_test",
+        asset_id="rgb:pepe",
+        rgb_amount=1_000_000,
+        payment_asset_id="rgb:usdt",
         payment_amount=140,
+        agreed_price_usd=140,  # Exceeds buyer ceiling 135
+        network_fee_sat=2000,
+        buyer_address="wallet_a",
+        seller_address="wallet_b",
+        expiry_unix=1700000000,
+        active_signer_address="wallet_a",
         buyer_max_budget_usd=135,
         seller_min_reserve_usd=110,
     )
@@ -90,14 +102,17 @@ def test_gate_blocks_budget_exceeded():
 
 def test_gate_blocks_seller_reserve_violated():
     res = evaluate_gate(
-        buyer_wallet_id="wallet_a",
-        seller_wallet_id="wallet_b",
-        active_signer_wallet_id="wallet_b",
-        agreed_price_usd=100,  # Below seller reserve 110
-        asset_ticker="PEPE",
-        asset_amount=1_000_000,
-        payment_ticker="USDT",
+        session_id="sess_test",
+        asset_id="rgb:pepe",
+        rgb_amount=1_000_000,
+        payment_asset_id="rgb:usdt",
         payment_amount=100,
+        agreed_price_usd=100,  # Below seller reserve 110
+        network_fee_sat=2000,
+        buyer_address="wallet_a",
+        seller_address="wallet_b",
+        expiry_unix=1700000000,
+        active_signer_address="wallet_b",
         buyer_max_budget_usd=135,
         seller_min_reserve_usd=110,
     )
@@ -107,14 +122,17 @@ def test_gate_blocks_seller_reserve_violated():
 
 def test_gate_blocks_invalid_amounts():
     res = evaluate_gate(
-        buyer_wallet_id="wallet_a",
-        seller_wallet_id="wallet_b",
-        active_signer_wallet_id="wallet_a",
+        session_id="sess_test",
+        asset_id="rgb:pepe",
+        rgb_amount=1_000_000,
+        payment_asset_id="rgb:usdt",
+        payment_amount=0,  # invalid
         agreed_price_usd=0,  # invalid
-        asset_ticker="PEPE",
-        asset_amount=1_000_000,
-        payment_ticker="USDT",
-        payment_amount=0,
+        network_fee_sat=2000,
+        buyer_address="wallet_a",
+        seller_address="wallet_b",
+        expiry_unix=1700000000,
+        active_signer_address="wallet_a",
         buyer_max_budget_usd=135,
         seller_min_reserve_usd=110,
     )
@@ -123,21 +141,26 @@ def test_gate_blocks_invalid_amounts():
 
 def test_gate_passes_within_deal_zone():
     res = evaluate_gate(
-        buyer_wallet_id="wallet_a",
-        seller_wallet_id="wallet_b",
-        active_signer_wallet_id="wallet_a",
-        agreed_price_usd=125,  # within [110, 135]
-        asset_ticker="PEPE",
-        asset_amount=1_000_000,
-        payment_ticker="USDT",
+        session_id="sess_test",
+        asset_id="rgb:pepe",
+        rgb_amount=1_000_000,
+        payment_asset_id="rgb:usdt",
         payment_amount=125,
+        agreed_price_usd=125,  # within [110, 135]
+        network_fee_sat=2000,
+        buyer_address="wallet_a",
+        seller_address="wallet_b",
+        expiry_unix=1700000000,
+        active_signer_address="wallet_a",
         buyer_max_budget_usd=135,
         seller_min_reserve_usd=110,
     )
     assert res.passed is True
     assert res.terms_hash is not None
     assert len(res.terms_hash) == 64
-    assert res.terms["price_usd"] == 125
+    assert res.terms["agreed_price_usd"] == 125
+    assert res.terms["rgb_amount"] == 1_000_000
+    assert res.terms["payment_amount"] == 125
 
 def test_seed_identities():
     from backend.seed import SEED_WALLETS, init_seed_state

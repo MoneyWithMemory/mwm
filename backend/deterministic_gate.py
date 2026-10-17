@@ -1,17 +1,29 @@
 """
-MwM - Deterministic Pre-Signing Gate
+MwM - Deterministic Pre-Signing Gate & Canonical Swap Terms
 Enforces strict pre-signature checks before any cryptographic or on-chain settlement:
 1. Counterparty trust & wash-trading ring anomaly check
 2. Secret limit enforcement (buyer ceiling, seller reserve)
 3. Positive integer validation
-4. Canonical SHA-256 terms_hash generation
+4. Canonical SHA-256 terms_hash generation matching Drop 1 contract
 """
 
 import json
 import hashlib
-from typing import Any, Dict, Optional
-from pydantic import BaseModel
+from typing import Any, Dict, Optional, Union
+from pydantic import BaseModel, Field
 from backend.memory_graph import memory_graph, TrustTier
+
+class CanonicalSwapTerms(BaseModel):
+    session_id: str
+    asset_id: str
+    rgb_amount: int
+    payment_asset_id: str
+    payment_amount: int
+    agreed_price_usd: int
+    network_fee_sat: int
+    buyer_address: str
+    seller_address: str
+    expiry_unix: int
 
 class GateResult(BaseModel):
     passed: bool
@@ -20,23 +32,27 @@ class GateResult(BaseModel):
     terms: Optional[Dict[str, Any]] = None
     terms_hash: Optional[str] = None
 
-def compute_terms_hash(terms: Dict[str, Any]) -> str:
+def compute_terms_hash(terms: Union[CanonicalSwapTerms, Dict[str, Any]]) -> str:
     """
     Compute canonical SHA-256 hash of agreed terms.
-    Must use sorted keys and compact separators to ensure cross-agent deterministic consistency.
+    Must use sorted keys and compact separators (',', ':') to ensure cross-agent deterministic consistency.
     """
-    canonical_json = json.dumps(terms, sort_keys=True, separators=(",", ":"))
+    raw_dict = terms.model_dump() if isinstance(terms, CanonicalSwapTerms) else dict(terms)
+    canonical_json = json.dumps(raw_dict, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
 
 def evaluate_gate(
-    buyer_wallet_id: str,
-    seller_wallet_id: str,
-    active_signer_wallet_id: str,
-    agreed_price_usd: int,
-    asset_ticker: str,
-    asset_amount: int,
-    payment_ticker: str,
+    session_id: str,
+    asset_id: str,
+    rgb_amount: int,
+    payment_asset_id: str,
     payment_amount: int,
+    agreed_price_usd: int,
+    network_fee_sat: int,
+    buyer_address: str,
+    seller_address: str,
+    expiry_unix: int,
+    active_signer_address: str,
     buyer_max_budget_usd: Optional[int] = None,
     seller_min_reserve_usd: Optional[int] = None,
     counterparty_wallet_id: Optional[str] = None,
@@ -47,7 +63,7 @@ def evaluate_gate(
     """
     # 1. Counterparty Trust Check
     target_peer = counterparty_wallet_id or (
-        seller_wallet_id if active_signer_wallet_id == buyer_wallet_id else buyer_wallet_id
+        seller_address if active_signer_address == buyer_address else buyer_address
     )
     reputation = memory_graph.get_reputation(target_peer)
     if reputation.trust_tier == TrustTier.RING_ANOMALY:
@@ -64,16 +80,28 @@ def evaluate_gate(
             reason="Gate blocked: agreed price must be a strictly positive integer",
             block_state="BLOCKED_BY_GATE",
         )
-    if not isinstance(asset_amount, int) or asset_amount <= 0:
+    if not isinstance(rgb_amount, int) or rgb_amount <= 0:
         return GateResult(
             passed=False,
-            reason="Gate blocked: asset amount must be a strictly positive integer",
+            reason="Gate blocked: rgb_amount must be a strictly positive integer",
             block_state="BLOCKED_BY_GATE",
         )
     if not isinstance(payment_amount, int) or payment_amount <= 0:
         return GateResult(
             passed=False,
-            reason="Gate blocked: payment amount must be a strictly positive integer",
+            reason="Gate blocked: payment_amount must be a strictly positive integer",
+            block_state="BLOCKED_BY_GATE",
+        )
+    if not isinstance(network_fee_sat, int) or network_fee_sat <= 0:
+        return GateResult(
+            passed=False,
+            reason="Gate blocked: network_fee_sat must be a strictly positive integer",
+            block_state="BLOCKED_BY_GATE",
+        )
+    if not isinstance(expiry_unix, int) or expiry_unix <= 0:
+        return GateResult(
+            passed=False,
+            reason="Gate blocked: expiry_unix must be a strictly positive integer timestamp",
             block_state="BLOCKED_BY_GATE",
         )
 
@@ -92,20 +120,24 @@ def evaluate_gate(
         )
 
     # 4. Form canonical terms and calculate terms_hash
-    terms: Dict[str, Any] = {
-        "asset_amount": asset_amount,
-        "asset_ticker": asset_ticker,
-        "buyer_wallet_id": buyer_wallet_id,
-        "payment_amount": payment_amount,
-        "payment_ticker": payment_ticker,
-        "price_usd": agreed_price_usd,
-        "seller_wallet_id": seller_wallet_id,
-    }
-    terms_hash = compute_terms_hash(terms)
+    canonical_terms = CanonicalSwapTerms(
+        session_id=session_id,
+        asset_id=asset_id,
+        rgb_amount=rgb_amount,
+        payment_asset_id=payment_asset_id,
+        payment_amount=payment_amount,
+        agreed_price_usd=agreed_price_usd,
+        network_fee_sat=network_fee_sat,
+        buyer_address=buyer_address,
+        seller_address=seller_address,
+        expiry_unix=expiry_unix,
+    )
+    terms_dict = canonical_terms.model_dump()
+    terms_hash = compute_terms_hash(canonical_terms)
 
     return GateResult(
         passed=True,
         reason="Deterministic gate criteria verified successfully",
-        terms=terms,
+        terms=terms_dict,
         terms_hash=terms_hash,
     )

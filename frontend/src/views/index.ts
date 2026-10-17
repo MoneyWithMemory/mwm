@@ -1,0 +1,5 @@
+export { WalletView } from './wallet/WalletView'
+export { TradeView } from './trade/TradeView'
+export { SellerDeskView } from './seller-desk/SellerDeskView'
+export { ContactsView } from './contacts/ContactsView'
+export { SplitView } from './split/SplitView'

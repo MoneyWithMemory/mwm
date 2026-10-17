@@ -399,6 +399,8 @@ Every successful mutation triggers an immediate refetch. Polling pauses while th
 
 ## Confirmed with the backend
 
+On 2026-10-17, later in the day, the backend also shipped: the four `/api/shop` endpoints, contacts by alias, `precision` on every `GET /api/market` asset and `desk` on every contact.
+
 On 2026-10-17 the backend (`backend/api_server.py`) confirmed and implemented these points:
 
 - **Seller Desk:** `PUT /api/wallets/{id}/agent_profile` replaces `POST /api/seller-desk`.
@@ -413,7 +415,4 @@ On 2026-10-17 the backend (`backend/api_server.py`) confirmed and implemented th
 
 ## Open points
 
-- **Added on 2026-10-17 (Shop and contacts), not in the backend yet:** the four `/api/shop` endpoints and contacts by alias. The mock in `src/api/mock/engine.ts` is the reference implementation.
-
-- **Added on 2026-10-17, not in the backend yet:** `precision` on every `GET /api/market` asset, and `desk` on every `GET /api/wallets/{id}/contacts` item.
 - **Secrets in `GET /api/wallets/{id}`:** the response includes the owner's secrets and there is no auth. That is acceptable for the regtest demo on a LAN, as long as the README states it.

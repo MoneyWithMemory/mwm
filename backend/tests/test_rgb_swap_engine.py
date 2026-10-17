@@ -267,3 +267,62 @@ def test_swap_refused_before_any_transfer_when_seller_lacks_lot():
             buyer_signed_hash=h,
             seller_signed_hash=h,
         )
+
+
+def _awaiting_session(store, session_id):
+    store.create_session(
+        session_id=session_id,
+        asset_id="rgb:pepe",
+        asset_ticker="PEPE",
+        asset_amount=1_000_000,
+        payment_asset_id="rgb:usdt",
+        payment_ticker="USDT",
+        buyer_wallet_id="wallet_a",
+        seller_wallet_id="wallet_b",
+        buyer_address="bcrt1qbuyer",
+        seller_address="bcrt1qseller",
+        asking_price_usd=150,
+        buyer_max_budget_usd=135,
+        seller_min_reserve_usd=110,
+    )
+    terms = CanonicalSwapTerms(
+        session_id=session_id,
+        asset_id="rgb:pepe",
+        rgb_amount=1_000_000,
+        payment_asset_id="rgb:usdt",
+        payment_amount=125,
+        agreed_price_usd=125,
+        network_fee_sat=2000,
+        buyer_address="bcrt1qbuyer",
+        seller_address="bcrt1qseller",
+        expiry_unix=int(time.time()) + 600,
+    )
+    return terms, compute_terms_hash(terms)
+
+
+def test_cancel_during_negotiation_sticks():
+    store = SessionStore()
+    terms, h = _awaiting_session(store, "sess_race")
+    store.cancel_session("sess_race", cancelled_by="wallet_a")
+    # The agent turn that was in flight finishes after the cancel.
+    store.set_awaiting_signatures("sess_race", 125, 125, terms, h)
+    store.set_blocked("sess_race", "No agreement within 4 rounds")
+    store.set_failed("sess_race", "Buyer agent inference failed")
+    assert store.get_session("sess_race").status == SessionStatus.CANCELLED_BY_USER
+
+
+def test_only_one_signature_starts_settlement_and_settled_is_final():
+    store = SessionStore()
+    terms, h = _awaiting_session(store, "sess_once")
+    store.set_awaiting_signatures("sess_once", 125, 125, terms, h)
+    _, started_buyer = store.sign_session("sess_once", "wallet_a", h)
+    _, started_seller = store.sign_session("sess_once", "wallet_b", h)
+    assert (started_buyer, started_seller) == (False, True)
+    with pytest.raises(ValueError):
+        store.sign_session("sess_once", "wallet_b", h)
+
+    store.set_settled("sess_once", "txid_ok")
+    store.set_failed("sess_once", "late failure from a duplicate worker")
+    session = store.get_session("sess_once")
+    assert session.status == SessionStatus.SETTLED
+    assert session.txid == "txid_ok"

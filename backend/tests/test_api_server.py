@@ -310,3 +310,27 @@ def test_finalize_agreement_gate_check():
     assert res.status == SessionStatus.BLOCKED_BY_GATE
     assert res.gate["passed"] is False
     assert "Agreed price outside the secret limits" in res.gate["reasons"]
+
+
+def test_session_view_forbidden_for_non_participants():
+    from backend.session_store import session_store
+
+    session_store.create_session(
+        session_id="sess_view_403",
+        asset_id="rgb:pepe_test",
+        asset_ticker="PEPE",
+        asset_amount=1_000_000,
+        payment_asset_id="rgb:usdt_test",
+        payment_ticker="USDT",
+        buyer_wallet_id="wallet_a",
+        seller_wallet_id="wallet_b",
+        buyer_address="bcrt1q_buyer",
+        seller_address="bcrt1q_seller",
+        asking_price_usd=150,
+        buyer_max_budget_usd=135,
+        seller_min_reserve_usd=110,
+    )
+    assert client.get("/api/sessions/sess_view_403?wallet_id=wallet_a").status_code == 200
+    resp = client.get("/api/sessions/sess_view_403?wallet_id=wallet_sybil")
+    assert resp.status_code == 403
+    assert resp.json()["code"] == "forbidden"

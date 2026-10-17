@@ -702,6 +702,12 @@ def get_session(session_id: str, wallet_id: str = Query(...)):
             status_code=404,
             detail={"code": "session_not_found", "message": f"Session {session_id} does not exist"},
         )
+    participants = (session.buyer_wallet_id, session.buyer_address, session.seller_wallet_id, session.seller_address)
+    if wallet_id not in participants:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "forbidden", "message": "Wallet is not part of this session"},
+        )
     return session.to_session_view(viewer_wallet_id=wallet_id)
 
 @app.post("/api/sessions/{session_id}/sign")
@@ -713,18 +719,17 @@ def sign_session(session_id: str, req: SignSessionRequest):
             detail={"code": "session_not_found", "message": f"Session {session_id} does not exist"},
         )
 
+    # get_session() has already moved stale AWAITING_SIGNATURES sessions to EXPIRED.
+    if session.status == SessionStatus.EXPIRED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "expired", "message": "The terms expired before both signatures"},
+        )
+
     if session.status != SessionStatus.AWAITING_SIGNATURES:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "not_awaiting_signatures", "message": f"Session is {session.status}"},
-        )
-
-    now = int(time.time())
-    if session.expiry_unix and now > session.expiry_unix:
-        session.status = SessionStatus.EXPIRED
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "expired", "message": "The terms expired before both signatures"},
         )
 
     is_buyer = req.wallet_id in (session.buyer_wallet_id, session.buyer_address)
@@ -751,15 +756,15 @@ def sign_session(session_id: str, req: SignSessionRequest):
 
     active_hash = session.terms_hash or ""
     try:
-        session_store.sign_session(session_id, req.wallet_id, active_hash)
-    except Exception as exc:
+        _, started = session_store.sign_session(session_id, req.wallet_id, active_hash)
+    except ValueError as exc:
+        # The session changed state since the checks above (e.g. a concurrent cancel).
         raise HTTPException(
-            status_code=400,
-            detail={"code": "sign_error", "message": str(exc)},
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "not_awaiting_signatures", "message": str(exc)},
         )
 
-    # If both signed -> start on-chain atomic swap in background
-    if session.buyer_signed and session.seller_signed:
+    if started:
         thread = threading.Thread(target=run_settlement_worker, args=(session_id,), daemon=True)
         thread.start()
 
@@ -788,6 +793,12 @@ def cancel_session(session_id: str, req: CancelSessionRequest):
             detail={"code": "not_cancellable", "message": f"Session is {session.status}"},
         )
 
-    session_store.cancel_session(session_id, req.wallet_id)
+    try:
+        session_store.cancel_session(session_id, req.wallet_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "not_cancellable", "message": f"Session is {session.status}"},
+        )
     return session.to_session_view(viewer_wallet_id=req.wallet_id)
 

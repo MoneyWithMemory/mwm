@@ -15,7 +15,7 @@ Features:
 import time
 import logging
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from pydantic import BaseModel, Field
 
 from backend.qvac_negotiator import NegotiationTurn
@@ -336,7 +336,8 @@ class SessionStore:
     def record_turn(self, session_id: str, turn: NegotiationTurn) -> Session:
         with self._lock:
             session = self._sessions[session_id]
-            session.history.append(turn)
+            if session.status == SessionStatus.NEGOTIATING:
+                session.history.append(turn)
             return session
 
     def set_awaiting_signatures(
@@ -349,6 +350,10 @@ class SessionStore:
     ) -> Session:
         with self._lock:
             session = self._sessions[session_id]
+            # A cancel that landed while the agents were thinking must stick.
+            if session.status != SessionStatus.NEGOTIATING:
+                logger.info(f"Session {session_id}: agreement ignored, session is {session.status}")
+                return session
             session.status = SessionStatus.AWAITING_SIGNATURES
             session.agreed_price_usd = agreed_price_usd
             session.payment_amount = payment_amount
@@ -363,11 +368,13 @@ class SessionStore:
             session.updated_at_unix = int(time.time())
             return session
 
-    def sign_session(self, session_id: str, wallet_id: str, signed_hash: str) -> Session:
+    def sign_session(self, session_id: str, wallet_id: str, signed_hash: str) -> Tuple[Session, bool]:
         """
         Record signature from buyer or seller.
         If signed_hash does not match session terms_hash, rejects transition.
         If both have signed with matching hash, transitions to SETTLING.
+        Returns (session, started): started is True only for the call that moved it to SETTLING,
+        so exactly one settlement worker is launched.
         """
         with self._lock:
             session = self._sessions[session_id]
@@ -391,18 +398,20 @@ class SessionStore:
             session.updated_at_unix = int(time.time())
 
             # If both have signed with the valid matching hash -> transition to SETTLING
+            started = False
             if session.buyer_signed and session.seller_signed:
                 session.status = SessionStatus.SETTLING
                 session.settlement_step = 1
                 session.settlement_message = "Double signature verified (2/2). Starting on-chain atomic swap."
                 logger.info(f"Session {session_id}: Double signature complete (2/2). Status -> SETTLING.")
+                started = True
 
-            return session
+            return session, started
 
     def cancel_session(self, session_id: str, cancelled_by: str) -> Session:
         with self._lock:
             session = self._sessions[session_id]
-            if session.status in (SessionStatus.SETTLING, SessionStatus.SETTLED):
+            if session.status not in (SessionStatus.NEGOTIATING, SessionStatus.AWAITING_SIGNATURES):
                 raise ValueError(f"Cannot cancel session {session_id} in state {session.status}")
             session.status = SessionStatus.CANCELLED_BY_USER
             session.updated_at_unix = int(time.time())
@@ -427,6 +436,9 @@ class SessionStore:
     def set_settled(self, session_id: str, txid: str) -> Session:
         with self._lock:
             session = self._sessions[session_id]
+            if session.status != SessionStatus.SETTLING:
+                logger.warning(f"Session {session_id}: SETTLED ignored, session is {session.status}")
+                return session
             session.status = SessionStatus.SETTLED
             session.txid = txid
             session.settlement_step = 7
@@ -438,6 +450,9 @@ class SessionStore:
     def set_failed(self, session_id: str, error_message: str) -> Session:
         with self._lock:
             session = self._sessions[session_id]
+            if session.status not in (SessionStatus.NEGOTIATING, SessionStatus.SETTLING):
+                logger.warning(f"Session {session_id}: FAILED ignored, session is {session.status} ({error_message})")
+                return session
             session.status = SessionStatus.FAILED
             session.error_message = error_message
             session.updated_at_unix = int(time.time())
@@ -447,6 +462,9 @@ class SessionStore:
     def set_blocked(self, session_id: str, reason: str, trust_tier: str = "High Authenticity") -> Session:
         with self._lock:
             session = self._sessions[session_id]
+            if session.status != SessionStatus.NEGOTIATING:
+                logger.info(f"Session {session_id}: BLOCKED ignored, session is {session.status}")
+                return session
             session.status = SessionStatus.BLOCKED_BY_GATE
             session.error_message = reason
             session.gate = {

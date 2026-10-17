@@ -54,6 +54,7 @@ export function SellerForm({ walletId, profile, assets, market, draft, onSaved }
   const [amount, setAmount] = useState(toText((draft?.offered_amount ?? profile.offered_amount) / 10 ** (asset?.precision ?? 0)))
   const [ask, setAsk] = useState(toText(draft?.asking_price_usd ?? profile.asking_price_usd))
   const [reserve, setReserve] = useState(toText(profile.secret_min_reserve_usd))
+  const [allowPartial, setAllowPartial] = useState(profile.allow_partial)
   const [prompt, setPrompt] = useState(profile.seller_ai_prompt)
   const [touched, setTouched] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -96,6 +97,7 @@ export function SellerForm({ walletId, profile, assets, market, draft, onSaved }
     asking_price_usd: askValue ?? 0,
     secret_min_reserve_usd: reserveValue ?? 0,
     seller_ai_prompt: prompt,
+    allow_partial: allowPartial,
   }
   const dirty = (Object.keys(request) as (keyof typeof request)[]).some((k) => request[k] !== profile[k])
   const canSave = dirty && !hasErrors
@@ -170,7 +172,15 @@ export function SellerForm({ walletId, profile, assets, market, draft, onSaved }
               onChange={(e) => edit(setAmount)(e.target.value)}
             />
           )}
-          <FormNote error={show ? amountError : undefined}>{asset && 'Buyers may take part of it, at the same unit price.'}</FormNote>
+          <FormNote error={show ? amountError : undefined} />
+          {asset && (
+            <Toggle
+              checked={allowPartial}
+              onChange={edit(setAllowPartial)}
+              label="I consent to partial purchases"
+              description="Buyers may take part of it, at the same unit price."
+            />
+          )}
         </CardContent>
       </Card>
 

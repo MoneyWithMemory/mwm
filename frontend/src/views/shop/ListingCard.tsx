@@ -36,6 +36,12 @@ export function ListingCard({ listing, onEditOffer, onSellTo }: ListingCardProps
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1">
             <Badge variant={selling ? 'accent' : 'warning'}>{selling ? 'For sale' : 'Wanted'}</Badge>
+            {/* Without the seller's consent the lot is sold whole: the buy form locks the amount. */}
+            {selling && !listing.allow_partial && (
+              <Badge variant="outline" size="sm">
+                Full order only
+              </Badge>
+            )}
             {listing.is_mine && <Badge variant="outline" size="sm">Yours</Badge>}
           </div>
         </div>

@@ -99,6 +99,8 @@ export interface AgentProfile {
   asking_price_usd: number
   secret_min_reserve_usd: number
   seller_ai_prompt: string
+  /** The seller consents to selling part of the lot (pro rata); false (default): the whole lot only. */
+  allow_partial: boolean
   // Buyer side (defaults for new sessions)
   buyer_max_ceiling_usd: number
   buyer_target_usd: number
@@ -139,6 +141,8 @@ export interface PublicDesk {
   /** Lot size in atomic units. */
   offered_amount: number
   asking_price_usd: number
+  /** Buyers may take part of the lot; false: the whole lot only. */
+  allow_partial: boolean
 }
 
 /** GET /api/wallets/{id}/contacts item. */
@@ -174,6 +178,8 @@ export interface ShopListing {
   amount: number
   /** Public price in USD for the whole lot: the ask for "sell", the target for "want". */
   price_usd: number
+  /** "sell": the seller consents to selling part of the lot. Always false for "want". */
+  allow_partial: boolean
   note: string | null
   trust: TrustAudit
   /** null for Seller Desks, which are live rather than posted. */

@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { useAgentSearch, type Market, type ShopListing, type WalletState } from '@/api'
 import { AssetBadge, Button, FormNote, NumberField, SegmentedControl, Sheet } from '@/components/ui'
 import { formatAssetAmount } from '@/lib/format'
-import { proRataPrice, suggestedLimits } from '@/lib/lots'
+import { lotIssue, proRataPrice, suggestedLimits, type LotTerms } from '@/lib/lots'
 import { useWalletContext } from '@/lib/navigation'
 import { BuyerLimits } from '../shared/BuyerLimits'
 import { StrategyPicker } from '../shared/StrategyPicker'
@@ -15,6 +15,10 @@ function parse(text: string): number | null {
   if (!value || !NUMBER.test(value)) return null
   const n = Number(value)
   return Number.isFinite(n) ? n : null
+}
+
+function lotTerms(listing: ShopListing): LotTerms {
+  return { offered_amount: listing.amount, asking_price_usd: listing.price_usd, allow_partial: listing.allow_partial }
 }
 
 interface AgentSearchSheetProps {
@@ -49,18 +53,15 @@ export function AgentSearchSheet({ open, onClose, market, wallet, listings }: Ag
   const amountValue = parse(amount)
   const atomic = amountValue === null || !asset ? null : Math.round(amountValue * 10 ** asset.precision)
   // Until edited, the limits follow the best list price for this amount among the sellers the
-  // agent may pick (a part of a larger lot included, rings left out).
+  // agent may pick: rings left out, a part of a larger lot only where its seller consents.
   const payment = market.assets.find((a) => a.source === 'fixed_peg')
   const paymentBalance = wallet.assets.find((a) => a.asset_id === payment?.asset_id)
   const available = paymentBalance ? paymentBalance.amount / 10 ** paymentBalance.precision : 0
-  const bestPrice = atomic && atomic > 0
-    ? Math.min(
-        ...listings
-          .filter((l) => l.kind === 'sell' && !l.is_mine && l.asset.asset_id === assetId && l.amount >= atomic)
-          .filter((l) => l.trust.trust_tier !== 'Ring Anomaly Detected')
-          .map((l) => proRataPrice(l.price_usd, l.amount, atomic)),
-      )
-    : Infinity
+  const sellers = listings.filter(
+    (l) => l.kind === 'sell' && !l.is_mine && l.asset.asset_id === assetId && l.trust.trust_tier !== 'Ring Anomaly Detected',
+  )
+  const fitting = atomic && atomic > 0 ? sellers.filter((l) => lotIssue(lotTerms(l), atomic) === null) : []
+  const bestPrice = atomic && atomic > 0 ? Math.min(...fitting.map((l) => proRataPrice(l.price_usd, l.amount, atomic))) : Infinity
   const limits = useBuyerLimits(
     { target: String(wallet.agent_profile.buyer_target_usd || ''), ceiling: String(wallet.agent_profile.buyer_max_ceiling_usd || '') },
     Number.isFinite(bestPrice) ? suggestedLimits(bestPrice, available) : null,
@@ -68,7 +69,13 @@ export function AgentSearchSheet({ open, onClose, market, wallet, listings }: Ag
   const ceilingValue = parse(limits.ceiling)
   const targetValue = parse(limits.target)
 
-  const amountError = atomic === null || atomic <= 0 ? 'Enter an amount greater than 0.' : undefined
+  let amountError: string | undefined
+  if (atomic === null || atomic <= 0) amountError = 'Enter an amount greater than 0.'
+  else if (fitting.length === 0) {
+    // Larger lots are on sale, but their sellers sell them whole: point at the closest one.
+    const whole = sellers.filter((l) => l.amount > atomic && !l.allow_partial).map((l) => l.amount)
+    if (whole.length > 0) amountError = `Full order only: try ${formatAssetAmount(Math.min(...whole), asset?.precision ?? 0, asset?.ticker)}.`
+  }
   const ceilingError = ceilingValue === null || ceilingValue <= 0 ? 'Enter a maximum greater than 0.' : undefined
   let targetError: string | undefined
   if (targetValue === null || targetValue <= 0) targetError = 'Enter a target greater than 0.'
@@ -104,7 +111,7 @@ export function AgentSearchSheet({ open, onClose, market, wallet, listings }: Ag
       title="Find with my agent"
     >
       <form className="flex flex-col gap-5" onSubmit={submit}>
-        <p className="text-sm text-hint">It picks the best fitting seller, a part of a larger lot included, and negotiates for you.</p>
+        <p className="text-sm text-hint">It picks the best fitting seller and negotiates for you.</p>
 
         <div className="flex flex-col gap-3">
           <div className="flex items-center justify-between gap-3">

@@ -124,6 +124,7 @@ const PROFILE = {
   asking_price_usd: isNum,
   secret_min_reserve_usd: isNum,
   seller_ai_prompt: isStr,
+  allow_partial: isBool,
   buyer_max_ceiling_usd: isNum,
   buyer_target_usd: isNum,
   buyer_ai_prompt: isStr,
@@ -157,7 +158,7 @@ const TRUST = {
   trust_tier: oneOf(...TRUST_TIERS),
   assessment_summary: isStr,
 }
-const DESK = { asset: ASSET_REF, offered_amount: isInt, asking_price_usd: isNum }
+const DESK = { asset: ASSET_REF, offered_amount: isInt, asking_price_usd: isNum, allow_partial: isBool }
 const CONTACT = { address: isStr, alias: nullable(isStr), trust: TRUST, desk: maybe(DESK) }
 const ROUND = {
   n: isInt,
@@ -290,7 +291,7 @@ async function main() {
   check(!contacts.some((c) => LOOP_WORDING.test(c.trust.assessment_summary)), 'no loop % or trade counts in assessment_summary')
   const contactB = contacts.find((c) => c.address === wallets.b.address)
   check(
-    contactB?.desk?.asset.asset_id === deskProfile.offered_asset_id && contactB.desk.offered_amount === deskProfile.offered_amount && contactB.desk.asking_price_usd === deskProfile.asking_price_usd,
+    contactB?.desk?.asset.asset_id === deskProfile.offered_asset_id && contactB.desk.offered_amount === deskProfile.offered_amount && contactB.desk.asking_price_usd === deskProfile.asking_price_usd && contactB.desk.allow_partial === deskProfile.allow_partial,
     'Wallet B desk matches its public profile fields',
     JSON.stringify(contactB?.desk),
   )

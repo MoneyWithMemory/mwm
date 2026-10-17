@@ -26,6 +26,10 @@ To keep the mock as the default and switch to the real backend only on demand, p
 
 `node scripts/contract-check.mjs http://<backend>:8000` checks a live backend against `src/api/types.ts` and `API_CONTRACT.md` (shapes, asset ids, masking, gate, terms hash, signing guards). It creates one blocked and one cancelled session. Add `--e2e` to sign both sides and wait for the on-chain settlement: this moves regtest balances and sets the PEPE price. Needs Node 23.6 or newer; exits with 1 on any failure.
 
+## Unit tests
+
+`node --import ./scripts/node-alias.mjs --test 'scripts/*.test.ts'` runs the unit tests of the lot rules and unit prices shared by the buy forms and the mock. No dependencies: Node 23.6 or newer runs the TypeScript, and `scripts/node-alias.mjs` resolves `@/` imports as Vite does. They live in `scripts/`, which Tailwind does not scan, so editing them never reloads open pages.
+
 ## Layout
 
 - `src/views/**`: the four pane views (Wallet, Trade, Seller Desk, Contacts) and the split view.

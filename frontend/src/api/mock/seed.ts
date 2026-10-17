@@ -186,6 +186,7 @@ const DESK_OFF = {
   asking_price_usd: 0,
   secret_min_reserve_usd: 0,
   seller_ai_prompt: '',
+  allow_partial: false,
 }
 
 function wallet(
@@ -314,6 +315,7 @@ export function createSeedWallets(now: number): MockWallet[] {
         asking_price_usd: ECONOMY.askUsd,
         secret_min_reserve_usd: ECONOMY.reserveUsd,
         seller_ai_prompt: '',
+        allow_partial: false,
         ...BUYER_DEFAULTS,
       },
       {
@@ -346,6 +348,7 @@ export function createSeedWallets(now: number): MockWallet[] {
         asking_price_usd: 90,
         secret_min_reserve_usd: 60,
         seller_ai_prompt: 'Undercut every desk to attract buyers.',
+        allow_partial: false,
         ...BUYER_DEFAULTS,
       },
       { [ADDRESSES.ringPeer]: 'Fast liquidity desk' },

@@ -10,6 +10,7 @@ import {
 import {
   AssetBadge,
   Avatar,
+  Badge,
   Button,
   Card,
   CardContent,
@@ -22,7 +23,7 @@ import {
   TrustBadge,
 } from '@/components/ui'
 import { formatAssetAmount, formatUnitPrice, formatUsd, shortAddress } from '@/lib/format'
-import { minLotAmount, proRataPrice, suggestedLimits } from '@/lib/lots'
+import { lotIssue, minLotAmount, proRataPrice, suggestedLimits } from '@/lib/lots'
 import { useWalletContext } from '@/lib/navigation'
 import { BuyerLimits } from '../shared/BuyerLimits'
 import { StrategyPicker } from '../shared/StrategyPicker'
@@ -112,6 +113,8 @@ export function SetupForm({ wallet, contacts, market, initialAddress, onCreated 
   const asset = tradable.find((a) => a.asset_id === assetId)
   const precision = asset?.precision ?? 0
   const desk = contact?.desk?.asset.asset_id === assetId ? contact.desk : undefined
+  // Without the seller's consent only the whole lot can be bought: the amount is locked to it.
+  const fullOnly = desk !== undefined && !desk.allow_partial
 
   const amountValue = parse(amount)
   const atomic = amountValue === null ? null : Math.round(amountValue * 10 ** precision)
@@ -126,10 +129,14 @@ export function SetupForm({ wallet, contacts, market, initialAddress, onCreated 
 
   let amountError: string | undefined
   if (!amount || atomic === null || atomic <= 0) amountError = 'Enter an amount greater than 0.'
-  else if (desk && atomic > desk.offered_amount) {
-    amountError = `The seller offers ${formatAssetAmount(desk.offered_amount, precision, asset?.ticker)}.`
-  } else if (desk && atomic < minLotAmount(desk.asking_price_usd, desk.offered_amount)) {
-    amountError = `Take at least ${formatAssetAmount(minLotAmount(desk.asking_price_usd, desk.offered_amount), precision, asset?.ticker)}: 1 ${payment?.ticker ?? 'USDT'} worth.`
+  else if (desk) {
+    const lot = formatAssetAmount(desk.offered_amount, precision, asset?.ticker)
+    const issue = lotIssue(desk, atomic)
+    if (issue === 'exceeds_lot') amountError = `The seller offers ${lot}.`
+    else if (issue === 'partial_not_allowed') amountError = `Full order only: buy all ${lot}.`
+    else if (issue === 'amount_too_small') {
+      amountError = `Take at least ${formatAssetAmount(minLotAmount(desk.asking_price_usd, desk.offered_amount), precision, asset?.ticker)}: 1 ${payment?.ticker ?? 'USDT'} worth.`
+    }
   }
 
   let ceilingError: string | undefined
@@ -172,7 +179,14 @@ export function SetupForm({ wallet, contacts, market, initialAddress, onCreated 
       <CardContent className="flex flex-col gap-3 pt-4">
         <div className="flex items-center justify-between gap-3">
           <h3 className="text-sm font-semibold">How much</h3>
-          {!offer && tradable.length === 1 && asset && <AssetBadge ticker={asset.ticker} asset_id={asset.asset_id} showTicker />}
+          <div className="flex items-center gap-2">
+            {fullOnly && (
+              <Badge variant="outline" size="sm">
+                Full order only
+              </Badge>
+            )}
+            {!offer && tradable.length === 1 && asset && <AssetBadge ticker={asset.ticker} asset_id={asset.asset_id} showTicker />}
+          </div>
         </div>
         {!offer && tradable.length > 1 && (
           <SegmentedControl
@@ -191,6 +205,7 @@ export function SetupForm({ wallet, contacts, market, initialAddress, onCreated 
           placeholder="0"
           value={amount}
           suffix={asset?.ticker}
+          disabled={fullOnly}
           invalid={show && Boolean(amountError)}
           onChange={(e) => editAmount(e.target.value)}
         />
@@ -199,7 +214,13 @@ export function SetupForm({ wallet, contacts, market, initialAddress, onCreated 
             {PARTS.map((part) => {
               const partAtomic = Math.floor(desk.offered_amount * part.share)
               return (
-                <Chip key={part.label} active={atomic === partAtomic} onClick={() => editAmount(amountText(partAtomic, precision))}>
+                <Chip
+                  key={part.label}
+                  active={atomic === partAtomic}
+                  // "All" stays available: it is the only amount a full order allows.
+                  disabled={fullOnly && partAtomic !== desk.offered_amount}
+                  onClick={() => editAmount(amountText(partAtomic, precision))}
+                >
                   {part.label}
                 </Chip>
               )

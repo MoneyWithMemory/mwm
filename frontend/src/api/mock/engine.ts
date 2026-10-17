@@ -133,7 +133,7 @@ function publicDesk(address: string): PublicDesk | null {
   const profile = walletByAddress(address)?.agent_profile
   const asset = ASSET_LIST.find((a) => a.asset_id === profile?.offered_asset_id)
   if (!profile?.seller_active || !asset) return null
-  return { asset, offered_amount: profile.offered_amount, asking_price_usd: profile.asking_price_usd }
+  return { asset, offered_amount: profile.offered_amount, asking_price_usd: profile.asking_price_usd, allow_partial: profile.allow_partial }
 }
 
 // ── Shop ───────────────────────────────────────────────────────────
@@ -152,6 +152,8 @@ function wantListing(want: MockWant, viewer: MockWallet): ShopListing {
     asset: want.asset,
     amount: want.amount,
     price_usd: want.targetUsd,
+    // A request is answered with its whole amount.
+    allow_partial: false,
     note: want.note,
     trust: trustFor(want.ownerAddress),
     created_at: want.createdAt,
@@ -173,6 +175,7 @@ function sellListings(viewer: MockWallet): ShopListing[] {
       asset: desk.asset,
       amount: desk.offered_amount,
       price_usd: desk.asking_price_usd,
+      allow_partial: desk.allow_partial,
       note: null,
       trust: trustFor(owner.summary.address),
       created_at: null,
@@ -663,6 +666,9 @@ export const mockEngine = {
     const desk = seller.agent_profile
     if (!desk.seller_active || desk.offered_asset_id !== asset.asset_id) throw conflict('seller_desk_inactive', 'The counterparty is not selling this asset')
     if (body.rgb_amount > desk.offered_amount) throw conflict('exceeds_lot', `The seller offers at most ${desk.offered_amount}`)
+    if (body.rgb_amount < desk.offered_amount && !desk.allow_partial) {
+      throw conflict('partial_not_allowed', `The seller sells only the whole lot of ${desk.offered_amount}`)
+    }
     const minAmount = minLotAmount(desk.asking_price_usd, desk.offered_amount)
     if (body.rgb_amount < minAmount) throw badRequest('amount_too_small', `Buy at least ${minAmount}: a smaller part costs less than 1 USDT`)
     if ((seller.balances[asset.asset_id] ?? 0) < body.rgb_amount) throw conflict('insufficient_funds', 'The seller does not hold that amount')
@@ -761,6 +767,7 @@ export const mockEngine = {
     const priceFor = (l: ShopListing) => (l.price_usd * body.rgb_amount) / l.amount
     const fits = sellListings(buyer)
       .filter((l) => !l.is_mine && l.asset.asset_id === body.asset_id && l.amount >= body.rgb_amount)
+      .filter((l) => l.allow_partial || l.amount === body.rgb_amount)
       .filter((l) => l.trust.trust_tier !== 'Ring Anomaly Detected')
       .filter((l) => priceFor(l) <= body.buyer_max_ceiling_usd * 1.5)
       // Server-side only: a desk whose secret floor is above the buyer's maximum could never close.

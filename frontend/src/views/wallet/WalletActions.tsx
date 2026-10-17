@@ -10,7 +10,7 @@ interface WalletActionsProps {
 function Action({ icon: Icon, label, onClick }: { icon: LucideIcon; label: string; onClick: () => void }) {
   return (
     <div className="flex flex-col items-center gap-2">
-      <IconButton variant="primary" size="lg" aria-label={label} onClick={onClick}>
+      <IconButton variant="primary" size="xl" aria-label={label} onClick={onClick}>
         <Icon size={20} aria-hidden="true" />
       </IconButton>
       <span className="badge-nowrap text-xs font-medium">{label}</span>

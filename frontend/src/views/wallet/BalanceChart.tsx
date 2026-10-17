@@ -70,7 +70,9 @@ interface BalanceChartProps {
 }
 
 export function BalanceChart({ walletId, points, assets }: BalanceChartProps) {
-  const gradientId = useId()
+  const id = useId()
+  const areaId = `${id}-area`
+  const lineId = `${id}-line`
   const [selected, setSelected] = useState(COMBINED)
   const [hover, setHover] = useState<number | null>(null)
 
@@ -122,7 +124,11 @@ export function BalanceChart({ walletId, points, assets }: BalanceChartProps) {
         onPointerCancel={() => setHover(null)}
       >
         <defs>
-          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+          <linearGradient id={lineId} gradientUnits="userSpaceOnUse" x1={0} y1={0} x2={W} y2={0}>
+            <stop offset="0" className="[stop-color:var(--color-chart-from)]" />
+            <stop offset="1" className="[stop-color:var(--color-chart-to)]" />
+          </linearGradient>
+          <linearGradient id={areaId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0" className="[stop-color:var(--color-accent)]" stopOpacity="0.28" />
             <stop offset="1" className="[stop-color:var(--color-accent)]" stopOpacity="0" />
           </linearGradient>
@@ -131,13 +137,14 @@ export function BalanceChart({ walletId, points, assets }: BalanceChartProps) {
           <line key={g} x1={0} x2={W} y1={H * g} y2={H * g} className="stroke-separator" strokeDasharray="2 4" />
         ))}
         <motion.path
-          fill={`url(#${gradientId})`}
+          fill={`url(#${areaId})`}
           initial={false}
           animate={{ d: areaPath(coords) }}
           transition={{ duration: DUR.open, ease: EASE_OUT }}
         />
         <motion.path
-          className="fill-none stroke-accent"
+          className="fill-none"
+          stroke={`url(#${lineId})`}
           strokeWidth={2}
           strokeLinejoin="round"
           strokeLinecap="round"
@@ -147,7 +154,7 @@ export function BalanceChart({ walletId, points, assets }: BalanceChartProps) {
         />
         {hover !== null && (
           <motion.line
-            className="stroke-accent/60"
+            className="stroke-accent-cool/60"
             strokeDasharray="3 3"
             y1={0}
             y2={H}
@@ -157,14 +164,14 @@ export function BalanceChart({ walletId, points, assets }: BalanceChartProps) {
           />
         )}
         <motion.circle
-          className="fill-accent/25"
+          className="fill-accent-cool/25"
           r={9}
           initial={false}
           animate={{ cx: marker.x, cy: marker.y }}
           transition={{ duration: DUR.quick, ease: EASE_OUT }}
         />
         <motion.circle
-          className="fill-accent stroke-surface"
+          className="fill-accent-cool stroke-surface"
           strokeWidth={2}
           r={4.5}
           initial={false}

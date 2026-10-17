@@ -32,7 +32,7 @@ export function CounterpartiesCard({ activity, aliases, market }: Counterparties
               </div>
               <div className="h-2 overflow-hidden rounded-full bg-surface-muted">
                 <motion.div
-                  className="h-full origin-left rounded-full bg-accent"
+                  className="h-full origin-left rounded-full bg-linear-to-r from-chart-from to-chart-to"
                   initial={{ scaleX: 0 }}
                   animate={{ scaleX: row.value / max }}
                   transition={{ duration: DUR.open * 2, ease: EASE_OUT }}

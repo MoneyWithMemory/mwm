@@ -1,11 +1,12 @@
-import { motion } from 'motion/react'
-import type { KeyboardEvent } from 'react'
+import { AnimatePresence, motion } from 'motion/react'
+import { useState } from 'react'
 import { cn } from '@/lib/cn'
-import { SPRING_TABS } from '@/lib/motion'
+import { textSwap } from '@/lib/motion'
 
 export interface ToggleProps {
   checked: boolean
   onChange: (checked: boolean) => void
+  /** May change with the state (e.g. "Selling is on"): it swaps with a text transition. */
   label?: string
   description?: string
   disabled?: boolean
@@ -14,29 +15,18 @@ export interface ToggleProps {
 }
 
 /**
- * Animated switch toggle with smooth spring thumb motion and accessible focus states.
+ * Switch: the thumb overshoots its end and settles, the track color cross-fades, a press
+ * stretches the thumb (.switch in index.css). The whole row toggles; the switch is the
+ * focusable control.
  */
-export function Toggle({
-  checked,
-  onChange,
-  label,
-  description,
-  disabled = false,
-  id,
-  className,
-}: ToggleProps) {
-  const handleToggle = () => {
-    if (!disabled) {
-      onChange(!checked)
-    }
-  }
+export function Toggle({ checked, onChange, label, description, disabled = false, id, className }: ToggleProps) {
+  // Set on the first change: until then the travel keyframes must not play (e.g. on mount).
+  const [touched, setTouched] = useState(false)
 
-  const handleKeyDown = (e: KeyboardEvent) => {
+  const toggle = () => {
     if (disabled) return
-    if (e.key === ' ' || e.key === 'Enter') {
-      e.preventDefault()
-      onChange(!checked)
-    }
+    setTouched(true)
+    onChange(!checked)
   }
 
   const switchButton = (
@@ -45,23 +35,21 @@ export function Toggle({
       role="switch"
       type="button"
       aria-checked={checked}
+      aria-label={label && !description ? label : undefined}
       disabled={disabled}
-      onClick={handleToggle}
-      onKeyDown={handleKeyDown}
+      data-on={checked}
+      onClick={(event) => {
+        event.stopPropagation()
+        toggle()
+      }}
       className={cn(
-        'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full p-0.5 transition-colors duration-quick ease-smooth-out select-none outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface',
+        'switch relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full p-0.5 select-none outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface',
+        touched && 'is-init',
         checked ? 'bg-accent' : 'bg-surface-raised',
-        disabled && 'opacity-50 cursor-not-allowed pointer-events-none'
+        disabled && 'opacity-50 cursor-not-allowed pointer-events-none',
       )}
     >
-      <motion.span
-        layout
-        transition={SPRING_TABS}
-        className={cn(
-          'pointer-events-none block size-5 rounded-full bg-fg shadow-card',
-          checked ? 'ml-auto' : 'mr-auto'
-        )}
-      />
+      <span className="switch-thumb pointer-events-none block h-5 w-5 rounded-full bg-fg shadow-card" />
     </button>
   )
 
@@ -71,15 +59,19 @@ export function Toggle({
 
   return (
     <div
-      onClick={handleToggle}
-      className={cn(
-        'flex items-center justify-between gap-3 select-none',
-        !disabled && 'cursor-pointer',
-        className
-      )}
+      onClick={toggle}
+      className={cn('flex items-center justify-between gap-3 select-none', !disabled && 'cursor-pointer', className)}
     >
-      <div className="flex flex-col">
-        {label && <span className="text-sm font-medium text-fg">{label}</span>}
+      <div className="flex min-w-0 flex-col">
+        {label && (
+          <span className="relative h-5 overflow-hidden text-sm font-medium text-fg">
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.span key={label} className="block" variants={textSwap} initial="initial" animate="animate" exit="exit">
+                {label}
+              </motion.span>
+            </AnimatePresence>
+          </span>
+        )}
         {description && <span className="text-xs text-hint">{description}</span>}
       </div>
       {switchButton}

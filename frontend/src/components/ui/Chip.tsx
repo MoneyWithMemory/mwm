@@ -41,7 +41,7 @@ export function Chip({
         isClickable && 'pressable cursor-pointer',
         active
           ? 'bg-accent text-on-accent shadow-card'
-          : 'bg-surface-muted text-fg hover:bg-surface-muted/80',
+          : 'bg-surface-muted text-fg hover:bg-surface-raised',
         disabled && 'opacity-50 cursor-not-allowed pointer-events-none',
         className
       )}

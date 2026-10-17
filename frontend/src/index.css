@@ -220,6 +220,95 @@
     white-space: nowrap;
   }
 
+  /*
+   * Close (X): a muted circle placed concentric with its container's corner (see CloseButton).
+   * On hover it brightens and the X turns a quarter; the turn back is softer. Hit area 44px.
+   */
+  .close-button {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    background-color: var(--color-surface-muted);
+    color: var(--color-hint);
+  }
+
+  .close-button::before {
+    content: "";
+    position: absolute;
+    inset: calc(50% - 1.375rem);
+    border-radius: 9999px;
+  }
+
+  .close-button svg {
+    transition: rotate var(--duration-medium) var(--ease-smooth-out);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .close-button:hover {
+      background-color: var(--color-surface-raised);
+      color: var(--color-fg);
+    }
+
+    .close-button:hover svg {
+      rotate: 90deg;
+      transition-duration: var(--duration-fast);
+    }
+  }
+
+  /*
+   * Switch (transitions-dev toggle): the thumb overshoots its end, swings back and settles,
+   * while the track color cross-fades on its own clock. .is-init is set on the first change,
+   * so the keyframes never play on mount. Pressing stretches the thumb toward its travel.
+   */
+  .switch {
+    --switch-travel: 1.25rem;
+    transition: background-color var(--duration-fast) var(--ease-smooth-out);
+  }
+
+  .switch-thumb {
+    translate: 0 0;
+    transition:
+      width var(--duration-quick) var(--ease-smooth-out),
+      margin var(--duration-quick) var(--ease-smooth-out);
+  }
+
+  .switch[data-on="true"] .switch-thumb {
+    translate: var(--switch-travel) 0;
+  }
+
+  .switch.is-init[data-on="true"] .switch-thumb {
+    animation: switch-on var(--duration-medium) var(--ease-bounce) both;
+  }
+
+  .switch.is-init[data-on="false"] .switch-thumb {
+    animation: switch-off var(--duration-medium) var(--ease-bounce) both;
+  }
+
+  .switch:active:not(:disabled) .switch-thumb {
+    width: 1.5rem;
+  }
+
+  .switch[data-on="true"]:active:not(:disabled) .switch-thumb {
+    margin-left: -0.25rem;
+  }
+
+  @keyframes switch-on {
+    0% { translate: 0 0; }
+    55% { translate: calc(var(--switch-travel) + 1.5px) 0; }
+    80% { translate: calc(var(--switch-travel) - 0.5px) 0; }
+    100% { translate: var(--switch-travel) 0; }
+  }
+
+  @keyframes switch-off {
+    0% { translate: var(--switch-travel) 0; }
+    55% { translate: -1.5px 0; }
+    80% { translate: 0.5px 0; }
+    100% { translate: 0 0; }
+  }
+
   /* Avatar color from a per-seed hue (set inline as --avatar-hue by <Avatar>). */
   .avatar {
     background-color: hsl(var(--avatar-hue) 42% 38%);
@@ -300,6 +389,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .switch-thumb {
+    animation: none !important;
+  }
+
   :root {
     --scale-hover: 1;
     --scale-press: 0.99;

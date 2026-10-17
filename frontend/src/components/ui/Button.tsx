@@ -17,7 +17,7 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 const VARIANTS: Record<ButtonVariant, string> = {
   // The primary CTA is the one button with the lavender glow, also while hovered.
   primary: 'bg-accent text-on-accent hover:bg-accent-pressed shadow-glow [--pressable-shadow:var(--shadow-glow)]',
-  secondary: 'bg-surface-muted text-fg hover:bg-surface-muted/80',
+  secondary: 'bg-surface-muted text-fg hover:bg-surface-raised',
   ghost: 'bg-transparent text-accent hover:bg-surface-muted/60 pressable-flat',
   danger: 'bg-danger text-on-accent hover:bg-danger/90 shadow-card',
 }

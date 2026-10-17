@@ -17,7 +17,7 @@ interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const VARIANTS: Record<IconButtonVariant, string> = {
   ghost: 'text-hint hover:text-fg hover:bg-surface-muted/60 pressable-flat',
-  secondary: 'bg-surface-muted text-fg hover:bg-surface-muted/80',
+  secondary: 'bg-surface-muted text-fg hover:bg-surface-raised',
   primary: 'bg-accent text-on-accent hover:bg-accent-pressed shadow-card',
 }
 

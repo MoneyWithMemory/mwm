@@ -1,10 +1,10 @@
-import { X } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useEffectEvent, useId, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { backdrop, modal } from '@/lib/motion'
 import { useOverlayRoot } from '@/lib/overlay'
 import { cn } from '@/lib/cn'
+import { CloseButton } from './CloseButton'
 
 interface ModalProps {
   open: boolean
@@ -77,32 +77,15 @@ export function Modal({
             exit="exit"
           >
             {title ? (
-              <div className="flex items-center justify-between gap-3 px-5 pt-4 pb-2 border-b border-separator/20">
+              <div className="relative px-5 pt-4 pb-2 pr-12 border-b border-separator/20">
                 <h2 id={titleId} className="text-base font-semibold text-fg">
                   {title}
                 </h2>
-                {!hideCloseButton && (
-                  <button
-                    type="button"
-                    className="pressable-icon pressable-flat -mr-1.5 rounded-full p-1.5 text-hint hover:text-fg"
-                    onClick={onClose}
-                    aria-label="Close"
-                  >
-                    <X size={18} aria-hidden="true" />
-                  </button>
-                )}
+                {!hideCloseButton && <CloseButton size="sm" className="absolute top-1.5 right-1.5" onClick={onClose} />}
               </div>
             ) : !hideCloseButton ? (
-              <div className="absolute top-3 right-3 z-20">
-                <button
-                  type="button"
-                  className="pressable-icon pressable-flat rounded-full p-1.5 text-hint hover:text-fg"
-                  onClick={onClose}
-                  aria-label="Close"
-                >
-                  <X size={18} aria-hidden="true" />
-                </button>
-              </div>
+              // Concentric with the 20px corner: 28px circle at 6px.
+              <CloseButton size="sm" className="absolute top-1.5 right-1.5 z-20" onClick={onClose} />
             ) : null}
             <div className="p-5">{children}</div>
           </motion.div>

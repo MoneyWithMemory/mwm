@@ -1,10 +1,10 @@
-import { X } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useEffectEvent, useId, useRef, useState, type ReactNode, type UIEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '@/lib/cn'
 import { backdrop, sheet } from '@/lib/motion'
 import { useOverlayRoot } from '@/lib/overlay'
+import { CloseButton } from './CloseButton'
 
 interface SheetProps {
   open: boolean
@@ -15,7 +15,8 @@ interface SheetProps {
 
 /**
  * Bottom sheet: opens in 250ms from scale 0.96, closes in 150ms, origin bottom.
- * Fixed header with title and 44x44px close button, subtle border appearing only when
+ * Fixed header with title and a close button concentric with the 24px top-right corner
+ * (32px circle at 8px, 44px hit area), and a subtle border appearing only when
  * body content is scrolled. Scroll container is isolated to the body (overflow-y-auto,
  * overscroll-contain). Focus uses preventScroll: true to eliminate frame-0 scroll jumps.
  * Must be inside an <OverlayLayer> and covers it (its pane in split view). Escape and the
@@ -93,24 +94,17 @@ function SheetPanel({ onClose, title, children }: SheetPanelProps) {
         animate="animate"
         exit="exit"
       >
-        {/* Fixed Header: title and X close button, border visible only on scroll */}
+        {/* Fixed Header: the title is centered on the close button's line (24px from the top) */}
         <div
           className={cn(
-            'flex shrink-0 items-center justify-between gap-3 border-b bg-surface px-4 pt-4 pb-2 transition-colors duration-150',
+            'relative shrink-0 border-b bg-surface px-4 pt-3 pb-2 transition-colors duration-150',
             isScrolled ? 'border-separator' : 'border-transparent'
           )}
         >
-          <h2 id={titleId} className="text-base font-semibold">
+          <h2 id={titleId} className="pr-10 text-base leading-6 font-semibold">
             {title}
           </h2>
-          <button
-            type="button"
-            className="pressable-icon pressable-flat -mr-2.5 inline-flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-hint hover:text-fg outline-none focus-visible:ring-2 focus-visible:ring-accent-cool"
-            onClick={onClose}
-            aria-label="Close"
-          >
-            <X size={18} aria-hidden="true" />
-          </button>
+          <CloseButton className="absolute top-2 right-2" onClick={onClose} />
         </div>
 
         {/* Scrollable Body: only this element scrolls */}

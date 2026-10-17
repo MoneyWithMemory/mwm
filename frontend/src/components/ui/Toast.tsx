@@ -1,10 +1,11 @@
-import { AlertCircle, AlertTriangle, CheckCircle, Info, X } from 'lucide-react'
+import { AlertCircle, AlertTriangle, CheckCircle, Info } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '@/lib/cn'
 import { DUR, EASE_OUT } from '@/lib/motion'
 import { useOverlayRoot } from '@/lib/overlay'
+import { CloseButton } from './CloseButton'
 import {
   ToastContext,
   toastListeners,
@@ -132,7 +133,7 @@ function ToastCard({
       exit="exit"
       layout
       className={cn(
-        'pointer-events-auto flex items-start gap-3 w-full max-w-sm rounded-card surface-glass p-3.5 shadow-raised border text-fg select-none',
+        'pointer-events-auto relative flex items-start gap-3 w-full max-w-sm rounded-card surface-glass p-3.5 pr-10 shadow-raised border text-fg select-none',
         style.border
       )}
     >
@@ -143,14 +144,8 @@ function ToastCard({
           <p className="mt-0.5 text-xs text-hint leading-relaxed">{item.description}</p>
         )}
       </div>
-      <button
-        type="button"
-        onClick={onDismiss}
-        className="pressable-icon pressable-flat -mr-1 -mt-1 p-1 rounded-full text-hint hover:text-fg"
-        aria-label="Dismiss notification"
-      >
-        <X size={14} aria-hidden="true" />
-      </button>
+      {/* Concentric with the 20px corner: 24px circle at 8px. */}
+      <CloseButton size="xs" className="absolute top-2 right-2" onClick={onDismiss} aria-label="Dismiss notification" />
     </motion.div>
   )
 }

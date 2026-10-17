@@ -1,5 +1,5 @@
 import { motion } from 'motion/react'
-import { useMemo, useState, type PointerEvent } from 'react'
+import { useId, useMemo, useState, type PointerEvent } from 'react'
 import type { AssetBalance, HistoryPoint } from '@/api'
 import { SegmentedControl } from '@/components/ui'
 import { formatUsd } from '@/lib/format'
@@ -39,16 +39,29 @@ function toCoords(points: HistoryPoint[], values: number[]): Coord[] {
   }))
 }
 
-/** A single point is drawn as a flat line, so the path always has the same shape per point count. */
+/**
+ * Smooth curve through the points: horizontal tangents at every point, so it never overshoots a value.
+ * A single point is drawn as a flat line, so the path keeps the same command count for every series.
+ */
 function linePath(coords: Coord[]): string {
-  const pts = coords.length === 1 ? [{ x: PAD_X, y: coords[0].y }, { x: W - PAD_X, y: coords[0].y }] : coords
-  return pts.map((c, i) => `${i === 0 ? 'M' : 'L'}${c.x.toFixed(1)} ${c.y.toFixed(1)}`).join(' ')
+  if (coords.length === 1) return `M${PAD_X} ${coords[0].y.toFixed(1)} L${W - PAD_X} ${coords[0].y.toFixed(1)}`
+  return coords
+    .map((c, i) => {
+      if (i === 0) return `M${c.x.toFixed(1)} ${c.y.toFixed(1)}`
+      const prev = coords[i - 1]
+      const mid = (prev.x + c.x) / 2
+      return `C${mid.toFixed(1)} ${prev.y.toFixed(1)} ${mid.toFixed(1)} ${c.y.toFixed(1)} ${c.x.toFixed(1)} ${c.y.toFixed(1)}`
+    })
+    .join(' ')
 }
 
 function areaPath(coords: Coord[]): string {
-  const pts = coords.length === 1 ? [{ x: PAD_X, y: coords[0].y }, { x: W - PAD_X, y: coords[0].y }] : coords
-  return `${linePath(coords)} L${pts[pts.length - 1].x.toFixed(1)} ${H} L${pts[0].x.toFixed(1)} ${H} Z`
+  const first = coords.length === 1 ? PAD_X : coords[0].x
+  const last = coords.length === 1 ? W - PAD_X : coords[coords.length - 1].x
+  return `${linePath(coords)} L${last.toFixed(1)} ${H} L${first.toFixed(1)} ${H} Z`
 }
+
+const GRID_LINES = [0.25, 0.5, 0.75]
 
 interface BalanceChartProps {
   walletId: string
@@ -57,6 +70,7 @@ interface BalanceChartProps {
 }
 
 export function BalanceChart({ walletId, points, assets }: BalanceChartProps) {
+  const gradientId = useId()
   const [selected, setSelected] = useState(COMBINED)
   const [hover, setHover] = useState<number | null>(null)
 
@@ -107,8 +121,17 @@ export function BalanceChart({ walletId, points, assets }: BalanceChartProps) {
         onPointerUp={() => setHover(null)}
         onPointerCancel={() => setHover(null)}
       >
+        <defs>
+          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" className="[stop-color:var(--color-accent)]" stopOpacity="0.28" />
+            <stop offset="1" className="[stop-color:var(--color-accent)]" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {GRID_LINES.map((g) => (
+          <line key={g} x1={0} x2={W} y1={H * g} y2={H * g} className="stroke-separator" strokeDasharray="2 4" />
+        ))}
         <motion.path
-          className="fill-accent/10"
+          fill={`url(#${gradientId})`}
           initial={false}
           animate={{ d: areaPath(coords) }}
           transition={{ duration: DUR.open, ease: EASE_OUT }}
@@ -124,7 +147,8 @@ export function BalanceChart({ walletId, points, assets }: BalanceChartProps) {
         />
         {hover !== null && (
           <motion.line
-            className="stroke-separator"
+            className="stroke-accent/60"
+            strokeDasharray="3 3"
             y1={0}
             y2={H}
             initial={false}
@@ -133,14 +157,26 @@ export function BalanceChart({ walletId, points, assets }: BalanceChartProps) {
           />
         )}
         <motion.circle
+          className="fill-accent/25"
+          r={9}
+          initial={false}
+          animate={{ cx: marker.x, cy: marker.y }}
+          transition={{ duration: DUR.quick, ease: EASE_OUT }}
+        />
+        <motion.circle
           className="fill-accent stroke-surface"
           strokeWidth={2}
-          r={5}
+          r={4.5}
           initial={false}
           animate={{ cx: marker.x, cy: marker.y }}
           transition={{ duration: DUR.quick, ease: EASE_OUT }}
         />
       </svg>
+
+      <div className="-mt-1 flex justify-between text-xs text-hint">
+        <span>{dateFormat.format(new Date(points[0].t * 1000))}</span>
+        <span>{dateFormat.format(new Date(points[points.length - 1].t * 1000))}</span>
+      </div>
 
       <SegmentedControl
         fullWidth

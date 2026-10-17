@@ -326,3 +326,12 @@ def test_only_one_signature_starts_settlement_and_settled_is_final():
     session = store.get_session("sess_once")
     assert session.status == SessionStatus.SETTLED
     assert session.txid == "txid_ok"
+
+
+def test_wallet_ids_cannot_escape_data_dir(tmp_path):
+    mgr = WalletManager(data_root=str(tmp_path / "data"))
+    for bad in ("../escaped", "a/b", "", "x" * 65):
+        with pytest.raises(ValueError, match="Invalid wallet id"):
+            mgr.get_wallet_dir(bad)
+    assert mgr.get_wallet_dir("wallet_1a2b3c4d").parent == tmp_path / "data"
+    assert not (tmp_path / "escaped").exists()

@@ -15,6 +15,15 @@ from backend.deterministic_gate import compute_terms_hash, CanonicalSwapTerms
 
 client = TestClient(app)
 
+
+def _desk_asset() -> str:
+    return client.get("/api/wallets/wallet_b").json()["agent_profile"]["offered_asset_id"]
+
+
+def _fund_wallets(monkeypatch, amount: int = 10**9) -> None:
+    # Test wallets live in a temp dir with no RGB assets; stub the balance read.
+    monkeypatch.setattr("backend.api_server._spendable", lambda wallet_id, asset_id: amount)
+
 def test_health_endpoint():
     resp = client.get("/api/health")
     assert resp.status_code == 200
@@ -133,7 +142,7 @@ def test_session_blocked_immediately_by_gate_on_sybil():
     req = {
         "buyer_wallet_id": "wallet_a",
         "seller_address": sybil_addr,
-        "asset_id": "rgb:pepe_test",
+        "asset_id": _desk_asset(),
         "rgb_amount": 1_000_000,
         "buyer_max_ceiling_usd": 135,
         "buyer_target_usd": 100,
@@ -149,6 +158,7 @@ def test_session_blocked_immediately_by_gate_on_sybil():
     assert sess["thinking"] is None
 
 def test_session_signature_hash_mismatch_returns_409(monkeypatch):
+    _fund_wallets(monkeypatch)
     """
     Verify that POST /api/sessions/{id}/sign returns 409 if terms_hash does not match active session terms.
     """
@@ -166,7 +176,7 @@ def test_session_signature_hash_mismatch_returns_409(monkeypatch):
     req = {
         "buyer_wallet_id": "wallet_a",
         "seller_address": seller_addr,
-        "asset_id": "rgb:pepe_test",
+        "asset_id": _desk_asset(),
         "rgb_amount": 1_000_000,
         "buyer_max_ceiling_usd": 135,
         "buyer_target_usd": 120,
@@ -213,6 +223,7 @@ def test_session_signature_hash_mismatch_returns_409(monkeypatch):
     assert sess_after_buyer["seller_signed"] is False
 
 def test_negotiation_no_agreement_blocked_after_4_rounds(monkeypatch):
+    _fund_wallets(monkeypatch)
     """
     Verify that if buyer ceiling < seller reserve, 4 rounds elapse without agreement
     and the session transitions to BLOCKED_BY_GATE with reason 'No agreement within 4 rounds'.
@@ -231,7 +242,7 @@ def test_negotiation_no_agreement_blocked_after_4_rounds(monkeypatch):
     req = {
         "buyer_wallet_id": "wallet_a",
         "seller_address": seller_addr,
-        "asset_id": "rgb:pepe_test",
+        "asset_id": _desk_asset(),
         "rgb_amount": 1_000_000,
         "buyer_max_ceiling_usd": 100,
         "buyer_target_usd": 90,
@@ -257,15 +268,16 @@ def test_negotiation_no_agreement_blocked_after_4_rounds(monkeypatch):
     assert "No agreement within 4 rounds" in final_sess["gate"]["reasons"]
 
 
-def test_session_cancellation():
+def test_session_cancellation(monkeypatch):
     """Verify session can be cancelled before settlement."""
+    _fund_wallets(monkeypatch)
     wallets = client.get("/api/wallets").json()
     seller_addr = next(w["address"] for w in wallets if w["wallet_id"] == "wallet_b")
 
     req = {
         "buyer_wallet_id": "wallet_a",
         "seller_address": seller_addr,
-        "asset_id": "rgb:pepe_test",
+        "asset_id": _desk_asset(),
         "rgb_amount": 1_000_000,
         "buyer_max_ceiling_usd": 135,
         "buyer_target_usd": 120,
@@ -334,3 +346,53 @@ def test_session_view_forbidden_for_non_participants():
     resp = client.get("/api/sessions/sess_view_403?wallet_id=wallet_sybil")
     assert resp.status_code == 403
     assert resp.json()["code"] == "forbidden"
+
+
+def _session_request(seller_addr: str, **overrides):
+    req = {
+        "buyer_wallet_id": "wallet_a",
+        "seller_address": seller_addr,
+        "asset_id": _desk_asset(),
+        "rgb_amount": 1_000_000,
+        "buyer_max_ceiling_usd": 135,
+        "buyer_target_usd": 120,
+        "buyer_ai_prompt": "Negotiate",
+    }
+    req.update(overrides)
+    return req
+
+
+def test_session_creation_contract_errors(monkeypatch):
+    wallets = client.get("/api/wallets").json()
+    seller_addr = next(w["address"] for w in wallets if w["wallet_id"] == "wallet_b")
+    client.put("/api/wallets/wallet_b/agent_profile", json={"seller_active": True})
+
+    def post(**overrides):
+        return client.post("/api/sessions", json=_session_request(seller_addr, **overrides))
+
+    _fund_wallets(monkeypatch)
+    assert post(buyer_wallet_id="wallet_ghost").status_code == 404
+    assert post(rgb_amount=0).json()["code"] == "invalid_amount"
+    assert post(buyer_target_usd=140).json()["code"] == "invalid_limits"
+    resp = post(asset_id="rgb:not_on_the_desk")
+    assert (resp.status_code, resp.json()["code"]) == (409, "seller_desk_inactive")
+
+    _fund_wallets(monkeypatch, amount=0)
+    resp = post()
+    assert (resp.status_code, resp.json()["code"]) == (409, "insufficient_funds")
+
+
+def test_session_blocked_for_unknown_seller_and_untrusted_buyer(monkeypatch):
+    _fund_wallets(monkeypatch)
+    resp = client.post("/api/sessions", json=_session_request("bcrt1q_unknown_address"))
+    sess = resp.json()
+    assert sess["state"] == "BLOCKED_BY_GATE"
+    assert sess["gate"]["reasons"] == ["Counterparty has no active desk."]
+
+    wallets = client.get("/api/wallets").json()
+    seller_addr = next(w["address"] for w in wallets if w["wallet_id"] == "wallet_b")
+    resp = client.post("/api/sessions", json=_session_request(seller_addr, buyer_wallet_id="wallet_sybil"))
+    sess = resp.json()
+    assert sess["state"] == "BLOCKED_BY_GATE"
+    assert any(r.startswith("Buyer trust check failed") for r in sess["gate"]["reasons"])
+    assert sess["rounds"] == []

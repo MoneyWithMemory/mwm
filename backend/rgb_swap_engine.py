@@ -13,6 +13,7 @@ Rules:
 
 import os
 import json
+import re
 import time
 import shutil
 import logging
@@ -32,6 +33,7 @@ NETWORK = rgb_lib.BitcoinNetwork.REGTEST
 WITNESS_VERSION = rgb_lib.WitnessVersion.SEG_WIT_V0
 FEE_RATE = 1  # 1 sat/vB
 DEFAULT_SWAP_FEE_SAT = 2_000
+WALLET_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 # Global lock to serialize rgb_lib / SQLite calls across concurrent web threads
 SWAP_GLOBAL_LOCK = threading.Lock()
@@ -55,9 +57,22 @@ class WalletManager:
         self._addresses: Dict[str, str] = {}
 
     def get_wallet_dir(self, wallet_id: str) -> Path:
+        # wallet_id becomes a path component: reject anything that could escape data_root.
+        if not WALLET_ID_RE.fullmatch(wallet_id):
+            raise ValueError(f"Invalid wallet id: {wallet_id!r}")
         wdir = self.data_root / wallet_id
         wdir.mkdir(parents=True, exist_ok=True)
         return wdir
+
+    @staticmethod
+    def _write_keys(keys_file: Path, keys: Any) -> None:
+        keys_file.write_text(json.dumps({
+            "mnemonic": keys.mnemonic,
+            "xpub_vanilla": keys.account_xpub_vanilla,
+            "xpub_colored": keys.account_xpub_colored,
+            "fingerprint": keys.master_fingerprint,
+        }, indent=2))
+        os.chmod(keys_file, 0o600)
 
     def get_or_create_wallet(self, wallet_id: str, mnemonic: Optional[str] = None) -> Tuple[rgb_lib.Wallet, Any, str]:
         """
@@ -72,12 +87,7 @@ class WalletManager:
 
         if mnemonic:
             keys = rgb_lib.restore_keys(NETWORK, mnemonic, WITNESS_VERSION)
-            keys_file.write_text(json.dumps({
-                "mnemonic": keys.mnemonic,
-                "xpub_vanilla": keys.account_xpub_vanilla,
-                "xpub_colored": keys.account_xpub_colored,
-                "fingerprint": keys.master_fingerprint,
-            }, indent=2))
+            self._write_keys(keys_file, keys)
         elif keys_file.exists():
             try:
                 data = json.loads(keys_file.read_text())
@@ -85,20 +95,10 @@ class WalletManager:
             except Exception as exc:
                 logger.warning(f"Failed to restore keys for {wallet_id} ({exc}), generating fresh.")
                 keys = rgb_lib.generate_keys(NETWORK, WITNESS_VERSION)
-                keys_file.write_text(json.dumps({
-                    "mnemonic": keys.mnemonic,
-                    "xpub_vanilla": keys.account_xpub_vanilla,
-                    "xpub_colored": keys.account_xpub_colored,
-                    "fingerprint": keys.master_fingerprint,
-                }, indent=2))
+                self._write_keys(keys_file, keys)
         else:
             keys = rgb_lib.generate_keys(NETWORK, WITNESS_VERSION)
-            keys_file.write_text(json.dumps({
-                "mnemonic": keys.mnemonic,
-                "xpub_vanilla": keys.account_xpub_vanilla,
-                "xpub_colored": keys.account_xpub_colored,
-                "fingerprint": keys.master_fingerprint,
-            }, indent=2))
+            self._write_keys(keys_file, keys)
 
         singlesig_keys = rgb_lib.SinglesigKeys(
             account_xpub_vanilla=keys.account_xpub_vanilla,

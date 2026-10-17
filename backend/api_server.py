@@ -588,9 +588,32 @@ def run_settlement_worker(session_id: str) -> None:
 
 # ── Sessions Endpoints ──────────────────────────────────────────────
 
+def _spendable(wallet_id: str, asset_id: str) -> int:
+    try:
+        return wallet_mgr.get_spendable(wallet_id, asset_id)
+    except Exception as exc:
+        logger.warning(f"Could not read {asset_id} balance of {wallet_id}: {exc}")
+        return 0
+
 @app.post("/api/sessions")
 def create_session(req: CreateSessionRequest):
     session_id = f"sess_{uuid.uuid4().hex[:12]}"
+
+    if req.buyer_wallet_id not in wallet_state_manager._labels:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "wallet_not_found", "message": f"Wallet {req.buyer_wallet_id} does not exist"},
+        )
+    if req.rgb_amount <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "invalid_amount", "message": "Amount must be a positive integer"},
+        )
+    if req.buyer_target_usd <= 0 or req.buyer_target_usd > req.buyer_max_ceiling_usd:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "invalid_limits", "message": "Target must be positive and not above the ceiling"},
+        )
 
     # 1. Resolve buyer address
     try:
@@ -598,10 +621,9 @@ def create_session(req: CreateSessionRequest):
     except Exception:
         buyer_addr = wallet_state_manager._addresses.get(req.buyer_wallet_id, f"bcrt1q{req.buyer_wallet_id}")
 
-    # 2. Resolve seller wallet and address
+    # 2. Resolve seller wallet; seeds whose address is not cached yet are opened first
     seller_wid = wallet_state_manager.get_wallet_by_address(req.seller_address)
     if not seller_wid:
-        # Fallback resolution: check if address matches any known seed
         for sid in ("wallet_b", "wallet_sybil"):
             if sid not in wallet_state_manager._addresses:
                 try:
@@ -612,8 +634,6 @@ def create_session(req: CreateSessionRequest):
             if wallet_state_manager._addresses.get(sid) == req.seller_address:
                 seller_wid = sid
                 break
-    if not seller_wid:
-        seller_wid = "wallet_b"
 
     if req.buyer_wallet_id == seller_wid or buyer_addr == req.seller_address:
         raise HTTPException(
@@ -621,26 +641,15 @@ def create_session(req: CreateSessionRequest):
             detail={"code": "self_trade", "message": "Cannot create a trade session with yourself"},
         )
 
-    seller_profile = wallet_state_manager.get_profile(seller_wid)
-    seller_addr = req.seller_address
-
     resolved_payment_asset_id = (
         market_manager.usdt_asset_id
         or settings.PAYMENT_ASSET_ID
         or "rgb:IWq5H3Er-Mpe5VLG-6P91nnY-pwK0_EY-7FJUG1i-IWp8RuM"
     )
+    seller_profile = wallet_state_manager.get_profile(seller_wid) if seller_wid else None
 
-    # 3. Preventive Counterparty Trust Check (Layer-0 Memory Graph)
-    # If counterparty is Ring Anomaly Detected or Unverified, session is born BLOCKED_BY_GATE without QVAC!
-    rep = memory_graph.get_reputation(seller_wid)
-    if rep.trust_tier in (TrustTier.RING_ANOMALY, TrustTier.UNVERIFIED) or not rep.is_trusted:
-        logger.warning(f"Session creation blocked by gate: counterparty {seller_wid} trust_tier={rep.trust_tier}")
-        gate_info = {
-            "passed": False,
-            "trust_tier": rep.trust_tier,
-            "reasons": [f"Counterparty trust check failed: {rep.trust_tier}"],
-        }
-        session = session_store.create_session(
+    def new_session(status_: str, gate_info: Optional[Dict[str, Any]] = None):
+        return session_store.create_session(
             session_id=session_id,
             asset_id=req.asset_id,
             asset_ticker=settings.DEMO_ASSET_TICKER,
@@ -648,40 +657,58 @@ def create_session(req: CreateSessionRequest):
             payment_asset_id=resolved_payment_asset_id,
             payment_ticker=settings.PAYMENT_ASSET_TICKER,
             buyer_wallet_id=req.buyer_wallet_id,
-            seller_wallet_id=seller_wid,
+            seller_wallet_id=seller_wid or req.seller_address,
             buyer_address=buyer_addr,
-            seller_address=seller_addr,
-            asking_price_usd=seller_profile.asking_price_usd,
+            seller_address=req.seller_address,
+            asking_price_usd=seller_profile.asking_price_usd if seller_profile else 0,
             buyer_max_budget_usd=req.buyer_max_ceiling_usd,
             buyer_target_usd=req.buyer_target_usd,
-            seller_min_reserve_usd=seller_profile.secret_min_reserve_usd,
+            seller_min_reserve_usd=seller_profile.secret_min_reserve_usd if seller_profile else 0,
             network_fee_sat=2_000,
             expiry_seconds=600,
-            initial_status=SessionStatus.BLOCKED_BY_GATE,
+            initial_status=status_,
             initial_gate=gate_info,
+        )
+
+    # 3. Layer-0 trust gate on both parties: rings, Unverified wallets and unknown
+    # addresses are born BLOCKED_BY_GATE without any QVAC call.
+    if not seller_wid:
+        reasons = ["Counterparty has no active desk."]
+        seller_tier = TrustTier.UNVERIFIED
+    else:
+        reasons = []
+        seller_tier = memory_graph.get_reputation(seller_wid).trust_tier
+        for who, wid in (("Counterparty", seller_wid), ("Buyer", req.buyer_wallet_id)):
+            rep = memory_graph.get_reputation(wid)
+            if rep.trust_tier in (TrustTier.RING_ANOMALY, TrustTier.UNVERIFIED) or not rep.is_trusted:
+                reasons.append(f"{who} trust check failed: {rep.trust_tier}")
+    if reasons:
+        logger.warning(f"Session creation blocked by gate: {reasons}")
+        session = new_session(
+            SessionStatus.BLOCKED_BY_GATE,
+            {"passed": False, "trust_tier": seller_tier, "reasons": reasons},
         )
         return session.to_session_view(viewer_wallet_id=req.buyer_wallet_id)
 
-    # 4. Create negotiating session
-    session = session_store.create_session(
-        session_id=session_id,
-        asset_id=req.asset_id,
-        asset_ticker=settings.DEMO_ASSET_TICKER,
-        asset_amount=req.rgb_amount,
-        payment_asset_id=resolved_payment_asset_id,
-        payment_ticker=settings.PAYMENT_ASSET_TICKER,
-        buyer_wallet_id=req.buyer_wallet_id,
-        seller_wallet_id=seller_wid,
-        buyer_address=buyer_addr,
-        seller_address=seller_addr,
-        asking_price_usd=seller_profile.asking_price_usd,
-        buyer_max_budget_usd=req.buyer_max_ceiling_usd,
-        buyer_target_usd=req.buyer_target_usd,
-        seller_min_reserve_usd=seller_profile.secret_min_reserve_usd,
-        network_fee_sat=2_000,
-        expiry_seconds=600,
-        initial_status=SessionStatus.NEGOTIATING,
-    )
+    # 4. Desk and balances (contract: 409 seller_desk_inactive / insufficient_funds)
+    if not seller_profile.seller_active or seller_profile.offered_asset_id != req.asset_id:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "seller_desk_inactive", "message": "The counterparty is not selling this asset"},
+        )
+    if _spendable(seller_wid, req.asset_id) < req.rgb_amount:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "insufficient_funds", "message": "The seller does not hold that amount"},
+        )
+    if _spendable(req.buyer_wallet_id, resolved_payment_asset_id) < req.buyer_max_ceiling_usd:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "insufficient_funds", "message": "USDT balance is below the ceiling"},
+        )
+
+    # 5. Create negotiating session
+    session = new_session(SessionStatus.NEGOTIATING)
 
     # Launch background autonomous negotiation loop
     thread = threading.Thread(target=run_negotiation_loop, args=(session_id,), daemon=True)

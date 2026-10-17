@@ -7,10 +7,15 @@ import {
   type WalletState,
 } from '@/api'
 import { AssetBadge, Avatar, Button, Card, CardContent, IconButton, Input, SegmentedControl, Sheet, TextArea, TrustBadge } from '@/components/ui'
-import { formatAssetAmount, shortAddress } from '@/lib/format'
+import { formatAssetAmount, formatUsd, shortAddress } from '@/lib/format'
 import { useWalletContext } from '@/lib/navigation'
 
 const NUMBER = /^\d*\.?\d*$/
+
+/** Lot size of a contact's public desk, in display units, to prefill the amount. */
+function deskAmountText(contact: Contact | undefined): string {
+  return contact?.desk ? String(contact.desk.offered_amount / 10 ** contact.desk.asset.precision) : ''
+}
 
 function parse(text: string): number | null {
   const value = text.trim()
@@ -39,8 +44,9 @@ export function SetupForm({ wallet, contacts, market, initialAddress, onCreated 
   const choices = contacts.filter((c) => c.address !== wallet.address)
   const [address, setAddress] = useState(initialAddress ?? '')
   const [pickerOpen, setPickerOpen] = useState(false)
-  const [assetId, setAssetId] = useState(tradable[0]?.asset_id ?? '')
-  const [amount, setAmount] = useState('')
+  const initialContact = choices.find((c) => c.address === initialAddress)
+  const [assetId, setAssetId] = useState(initialContact?.desk?.asset.asset_id ?? tradable[0]?.asset_id ?? '')
+  const [amount, setAmount] = useState(deskAmountText(initialContact))
   const [ceiling, setCeiling] = useState(String(wallet.agent_profile.buyer_max_ceiling_usd || ''))
   const [target, setTarget] = useState(String(wallet.agent_profile.buyer_target_usd || ''))
   const [prompt, setPrompt] = useState(wallet.agent_profile.buyer_ai_prompt)
@@ -48,8 +54,7 @@ export function SetupForm({ wallet, contacts, market, initialAddress, onCreated 
 
   const contact = choices.find((c) => c.address === address)
   const asset = tradable.find((a) => a.asset_id === assetId)
-  // The buyer may not hold the traded asset yet, so its precision comes from a held balance or defaults to whole units.
-  const precision = wallet.assets.find((a) => a.asset_id === assetId)?.precision ?? 0
+  const precision = asset?.precision ?? 0
 
   const edit = <T,>(set: (value: T) => void) => (value: T) => {
     set(value)
@@ -151,6 +156,11 @@ export function SetupForm({ wallet, contacts, market, initialAddress, onCreated 
             value={amount}
             suffix={asset?.ticker}
             error={show ? amountError : undefined}
+            hint={
+              contact?.desk
+                ? `Listed: ${formatAssetAmount(contact.desk.offered_amount, contact.desk.asset.precision, contact.desk.asset.ticker)} for ${formatUsd(contact.desk.asking_price_usd)}`
+                : undefined
+            }
             containerClassName="mt-3"
             onChange={(e) => edit(setAmount)(e.target.value)}
           />
@@ -212,6 +222,10 @@ export function SetupForm({ wallet, contacts, market, initialAddress, onCreated 
                 className="pressable pressable-flat flex w-full items-center gap-3 p-3 text-left"
                 onClick={() => {
                   edit(setAddress)(c.address)
+                  if (c.desk) {
+                    setAssetId(c.desk.asset.asset_id)
+                    setAmount(deskAmountText(c))
+                  }
                   setPickerOpen(false)
                 }}
               >

@@ -13,8 +13,8 @@ export function SideNav() {
 
   return (
     <nav aria-label="Views" className="surface-glass flex w-52 shrink-0 flex-col gap-1 self-start rounded-card p-2 shadow-card">
-      {NAV_ITEMS.map(({ view, label, icon: Icon }) => {
-        const active = current.view === view
+      {NAV_ITEMS.map(({ view, label, icon: Icon, matches }) => {
+        const active = matches.includes(current.view)
         return (
           <button
             key={view}

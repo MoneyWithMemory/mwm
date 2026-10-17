@@ -13,8 +13,8 @@ import {
 // Direct imports (not '@/views'): the views barrel also exports SplitView,
 // which mounts WalletPane, and going through it would create an import cycle.
 import { ContactsView } from '@/views/contacts/ContactsView'
+import { DealsView } from '@/views/deals/DealsView'
 import { ShopView } from '@/views/shop/ShopView'
-import { SellerDeskView } from '@/views/seller-desk/SellerDeskView'
 import { TradeView } from '@/views/trade/TradeView'
 import { WalletView } from '@/views/wallet/WalletView'
 import { BottomNav } from './BottomNav'
@@ -24,7 +24,7 @@ const VIEWS: Record<ViewName, ComponentType> = {
   wallet: WalletView,
   trade: TradeView,
   shop: ShopView,
-  'seller-desk': SellerDeskView,
+  deals: DealsView,
   contacts: ContactsView,
 }
 

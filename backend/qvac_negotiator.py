@@ -32,7 +32,7 @@ class NegotiationTurn(BaseModel):
 
 class NegotiationContext(BaseModel):
     session_id: str
-    round_number: int  # 1 to 4
+    round_number: int  # 1 to max_rounds
     role: str  # "buyer" | "seller"
     wallet_id: str
     wallet_label: str
@@ -47,6 +47,7 @@ class NegotiationContext(BaseModel):
     current_ask_usd: Optional[int] = None
     your_previous_offer_usd: Optional[int] = None
     history: List[NegotiationTurn] = Field(default_factory=list)
+    max_rounds: int = Field(default_factory=lambda: settings.NEGOTIATION_MAX_ROUNDS)
 
 def leak_guard(public_message: str, secret_limit_usd: int) -> Tuple[bool, str]:
     """
@@ -81,6 +82,7 @@ def rationality_guard(
     current_ask_usd: Optional[int],
     your_previous_offer_usd: Optional[int],
     round_number: int,
+    max_rounds: Optional[int] = None,
 ) -> Tuple[str, int]:
     """
     Enforces game-theoretic rationality and inviolable mathematical bounds:
@@ -134,9 +136,9 @@ def rationality_guard(
         else:
             can_accept = current_bid_usd is not None and current_bid_usd >= secret_limit_usd
             counter_price = current_bid_usd
-        # The seller's round-4 turn is the last one: walking away from a bid at or above
-        # the reserve would end in "No agreement" with nothing gained.
-        final_turn = role == "seller" and round_number >= 4
+        # The seller's turn in the last round ends the negotiation: walking away from a bid at
+        # or above the reserve would end in "No agreement" with nothing gained.
+        final_turn = role == "seller" and round_number >= (max_rounds or settings.NEGOTIATION_MAX_ROUNDS)
         if can_accept and (wants_accept or final_turn):
             action = "ACCEPT"
             offer = counter_price
@@ -174,6 +176,7 @@ def build_system_prompt(ctx: NegotiationContext) -> str:
     """Generate professional, game-theoretic tactical instructions for local AI."""
     role_desc = "Buyer" if ctx.role == "buyer" else "Seller"
     target_usd = ctx.buyer_target_usd or 120
+    closing_round = max(ctx.max_rounds - 1, 1)
     action_goal = (
         f"You want to buy {ctx.asset_amount} {ctx.asset_ticker} paying in {ctx.payment_ticker}. "
         f"Your target valuation is {target_usd} {ctx.payment_ticker}. "
@@ -193,15 +196,15 @@ Goal: {action_goal}
 
 CRITICAL RULES:
 1. Confidentiality: NEVER disclose your secret budget/reserve limit to the counterparty in your public_message.
-2. Strategy: This is Round {ctx.round_number} of 4.
+2. Strategy: this is round {ctx.round_number} of at most {ctx.max_rounds}. The negotiation ends without a deal after round {ctx.max_rounds}, or earlier if both sides stop moving.
    - For Buyer:
-     * Round 1: Open near your target valuation ({target_usd} {ctx.payment_ticker}). NEVER open at your ceiling {ctx.secret_limit_usd}!
-     * Round 2-3: Make small, calibrated concessions (+3 to +5 {ctx.payment_ticker} max per round) towards agreement. Do NOT jump to your ceiling.
-     * Round 4: Final round. Offer a firm closing counteroffer (e.g. {min(target_usd + 10, ctx.secret_limit_usd)} {ctx.payment_ticker}) or ACCEPT if seller ask is acceptable.
+     * Round 1: open near your target valuation ({target_usd} {ctx.payment_ticker}). NEVER open at your ceiling {ctx.secret_limit_usd}!
+     * Following rounds: make small, calibrated concessions (+2 to +5 {ctx.payment_ticker} per round) to close the gap gradually. Do NOT jump to your ceiling.
+     * From round {closing_round}: work to close: ACCEPT the seller's ask if it is within your ceiling, otherwise make your best closing offer.
    - For Seller:
-     * Round 1: Open near your asking price (e.g. 148-150 {ctx.payment_ticker}).
-     * Round 2-3: Concede gradually (-5 to -8 {ctx.payment_ticker} per round) towards buyer.
-     * Round 4: Final round. Offer closing compromise around 128-132 {ctx.payment_ticker}, or ACCEPT if buyer bid >= reserve {ctx.secret_limit_usd}.
+     * Round 1: open at your asking price ({ctx.current_ask_usd or 150} {ctx.payment_ticker}).
+     * Following rounds: concede gradually (-3 to -8 {ctx.payment_ticker} per round) towards the buyer.
+     * From round {closing_round}: work to close: ACCEPT the buyer's bid if it is at or above your reserve {ctx.secret_limit_usd}, otherwise make your best closing offer.
 3. You must output ONLY a valid JSON object matching this exact structure:
 {{
   "private_thought": "<1-2 sentences of cold strategic assessment: estimated counterparty stance and rationale>",
@@ -219,7 +222,7 @@ def build_user_prompt(ctx: NegotiationContext) -> str:
         )
     history_str = "\n".join(history_lines) if history_lines else "No previous rounds."
 
-    return f"""Current Round: {ctx.round_number} / 4.
+    return f"""Current Round: {ctx.round_number} / {ctx.max_rounds}.
 Current Market Spread:
 - Current Buyer Bid: {ctx.current_bid_usd if ctx.current_bid_usd is not None else 'None'} {ctx.payment_ticker}
 - Current Seller Ask: {ctx.current_ask_usd if ctx.current_ask_usd is not None else 'None'} {ctx.payment_ticker}
@@ -232,87 +235,62 @@ Evaluate the state, formulate your private tactical thought, and output your JSO
 
 def mock_negotiate(ctx: NegotiationContext) -> Dict[str, Any]:
     """
-    Intelligent simulated negotiation generator.
-    Produces highly realistic, tactical turns for development and tests without requiring a running QVAC daemon.
+    Intelligent simulated negotiation generator for development and tests without a QVAC daemon:
+    opens in round 1, concedes every round and closes in the last round (ctx.max_rounds).
     """
+    final_round = ctx.round_number >= ctx.max_rounds
     if ctx.role == "buyer":
         target = ctx.buyer_target_usd or 120
-        open_bid = max(target - 10, 100)
-        base_bid = ctx.your_previous_offer_usd or open_bid
         current_ask = ctx.current_ask_usd or 150
-
         if ctx.round_number == 1:
-            offer = target
+            action, offer = "OFFER", target
             thought = f"Opening near target valuation ({target} USD) to anchor the spread conservatively."
             msg = f"Considering secondary market depth, I open with {offer} {ctx.payment_ticker} for immediate atomic settlement."
-            action = "OFFER"
-        elif ctx.round_number == 2:
-            offer = min(base_bid + 5, ctx.secret_limit_usd)
-            thought = f"Seller countered at {current_ask}. Raising bid slightly to {offer} to signal constructive intent while holding margin."
-            msg = f"I appreciate the counter. I can step up to {offer} {ctx.payment_ticker} given the guaranteed zero-counterparty-risk swap."
-            action = "OFFER"
-        elif ctx.round_number == 3:
-            offer = min(base_bid + 5, ctx.secret_limit_usd)
-            if current_ask is not None and offer >= current_ask and current_ask <= ctx.secret_limit_usd:
-                action = "ACCEPT"
-                offer = current_ask
+        elif final_round:
+            if current_ask <= ctx.secret_limit_usd:
+                action, offer = "ACCEPT", current_ask
+                thought = f"Final round: seller ask {current_ask} is within ceiling {ctx.secret_limit_usd}. Accepting to avoid breakdown."
+                msg = f"Final round agreement confirmed at {offer} {ctx.payment_ticker}."
+            else:
+                action, offer = "OFFER", ctx.secret_limit_usd
+                thought = "Final round: pushing to absolute budget ceiling as take-it-or-leave-it."
+                msg = f"This is my final best offer: {offer} {ctx.payment_ticker}."
+        else:
+            offer = min((ctx.your_previous_offer_usd or target) + 5, ctx.secret_limit_usd)
+            if offer >= current_ask and current_ask <= ctx.secret_limit_usd:
+                action, offer = "ACCEPT", current_ask
                 thought = f"Seller's ask of {current_ask} is within budget. Executing agreement."
                 msg = f"Your ask of {current_ask} {ctx.payment_ticker} is acceptable. Let's proceed to cryptographic signatures."
             else:
                 action = "OFFER"
-                thought = f"Approaching ceiling limit. Pushing to {offer} as an aggressive closing anchor."
-                msg = f"I can offer {offer} {ctx.payment_ticker}. This represents fair value for an illiquid lot."
-        else:
-            # Round 4: closing
-            if current_ask is not None and current_ask <= ctx.secret_limit_usd:
-                action = "ACCEPT"
-                offer = current_ask
-                thought = f"Final round: Seller ask {current_ask} is within ceiling {ctx.secret_limit_usd}. Accepting to avoid breakdown."
-                msg = f"Final round agreement confirmed at {offer} {ctx.payment_ticker}."
-            else:
-                action = "OFFER"
-                offer = ctx.secret_limit_usd
-                thought = "Final round: Pushing to absolute budget ceiling as take-it-or-leave-it."
-                msg = f"This is my final best offer: {offer} {ctx.payment_ticker}."
+                thought = f"Seller countered at {current_ask}. Raising bid to {offer} to signal constructive intent while holding margin."
+                msg = f"I appreciate the counter. I can step up to {offer} {ctx.payment_ticker} given the guaranteed zero-counterparty-risk swap."
 
     else:  # seller
-        # Seller: starts ~150, moves down towards reserve 110
-        base_ask = ctx.your_previous_offer_usd or 150
         current_bid = ctx.current_bid_usd or 95
-
         if ctx.round_number == 1:
-            offer = 150
-            thought = "Establishing public ask at 150 to anchor premium value for the whole lot."
+            action, offer = "OFFER", ctx.current_ask_usd or 150
+            thought = f"Establishing public ask at {offer} to anchor premium value for the whole lot."
             msg = f"Offering lot of {ctx.asset_amount} {ctx.asset_ticker} at {offer} {ctx.payment_ticker}."
-            action = "OFFER"
-        elif ctx.round_number == 2:
-            offer = max(base_ask - 15, ctx.secret_limit_usd)
-            thought = f"Buyer opened at {current_bid}. Conceding down to {offer} to encourage rapid deal closure."
-            msg = f"I am willing to meet partway at {offer} {ctx.payment_ticker} for a clean transaction."
-            action = "OFFER"
-        elif ctx.round_number == 3:
-            offer = max(base_ask - 10, ctx.secret_limit_usd)
+        elif final_round:
+            if current_bid >= ctx.secret_limit_usd:
+                action, offer = "ACCEPT", current_bid
+                thought = f"Final round: Buyer bid of {current_bid} meets reserve {ctx.secret_limit_usd}. Sealing agreement."
+                msg = f"Accepted at {offer} {ctx.payment_ticker} in final round."
+            else:
+                action, offer = "OFFER", ctx.secret_limit_usd
+                thought = "Final round: Offering absolute reserve price as last chance."
+                msg = f"Final firm ask is {offer} {ctx.payment_ticker}."
+        else:
+            offer = max((ctx.your_previous_offer_usd or ctx.current_ask_usd or 150) - 10, ctx.secret_limit_usd)
             if current_bid >= offer:
-                action = "ACCEPT"
-                offer = current_bid
+                action, offer = "ACCEPT", current_bid
                 thought = f"Buyer bid {current_bid} satisfies minimum reserve. Accepting."
                 msg = f"Agreed at {offer} {ctx.payment_ticker}. Locking terms."
             else:
                 action = "OFFER"
-                thought = f"Narrowing spread to {offer}. Staying safely above reserve {ctx.secret_limit_usd}."
+                thought = f"Buyer is at {current_bid}. Narrowing spread to {offer} while staying above reserve."
                 msg = f"My updated ask is {offer} {ctx.payment_ticker}."
-        else:
-            # Round 4
-            if current_bid >= ctx.secret_limit_usd:
-                action = "ACCEPT"
-                offer = current_bid
-                thought = f"Final round: Buyer bid of {current_bid} exceeds reserve {ctx.secret_limit_usd}. Sealing agreement."
-                msg = f"Accepted at {offer} {ctx.payment_ticker} in final round."
-            else:
-                action = "OFFER"
-                offer = ctx.secret_limit_usd
-                thought = "Final round: Offering absolute reserve price as last chance."
-                msg = f"Final firm ask is {offer} {ctx.payment_ticker}."
 
     return {
         "private_thought": thought,
@@ -386,6 +364,7 @@ class QvacNegotiator:
             current_ask_usd=ctx.current_ask_usd,
             your_previous_offer_usd=ctx.your_previous_offer_usd,
             round_number=ctx.round_number,
+            max_rounds=ctx.max_rounds,
         )
 
         # 3. Run Leak Guard (privacy & secret integer protection)

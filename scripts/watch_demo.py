@@ -73,11 +73,14 @@ class Watcher:
         other = self.label_by_address.get(view["counterparty_address"]) or view["counterparty_address"][:12] + "…"
         buyer, seller = (me, other) if view["my_role"] == "buyer" else (other, me)
         parts = [f"{buyer} → {seller}", f"{view['rgb_amount']:,} {view['asset']['ticker']}"]
+        if view.get("queue_position"):
+            parts.append(f"queued #{view['queue_position']}")
         if view["rounds"]:
             r = view["rounds"][-1]
             buyer_part = f"{r['buyer_action'] or '…'} {r['buyer_offer_usd'] if r['buyer_offer_usd'] is not None else ''}"
             seller_part = f"{r['seller_action'] or '…'} {r['seller_offer_usd'] if r['seller_offer_usd'] is not None else ''}"
-            parts.append(f"R{r['n']} buyer {buyer_part.strip()} · seller {seller_part.strip()}")
+            cap = f"/{view['max_rounds']}" if view.get("max_rounds") else ""
+            parts.append(f"R{r['n']}{cap} buyer {buyer_part.strip()} · seller {seller_part.strip()}")
         if view["thinking"]:
             parts.append(f"thinking: {view['thinking']}")
         if view["agreed_price_usd"]:

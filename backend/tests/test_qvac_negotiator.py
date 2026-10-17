@@ -239,9 +239,12 @@ def test_accept_is_recorded_at_the_counterparty_price():
 
 
 def test_seller_closes_an_in_range_bid_on_the_final_turn():
-    assert rationality_guard("seller", "OFFER", 128, 110, 124, 132, 132, 4) == ("ACCEPT", 124)
-    assert rationality_guard("seller", "OFFER", 128, 110, 124, 132, 132, 3) == ("OFFER", 128)
-    assert rationality_guard("seller", "OFFER", 128, 110, 105, 132, 132, 4) == ("OFFER", 128)
+    assert rationality_guard("seller", "OFFER", 128, 110, 124, 132, 132, 4, max_rounds=4) == ("ACCEPT", 124)
+    assert rationality_guard("seller", "OFFER", 128, 110, 124, 132, 132, 3, max_rounds=4) == ("OFFER", 128)
+    assert rationality_guard("seller", "OFFER", 128, 110, 105, 132, 132, 4, max_rounds=4) == ("OFFER", 128)
+    # With a cap of 10, round 4 is not the last turn any more.
+    assert rationality_guard("seller", "OFFER", 128, 110, 124, 132, 132, 4, max_rounds=10) == ("OFFER", 128)
+    assert rationality_guard("seller", "OFFER", 128, 110, 124, 132, 132, 10, max_rounds=10) == ("ACCEPT", 124)
 
 
 def test_missing_offer_from_model_never_publishes_the_secret(monkeypatch):

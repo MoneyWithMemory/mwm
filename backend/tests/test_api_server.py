@@ -223,11 +223,11 @@ def test_session_signature_hash_mismatch_returns_409(monkeypatch):
     assert sess_after_buyer["buyer_signed"] is True
     assert sess_after_buyer["seller_signed"] is False
 
-def test_negotiation_no_agreement_blocked_after_4_rounds(monkeypatch):
+def test_impossible_negotiation_stops_when_offers_stall(monkeypatch):
     _fund_wallets(monkeypatch)
     """
-    Verify that if buyer ceiling < seller reserve, 4 rounds elapse without agreement
-    and the session transitions to BLOCKED_BY_GATE with reason 'No agreement within 4 rounds'.
+    Buyer ceiling below seller reserve: once both sides stop moving for two rounds the session
+    is BLOCKED_BY_GATE ('No agreement: the offers stopped moving.'), well before the round cap.
     """
     monkeypatch.setattr("backend.qvac_negotiator.negotiator.use_mock", True)
 
@@ -253,9 +253,8 @@ def test_negotiation_no_agreement_blocked_after_4_rounds(monkeypatch):
     assert resp.status_code == 200
     sess_id = resp.json()["session_id"]
 
-    # Poll until 4 rounds finish
     final_sess = None
-    for _ in range(50):
+    for _ in range(100):
         time.sleep(0.1)
         resp_sess = client.get(f"/api/sessions/{sess_id}?wallet_id=wallet_a")
         final_sess = resp_sess.json()
@@ -266,7 +265,8 @@ def test_negotiation_no_agreement_blocked_after_4_rounds(monkeypatch):
     assert final_sess["state"] == "BLOCKED_BY_GATE"
     assert final_sess["gate"] is not None
     assert final_sess["gate"]["passed"] is False
-    assert "No agreement within 4 rounds" in final_sess["gate"]["reasons"]
+    assert final_sess["gate"]["reasons"] == ["No agreement: the offers stopped moving."]
+    assert 3 <= len(final_sess["rounds"]) < final_sess["max_rounds"]
 
 
 def test_session_cancellation(monkeypatch):
@@ -500,3 +500,62 @@ def test_agent_search_skips_rings_and_opens_a_session(monkeypatch):
     assert client.post("/api/shop/agent_search", json={**req, "rgb_amount": 5_000_000}).json()["code"] == "no_match"
     resp = client.post("/api/shop/agent_search", json={**req, "buyer_max_ceiling_usd": 40, "buyer_target_usd": 30})
     assert (resp.status_code, resp.json()["code"]) == (404, "no_match")
+
+
+def test_negotiation_ends_at_the_round_cap(monkeypatch):
+    from backend.qvac_negotiator import NegotiationTurn
+
+    _fund_wallets(monkeypatch)
+    monkeypatch.setattr("backend.api_server.settings.NEGOTIATION_MAX_ROUNDS", 3)
+
+    def moving_but_never_crossing(ctx):
+        offer = 100 + ctx.round_number if ctx.role == "buyer" else 200 - ctx.round_number
+        return NegotiationTurn(
+            speaker_wallet_id=ctx.wallet_id, speaker_label=ctx.wallet_label, action="OFFER",
+            offer_usd=offer, public_message="Moving.", private_thought="Moving.", round_number=ctx.round_number,
+        )
+
+    monkeypatch.setattr("backend.api_server.negotiator.generate_turn", moving_but_never_crossing)
+    client.put("/api/wallets/wallet_b/agent_profile", json={"seller_active": True, "asking_price_usd": 150, "secret_min_reserve_usd": 110})
+    wallets = client.get("/api/wallets").json()
+    seller_addr = next(w["address"] for w in wallets if w["wallet_id"] == "wallet_b")
+    sess_id = client.post("/api/sessions", json=_session_request(seller_addr)).json()["session_id"]
+
+    final = None
+    for _ in range(100):
+        time.sleep(0.1)
+        final = client.get(f"/api/sessions/{sess_id}?wallet_id=wallet_a").json()
+        if final["state"] == "BLOCKED_BY_GATE":
+            break
+    assert final["gate"]["reasons"] == ["No agreement within 3 rounds."]
+    assert len(final["rounds"]) == 3 and final["max_rounds"] == 3
+
+
+def test_queued_negotiations_report_their_position(monkeypatch):
+    import threading
+    from backend.negotiation_queue import NegotiationQueue
+
+    release = threading.Event()
+    queue = NegotiationQueue(lambda sid: release.wait(10), concurrency=1)
+    monkeypatch.setattr("backend.api_server.negotiation_queue", queue)
+    _fund_wallets(monkeypatch)
+    client.put("/api/wallets/wallet_b/agent_profile", json={"seller_active": True})
+    wallets = client.get("/api/wallets").json()
+    seller_addr = next(w["address"] for w in wallets if w["wallet_id"] == "wallet_b")
+
+    first = client.post("/api/sessions", json=_session_request(seller_addr)).json()
+    second = client.post("/api/sessions", json=_session_request(seller_addr)).json()
+    for _ in range(50):
+        if queue.snapshot()["running"] == [first["session_id"]]:
+            break
+        time.sleep(0.02)
+    assert client.get("/api/negotiations/queue").json() == {
+        "running": [first["session_id"]], "waiting": [second["session_id"]],
+    }
+    view = client.get(f"/api/sessions/{second['session_id']}?wallet_id=wallet_a").json()
+    assert view["queue_position"] == 1 and view["state"] == "NEGOTIATING" and view["rounds"] == []
+    assert client.get(f"/api/sessions/{first['session_id']}?wallet_id=wallet_a").json()["queue_position"] is None
+
+    release.set()
+    for sid in (first["session_id"], second["session_id"]):
+        client.post(f"/api/sessions/{sid}/cancel", json={"wallet_id": "wallet_a"})

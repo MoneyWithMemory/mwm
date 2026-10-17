@@ -76,6 +76,8 @@ Variabili lette dal backend (`backend/config.py`):
 | `QVAC_MODEL` | `buyer-agent` | Nome del modello in `qvac.config.json` |
 | `QVAC_MOCK` | `0` | `1` = negoziatore mock deterministico senza chiamate a QVAC (`/api/health` riporta `qvac: true`) |
 | `MWM_DATA_DIR` | `~/.mwm/data` | Wallet rgb-lib: `<wallet_id>/keys.json` + database |
+| `NEGOTIATION_MAX_ROUNDS` | `10` | Tetto di sicurezza sui round di trattativa |
+| `NEGOTIATION_CONCURRENCY` | `1` | Trattative che usano QVAC contemporaneamente; le altre aspettano in coda |
 | `ELECTRUM_URL`, `PROXY_URL` | `127.0.0.1:50001`, `http://127.0.0.1:3000/json-rpc` | Servizi del Passo 1 |
 
 Se QVAC non risponde durante una negoziazione, il backend passa al mock senza errori per il frontend: resta solo un warning nei log (`QVAC live call failed ... Falling back to internal mock`).
@@ -173,5 +175,7 @@ tail -f ~/.mwm/logs/backend.log          # dettaglio del backend: turni QVAC e i
    Con `vanilla_keychain=0` il ramo vanilla è `m/84'/1'/0'/0/*`, quindi il primo indirizzo restituito per un wallet nuovo è `m/84'/1'/0'/0/0`, lo stesso che Tether WDK deriva nel browser dalla stessa mnemonic (`POST /api/wallets/create`). `get_address()` di rgb-lib avanza di un indice a ogni chiamata, anche tra un riavvio e l'altro. Il backend lo memorizza per processo, quindi dopo un riavvio i wallet seed mostrano l'indirizzo successivo dello stesso wallet.
 6. **Stato su disco e in memoria**:
    Su disco ci sono solo i wallet rgb-lib in `$MWM_DATA_DIR` (le mnemonic sono in chiaro in `keys.json`, con permessi 0600: solo regtest). Sessioni, richieste dello Shop, profili agente, alias, activity, history, memory graph e prezzo PEPE vivono in memoria e si azzerano a ogni riavvio.
-7. **Shop**:
+7. **Trattativa e coda**:
+   I round proseguono fino all'accordo, con un tetto di sicurezza (`NEGOTIATION_MAX_ROUNDS`, default 10). La trattativa si chiude prima, senza accordo, se nessuna delle due parti si muove per due round (`No agreement: the offers stopped moving.`). Nell'ultimo round il venditore accetta un'offerta pari o superiore alla riserva. Le trattative entrano in una coda in ordine di arrivo (`backend/negotiation_queue.py`), una alla volta perché QVAC serve un solo modello locale: chi aspetta resta `NEGOTIATING` senza round, con `queue_position` nella `SessionView`. `GET /api/negotiations/queue` elenca le trattative in corso e in attesa. Quando arriva il suo turno, se il venditore non ha più il lotto la sessione va in `BLOCKED_BY_GATE`.
+8. **Shop**:
    Le vendite (`sell`) sono i Seller Desk attivi, costruiti al volo dai profili agente con i soli campi pubblici; le richieste (`want`) stanno in `backend/shop.py`. `POST /api/shop/agent_search` sceglie il desk più conveniente per la quantità richiesta, scarta i ring e quelli sopra 1,5 volte il tetto del compratore, poi crea la sessione con la stessa logica di `POST /api/sessions` (stesso gate, stessi errori).

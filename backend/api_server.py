@@ -17,6 +17,7 @@ Key Endpoints:
 - GET  /api/sessions/{session_id}?wallet_id={wallet_id}
 - POST /api/sessions/{session_id}/sign
 - POST /api/sessions/{session_id}/cancel
+- GET  /api/negotiations/queue
 - GET  /api/shop?wallet_id=&kind=&asset_id=&q=
 - POST /api/shop/wants
 - POST /api/shop/{listing_id}/close
@@ -27,7 +28,7 @@ import time
 import uuid
 import logging
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request, Query, status
@@ -50,6 +51,7 @@ from backend.session_store import session_store, SessionStatus
 from backend.rgb_swap_engine import RgbSwapEngine, WalletManager
 from backend.market import market_manager
 from backend.shop import shop_store, Want
+from backend.negotiation_queue import NegotiationQueue
 from backend.wallet_state import (
     wallet_state_manager,
     AgentProfile,
@@ -390,16 +392,23 @@ def get_contacts(wallet_id: str):
 
 def run_negotiation_loop(session_id: str) -> None:
     """
-    Executes autonomous negotiation rounds (1 to 4) between Buyer and Seller.
-    Enforces rationality bounds, leak guard, and 4-round agreement cut-off.
+    Executes autonomous negotiation rounds between Buyer and Seller until agreement, a stall,
+    or the NEGOTIATION_MAX_ROUNDS safety cap. Enforces rationality bounds and the leak guard.
     """
     session = session_store.get_session(session_id)
     if not session or session.status != SessionStatus.NEGOTIATING:
         return
 
-    logger.info(f"Starting autonomous negotiation loop for session {session_id}...")
+    # A queued negotiation may start after the lot was sold in another session.
+    if _spendable(session.seller_wallet_id, session.asset_id) < session.asset_amount:
+        session_store.set_blocked(session_id, "The seller no longer holds this lot.", trust_tier="High Authenticity")
+        return
 
-    for r_num in range(1, 5):
+    max_rounds = settings.NEGOTIATION_MAX_ROUNDS
+    offers_per_round: List[Tuple[int, int]] = []
+    logger.info(f"Starting autonomous negotiation loop for session {session_id} (max {max_rounds} rounds)...")
+
+    for r_num in range(1, max_rounds + 1):
         # Refresh session state
         session = session_store.get_session(session_id)
         if not session or session.status != SessionStatus.NEGOTIATING:
@@ -421,6 +430,7 @@ def run_negotiation_loop(session_id: str) -> None:
         buyer_ctx = NegotiationContext(
             session_id=session_id,
             round_number=r_num,
+            max_rounds=max_rounds,
             role="buyer",
             wallet_id=session.buyer_wallet_id,
             wallet_label="Wallet A",
@@ -466,6 +476,7 @@ def run_negotiation_loop(session_id: str) -> None:
         seller_ctx = NegotiationContext(
             session_id=session_id,
             round_number=r_num,
+            max_rounds=max_rounds,
             role="seller",
             wallet_id=session.seller_wallet_id,
             wallet_label="Wallet B",
@@ -500,12 +511,34 @@ def run_negotiation_loop(session_id: str) -> None:
 
         session.thinking = None
 
-    # End of Round 4 without agreement -> BLOCKED_BY_GATE
-    logger.info(f"Session {session_id}: 4 rounds completed without agreement. Transitioning to BLOCKED_BY_GATE.")
+        # Two full rounds in which neither side moved: the negotiation has stalled.
+        offers_per_round.append((buyer_turn.offer_usd, seller_turn.offer_usd))
+        if len(offers_per_round) >= 3 and len(set(offers_per_round[-3:])) == 1:
+            logger.info(f"Session {session_id}: offers unchanged for two rounds, stopping at round {r_num}.")
+            session_store.set_blocked(session_id, "No agreement: the offers stopped moving.", trust_tier="High Authenticity")
+            return
+
+    logger.info(f"Session {session_id}: {max_rounds} rounds completed without agreement. Transitioning to BLOCKED_BY_GATE.")
     session = session_store.get_session(session_id)
     if session:
         session.thinking = None
-    session_store.set_blocked(session_id, "No agreement within 4 rounds", trust_tier="High Authenticity")
+    session_store.set_blocked(session_id, f"No agreement within {max_rounds} rounds.", trust_tier="High Authenticity")
+
+def _run_negotiation_safely(session_id: str) -> None:
+    try:
+        run_negotiation_loop(session_id)
+    except Exception as exc:
+        logger.exception(f"Negotiation loop crashed for session {session_id}")
+        session_store.set_failed(session_id, f"Negotiation error: {exc}")
+
+negotiation_queue = NegotiationQueue(_run_negotiation_safely, concurrency=settings.NEGOTIATION_CONCURRENCY)
+
+def _session_view(session, viewer_wallet_id: str) -> Dict[str, Any]:
+    view = session.to_session_view(viewer_wallet_id=viewer_wallet_id)
+    waiting = session.status == SessionStatus.NEGOTIATING
+    view["queue_position"] = negotiation_queue.position(session.session_id) if waiting else None
+    view["max_rounds"] = settings.NEGOTIATION_MAX_ROUNDS
+    return view
 
 def finalize_agreement(session_id: str, agreed_price_usd: int) -> None:
     """Prepares canonical terms, evaluates deterministic gate, and moves session to AWAITING_SIGNATURES."""
@@ -740,7 +773,7 @@ def create_session(req: CreateSessionRequest):
             SessionStatus.BLOCKED_BY_GATE,
             {"passed": False, "trust_tier": seller_tier, "reasons": reasons},
         )
-        return session.to_session_view(viewer_wallet_id=req.buyer_wallet_id)
+        return _session_view(session, req.buyer_wallet_id)
 
     # 4. Desk and balances (contract: 409 seller_desk_inactive / insufficient_funds)
     if not seller_profile.seller_active or seller_profile.offered_asset_id != req.asset_id:
@@ -762,16 +795,20 @@ def create_session(req: CreateSessionRequest):
     # 5. Create negotiating session
     session = new_session(SessionStatus.NEGOTIATING)
 
-    # Launch background autonomous negotiation loop
-    thread = threading.Thread(target=run_negotiation_loop, args=(session_id,), daemon=True)
-    thread.start()
+    # Negotiations share one local model: they run in arrival order through the queue.
+    negotiation_queue.submit(session_id)
 
-    return session.to_session_view(viewer_wallet_id=req.buyer_wallet_id)
+    return _session_view(session, req.buyer_wallet_id)
 
 @app.get("/api/sessions")
 def list_sessions(wallet_id: str = Query(...)):
     sessions = session_store.list_sessions_for(wallet_id)
     return [s.to_summary(viewer_wallet_id=wallet_id) for s in sessions]
+
+@app.get("/api/negotiations/queue")
+def get_negotiation_queue():
+    """Negotiations using QVAC now, and those waiting in arrival order."""
+    return negotiation_queue.snapshot()
 
 @app.get("/api/sessions/{session_id}")
 def get_session(session_id: str, wallet_id: str = Query(...)):
@@ -787,7 +824,7 @@ def get_session(session_id: str, wallet_id: str = Query(...)):
             status_code=403,
             detail={"code": "forbidden", "message": "Wallet is not part of this session"},
         )
-    return session.to_session_view(viewer_wallet_id=wallet_id)
+    return _session_view(session, wallet_id)
 
 @app.post("/api/sessions/{session_id}/sign")
 def sign_session(session_id: str, req: SignSessionRequest):
@@ -847,7 +884,7 @@ def sign_session(session_id: str, req: SignSessionRequest):
         thread = threading.Thread(target=run_settlement_worker, args=(session_id,), daemon=True)
         thread.start()
 
-    return session.to_session_view(viewer_wallet_id=req.wallet_id)
+    return _session_view(session, req.wallet_id)
 
 @app.post("/api/sessions/{session_id}/cancel")
 def cancel_session(session_id: str, req: CancelSessionRequest):
@@ -874,12 +911,13 @@ def cancel_session(session_id: str, req: CancelSessionRequest):
 
     try:
         session_store.cancel_session(session_id, req.wallet_id)
+        negotiation_queue.discard(session_id)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "not_cancellable", "message": f"Session is {session.status}"},
         )
-    return session.to_session_view(viewer_wallet_id=req.wallet_id)
+    return _session_view(session, req.wallet_id)
 
 # ── Shop ────────────────────────────────────────────────────────────
 

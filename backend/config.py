@@ -24,6 +24,10 @@ class Settings(BaseModel):
     QVAC_TIMEOUT: int = Field(default_factory=lambda: int(os.getenv("QVAC_TIMEOUT", "120")))
     QVAC_MOCK: bool = Field(default_factory=lambda: os.getenv("QVAC_MOCK", "0").lower() in ("1", "true", "yes"))
 
+    # Negotiation: safety cap on rounds, and how many negotiations may use QVAC at once
+    NEGOTIATION_MAX_ROUNDS: int = Field(default_factory=lambda: int(os.getenv("NEGOTIATION_MAX_ROUNDS", "10")))
+    NEGOTIATION_CONCURRENCY: int = Field(default_factory=lambda: int(os.getenv("NEGOTIATION_CONCURRENCY", "1")))
+
     # Regtest & Bitcoin / Electrs
     REGTEST_SCRIPT: str = Field(
         default_factory=lambda: os.getenv("REGTEST_SCRIPT", str(REPO_ROOT / "scripts" / "regtest.sh"))

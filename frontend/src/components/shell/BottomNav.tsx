@@ -6,7 +6,7 @@ import { NAV_ITEMS } from './navItems'
 
 /**
  * Floating tab bar island, centered in its pane (each split pane has its own).
- * 4 tabs in order: Wallet, Trade, Seller Desk, Contacts.
+ * 5 tabs in order: Wallet, Trade, Shop, Seller Desk, Contacts.
  * Sits below overlay host (z-30 < z-40), hides on scroll down, returns on scroll up.
  * Clickable across 100% of the pill surface with zero dead zones via ::before hit targets.
  */
@@ -18,7 +18,7 @@ export function BottomNav({ hidden = false }: { hidden?: boolean }) {
       <nav
         aria-label="Views"
         data-hidden={hidden}
-        className="nav-island surface-glass pointer-events-auto relative grid w-full max-w-[20.5rem] grid-cols-4 gap-1 rounded-full border border-separator p-1.5 shadow-overlay overflow-visible"
+        className="nav-island surface-glass pointer-events-auto relative grid w-full max-w-[22.5rem] auto-cols-fr grid-flow-col gap-1 rounded-full border border-separator p-1.5 shadow-overlay overflow-visible"
       >
         {NAV_ITEMS.map(({ view, label, icon: Icon }) => {
           const active = current.view === view

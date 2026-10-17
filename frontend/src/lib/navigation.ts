@@ -11,6 +11,7 @@ export type ViewParams = {
   wallet: undefined
   /** counterpartyId is the counterparty's address (Contact.address); sessionId opens an existing session. */
   trade: { counterpartyId?: string; sessionId?: string } | undefined
+  shop: undefined
   'seller-desk': undefined
   contacts: undefined
 }

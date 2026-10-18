@@ -1,0 +1,2014 @@
+{
+  "meta": {
+    "script": "scripts/eval_negotiation.py",
+    "mode": "qvac",
+    "set": "demo",
+    "seed": null,
+    "runs_requested": 3,
+    "started_at": "2026-10-18T05:46:45+0200",
+    "git": {
+      "commit": "0ac7ca697780b6767b76caf3e0e13251f5f0141d",
+      "subject": "feat(ui): one \"Low reliability\" label with a (?), and your own reliability in Contacts",
+      "changed_paths": [
+        "M BACKEND_HANDOVER.md",
+        " M backend/api_server.py",
+        " M backend/config.py",
+        " M backend/deterministic_gate.py",
+        " M backend/market.py",
+        " M backend/memory_graph.py",
+        " M backend/qvac_negotiator.py",
+        " M backend/rgb_swap_engine.py",
+        " M backend/session_store.py",
+        " M backend/tests/test_api_server.py",
+        " M backend/tests/test_gate_and_trust.py",
+        " M backend/tests/test_qvac_negotiator.py",
+        " M backend/tests/test_rgb_swap_engine.py",
+        " M backend/wallet_state.py",
+        " M scripts/demo_reset.sh",
+        "?? backend/advisor.py",
+        "?? backend/tests/test_advisor.py",
+        "?? backend/tests/test_negotiator_hardening.py",
+        "?? backend/tests/test_trust_score.py",
+        "?? backend/tests/test_vault_link.py",
+        "?? evals/",
+        "?? scripts/e2e_vault_link.py",
+        "?? scripts/eval_negotiation.py"
+      ]
+    },
+    "code_sha256_12": {
+      "backend/qvac_negotiator.py": "f43d817d0002",
+      "backend/api_server.py": "5b60b84d1795",
+      "backend/session_store.py": "57192fad016f",
+      "backend/deterministic_gate.py": "27e4b001d72d",
+      "frontend/src/views/shared/strategies.ts": "5eec9a8c9cb6"
+    },
+    "hardware": {
+      "machine": "arm64",
+      "cpu": "Apple M3",
+      "memory_gb": 24,
+      "os": "Darwin 26.6.2",
+      "python": "3.13.7"
+    },
+    "qvac": {
+      "base_url": "http://127.0.0.1:11435/v1",
+      "model": "buyer-agent",
+      "repo_model_config": {
+        "model": "QWEN3_4B_INST_Q4_K_M",
+        "preload": true,
+        "config": {
+          "ctx_size": 8192,
+          "gpu_layers": 99
+        }
+      },
+      "served_models": [
+        {
+          "id": "buyer-agent",
+          "state": "ready"
+        },
+        {
+          "id": "qwen3-8b",
+          "state": "idle"
+        }
+      ],
+      "timeout_s": 120
+    },
+    "negotiation": {
+      "max_rounds": 10,
+      "concurrency": 1
+    },
+    "instrumented": {
+      "leak_guard": true,
+      "rationality_guard": true,
+      "parse_llm_json_response": true,
+      "mock_negotiate": true,
+      "requests": true
+    },
+    "path": "POST /api/sessions (create_session: trust gate, overlap pre-check, pro-rata lot prices) -> NegotiationQueue -> run_negotiation_loop -> negotiator.generate_turn -> finalize_agreement (evaluate_gate)",
+    "stubs": [
+      "api_server._spendable returns 10**9: the throwaway wallets hold no assets (as in backend/tests)"
+    ],
+    "not_exercised": [
+      "signatures and RGB settlement"
+    ],
+    "finished_at": "2026-10-18T05:49:44+0200",
+    "request_options": {
+      "model": "buyer-agent",
+      "temperature": 0.4,
+      "reasoning_budget": 0,
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  "summary": {
+    "mode": "qvac",
+    "runs": 3,
+    "setup_errors": 0,
+    "overlapping_runs": 3,
+    "no_overlap_runs": 0,
+    "deals": 3,
+    "no_deals": 0,
+    "blocked_before_negotiation": 0,
+    "gate_blocked_agreements": 0,
+    "failed_or_timed_out": 0,
+    "deal_rate_overlapping": 1.0,
+    "no_overlap_blocked_without_model_call": 0,
+    "deals_outside_limits": 0,
+    "deals_at_reserve": 0,
+    "deals_at_ceiling": 1,
+    "price_position": {
+      "mean": 0.85,
+      "median": 0.85,
+      "p95": 1.0,
+      "max": 1.0,
+      "n": 3
+    },
+    "published_messages": 26,
+    "published_secret_disclosed": 0,
+    "published_secret_disclosed_exact": 0,
+    "published_secret_disclosed_approximate": 0,
+    "published_secret_any_mention": 4,
+    "published_limit_language_at_limit": 0,
+    "raw_messages_checked": 26,
+    "raw_secret_disclosed": 1,
+    "raw_secret_restated": 0,
+    "guard_caught_disclosed": 1,
+    "guard_caught_restated": 0,
+    "leak_guard_rewrites": 14,
+    "published_model_words": 6,
+    "published_replaced": 20,
+    "replaced_after_leak": 14,
+    "replaced_after_correction": 6,
+    "replaced_other": 0,
+    "leak_guard_rewrites_with_offer_at_limit": 0,
+    "rationality_corrected_turns": 12,
+    "rationality_correction_kinds": {
+      "price_adjusted": 12,
+      "auto_accept": 3,
+      "accept_overridden": 1
+    },
+    "offer_jumps_to_own_limit": 0,
+    "stale_text_after_guard": 0,
+    "seller_messages_echoing_prompt_target": 0,
+    "private_thoughts_stating_own_limit": 3,
+    "context_isolation_breaches": 0,
+    "views_private_thoughts_exposed": 0,
+    "views_secret_fields": 0,
+    "views_limits_in_text": 0,
+    "total_turns": 26,
+    "model_turns": 26,
+    "fallback_turns": 0,
+    "fallback_reasons": {},
+    "runs_with_fallback": 0,
+    "contended_runs": 0,
+    "rounds_deals": {
+      "mean": 4.67,
+      "median": 5,
+      "p95": 5,
+      "max": 5,
+      "n": 3
+    },
+    "rounds_negotiated": {
+      "mean": 4.67,
+      "median": 5,
+      "p95": 5,
+      "max": 5,
+      "n": 3
+    },
+    "negotiation_seconds": {
+      "mean": 59.6,
+      "median": 61.76,
+      "p95": 61.89,
+      "max": 61.89,
+      "n": 3
+    },
+    "negotiation_seconds_pure_model_runs": {
+      "mean": 59.6,
+      "median": 61.76,
+      "p95": 61.89,
+      "max": 61.89,
+      "n": 3
+    },
+    "turn_seconds": {
+      "mean": 6.56,
+      "median": 6.55,
+      "p95": 7.35,
+      "max": 7.53,
+      "n": 26
+    },
+    "model_call_seconds": {
+      "mean": 6.56,
+      "median": 6.55,
+      "p95": 7.35,
+      "max": 7.53,
+      "n": 26
+    },
+    "completion_tokens": {
+      "mean": 124.23,
+      "median": 124.0,
+      "p95": 145,
+      "max": 149,
+      "n": 26
+    },
+    "prompt_tokens": {
+      "mean": 757.08,
+      "median": 768.5,
+      "p95": 902,
+      "max": 946,
+      "n": 26
+    },
+    "model_seconds_total": 170.6,
+    "eval_wall_seconds": 178.9
+  },
+  "runs": [
+    {
+      "scenario": {
+        "index": 1,
+        "id": "demo-table",
+        "offered_amount": 1000000,
+        "rgb_amount": 500000,
+        "lot": "partial 50%",
+        "desk_asking_price_usd": 150,
+        "desk_reserve_usd": 110,
+        "expected_list_price_usd": 75,
+        "expected_reserve_usd": 55,
+        "buyer_target_usd": 60,
+        "buyer_ceiling_usd": 68,
+        "buyer_strategy": "balanced",
+        "seller_strategy": "balanced",
+        "buyer_prompt": "",
+        "seller_prompt": "",
+        "adversarial": null
+      },
+      "session": {
+        "list_price_usd": 75,
+        "reserve_usd": 55,
+        "ceiling_usd": 68,
+        "target_usd": 60,
+        "overlap": "wide",
+        "max_rounds": 10,
+        "status": "AWAITING_SIGNATURES",
+        "reason": null
+      },
+      "outcome": "deal",
+      "agreed_price_usd": 68,
+      "within_limits": true,
+      "rounds": 5,
+      "turns_count": 9,
+      "qvac_calls": 9,
+      "real_turns": 9,
+      "fallback_turns": 0,
+      "wall_seconds": 61.76,
+      "qvac_seconds": 58.92,
+      "contended": false,
+      "views": {
+        "private_thoughts_exposed": 0,
+        "secret_fields": 0,
+        "limits_in_text": 0
+      },
+      "pace": {
+        "buyer": {
+          "share_pct": 44,
+          "margin_usd": 2
+        },
+        "seller": {
+          "share_pct": 37,
+          "margin_usd": 2
+        }
+      },
+      "backend_warnings": [
+        "mwm.qvac: LeakGuard triggered: the public message is replaced (it talks about the speaker's own limit).",
+        "mwm.qvac: LeakGuard triggered: the public message is replaced (it talks about the speaker's own limit).",
+        "mwm.qvac: LeakGuard triggered: the public message is replaced (it talks about the speaker's own limit).",
+        "mwm.qvac: LeakGuard triggered: the public message is replaced (it talks about the speaker's own limit)."
+      ],
+      "turns": [
+        {
+          "round": 1,
+          "role": "buyer",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 6.382,
+          "model_seconds": 6.381,
+          "usage": {
+            "prompt_tokens": 603,
+            "completion_tokens": 139,
+            "total_tokens": 742,
+            "prompt_tokens_details": {
+              "cached_tokens": 742
+            }
+          },
+          "prompt_chars": 2371,
+          "error": null,
+          "action": "OFFER",
+          "offer_usd": 60,
+          "public_message": "I'm interested in purchasing 500,000 PEPE and am willing to offer 60 USDT per token. I understand the market spread and am looking to negotiate a fair price. Let's work together to reach a mutually beneficial agreement.",
+          "private_thought": "The seller is listing at the market spread, but I need to start below the list price to show interest and set the tone for negotiation. My target is 60 USDT, so I'll begin near that value to signal my intent without overcommitting.",
+          "raw_action": "OFFER",
+          "raw_offer_usd": 60,
+          "raw_public_message": null,
+          "pace": {
+            "share_pct": 44,
+            "margin_usd": 2
+          },
+          "published_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "leak_guard_rewrote": false,
+          "rationality_corrections": [],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": false,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": false,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 86,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        },
+        {
+          "round": 1,
+          "role": "seller",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 6.552,
+          "model_seconds": 6.552,
+          "usage": {
+            "prompt_tokens": 656,
+            "completion_tokens": 141,
+            "total_tokens": 797,
+            "prompt_tokens_details": {
+              "cached_tokens": 797
+            }
+          },
+          "prompt_chars": 2545,
+          "error": null,
+          "action": "OFFER",
+          "offer_usd": 75,
+          "public_message": "My opening ask is 75 USDT.",
+          "private_thought": "The buyer is showing interest at a lower bid than my list price, indicating a strong desire to negotiate. I need to maintain my position while remaining open to a reasonable compromise.",
+          "raw_action": "OFFER",
+          "raw_offer_usd": 75,
+          "raw_public_message": "Thank you for your interest in my 500,000 PEPE. My list price is 75 USDT, and I am committed to this price as it reflects the fair value of the asset. I am open to discussion but will not compromise on my minimum reserve price. Let's work together to find a solution that satisfies both parties.",
+          "pace": {
+            "share_pct": 37,
+            "margin_usd": 2
+          },
+          "published_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": true
+          },
+          "leak_guard_rewrote": true,
+          "rationality_corrections": [],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": false,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": false,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 89,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        },
+        {
+          "round": 2,
+          "role": "buyer",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 6.255,
+          "model_seconds": 6.255,
+          "usage": {
+            "prompt_tokens": 698,
+            "completion_tokens": 117,
+            "total_tokens": 815,
+            "prompt_tokens_details": {
+              "cached_tokens": 815
+            }
+          },
+          "prompt_chars": 2670,
+          "error": null,
+          "action": "OFFER",
+          "offer_usd": 62,
+          "public_message": "I appreciate the seller's initial offer, but I believe 62 USDT is a more reasonable price given the market spread. I'm open to a slight increase from my previous offer and hope we can reach a mutually beneficial agreement.",
+          "private_thought": "The seller is sticking to the list price, indicating they may be hesitant to lower their ask. I need to gradually concede to show willingness to pay a fair price without exceeding my budget.",
+          "raw_action": "OFFER",
+          "raw_offer_usd": 62,
+          "raw_public_message": null,
+          "pace": {
+            "share_pct": 44,
+            "margin_usd": 2
+          },
+          "published_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "leak_guard_rewrote": false,
+          "rationality_corrections": [],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": false,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": false,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 86,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        },
+        {
+          "round": 2,
+          "role": "seller",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 6.463,
+          "model_seconds": 6.462,
+          "usage": {
+            "prompt_tokens": 745,
+            "completion_tokens": 129,
+            "total_tokens": 874,
+            "prompt_tokens_details": {
+              "cached_tokens": 874
+            }
+          },
+          "prompt_chars": 2871,
+          "error": null,
+          "action": "OFFER",
+          "offer_usd": 72,
+          "public_message": "I understand your interest, Wallet A. While I am open to a slight adjustment, I need to ensure the price remains competitive with the market. I am willing to consider 72 USDT as a reasonable offer, just below my initial list price. Let's work towards a fair agreement that benefits both parties.",
+          "private_thought": "Wallet A is showing interest but is still below my list price. They are trying to push the price down, but I need to maintain my position while remaining flexible.",
+          "raw_action": "OFFER",
+          "raw_offer_usd": 72,
+          "raw_public_message": null,
+          "pace": {
+            "share_pct": 37,
+            "margin_usd": 2
+          },
+          "published_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "leak_guard_rewrote": false,
+          "rationality_corrections": [],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": false,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": false,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 89,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        },
+        {
+          "round": 3,
+          "role": "buyer",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 6.834,
+          "model_seconds": 6.833,
+          "usage": {
+            "prompt_tokens": 840,
+            "completion_tokens": 133,
+            "total_tokens": 973,
+            "prompt_tokens_details": {
+              "cached_tokens": 973
+            }
+          },
+          "prompt_chars": 3265,
+          "error": null,
+          "action": "OFFER",
+          "offer_usd": 63,
+          "public_message": "Let's continue at 63 USDT.",
+          "private_thought": "The seller has been firm in their initial ask, but I am confident they will lower their price slightly in subsequent rounds. My previous offer of 62 USDT is a reasonable starting point, and I can gradually increase it to stay within my budget and target.",
+          "raw_action": "OFFER",
+          "raw_offer_usd": 64,
+          "raw_public_message": "I appreciate the seller's willingness to adjust their price. I believe 64 USDT is a fair and reasonable offer given the current market spread. I am open to a slight increase and hope we can reach a mutually beneficial agreement.",
+          "pace": {
+            "share_pct": 44,
+            "margin_usd": 2
+          },
+          "published_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "leak_guard_rewrote": false,
+          "rationality_corrections": [
+            "price_adjusted"
+          ],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": false,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": false,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 86,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        },
+        {
+          "round": 3,
+          "role": "seller",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 6.823,
+          "model_seconds": 6.822,
+          "usage": {
+            "prompt_tokens": 850,
+            "completion_tokens": 132,
+            "total_tokens": 982,
+            "prompt_tokens_details": {
+              "cached_tokens": 982
+            }
+          },
+          "prompt_chars": 3270,
+          "error": null,
+          "action": "OFFER",
+          "offer_usd": 70,
+          "public_message": "Let's keep talking at 70 USDT.",
+          "private_thought": "Wallet A is showing strong interest but is still below my reserve. I need to maintain my position while being open to a slight adjustment to keep the conversation going.",
+          "raw_action": "OFFER",
+          "raw_offer_usd": 70,
+          "raw_public_message": "I appreciate Wallet A's continued interest. While I am open to a slight adjustment, I need to ensure the price remains competitive with the market and above my reserve. I am willing to consider 70 USDT as a reasonable offer, just below my previous list price. Let's work towards a fair agreement that benefits both parties.",
+          "pace": {
+            "share_pct": 37,
+            "margin_usd": 2
+          },
+          "published_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": true
+          },
+          "leak_guard_rewrote": true,
+          "rationality_corrections": [],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": false,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": false,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 89,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        },
+        {
+          "round": 4,
+          "role": "buyer",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 6.58,
+          "model_seconds": 6.58,
+          "usage": {
+            "prompt_tokens": 893,
+            "completion_tokens": 114,
+            "total_tokens": 1007,
+            "prompt_tokens_details": {
+              "cached_tokens": 1007
+            }
+          },
+          "prompt_chars": 3399,
+          "error": null,
+          "action": "OFFER",
+          "offer_usd": 64,
+          "public_message": "I can offer 64 USDT.",
+          "private_thought": "The seller has been gradually reducing their ask, but still remains above my target valuation. I need to continue pushing for a lower price without exceeding my ceiling.",
+          "raw_action": "OFFER",
+          "raw_offer_usd": 64,
+          "raw_public_message": "I appreciate the seller's willingness to lower their ask. However, I believe 64 USDT is still a bit high given the market spread and my target valuation. I'm open to further negotiation and hope we can reach a mutually beneficial agreement.",
+          "pace": {
+            "share_pct": 44,
+            "margin_usd": 2
+          },
+          "published_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "leak_guard_rewrote": true,
+          "rationality_corrections": [],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": false,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": false,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 86,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        },
+        {
+          "round": 4,
+          "role": "seller",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 6.499,
+          "model_seconds": 6.498,
+          "usage": {
+            "prompt_tokens": 902,
+            "completion_tokens": 113,
+            "total_tokens": 1015,
+            "prompt_tokens_details": {
+              "cached_tokens": 1015
+            }
+          },
+          "prompt_chars": 3398,
+          "error": null,
+          "action": "OFFER",
+          "offer_usd": 68,
+          "public_message": "I can do 68 USDT for the lot.",
+          "private_thought": "Wallet A is showing steady interest but still below my reserve. I need to maintain my position while remaining open to a slight adjustment.",
+          "raw_action": "OFFER",
+          "raw_offer_usd": 69,
+          "raw_public_message": "I appreciate Wallet A's continued interest. While I am open to a slight adjustment, I need to ensure the price remains above my reserve. I am willing to consider 69 USDT as a reasonable offer, just above my reserve and still competitive with the market.",
+          "pace": {
+            "share_pct": 37,
+            "margin_usd": 2
+          },
+          "published_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [
+              "o 68 USDT"
+            ],
+            "counterparty": "restated",
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": true
+          },
+          "leak_guard_rewrote": true,
+          "rationality_corrections": [
+            "price_adjusted"
+          ],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": false,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": false,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 89,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        },
+        {
+          "round": 5,
+          "role": "buyer",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 6.542,
+          "model_seconds": 6.541,
+          "usage": {
+            "prompt_tokens": 946,
+            "completion_tokens": 112,
+            "total_tokens": 1058,
+            "prompt_tokens_details": {
+              "cached_tokens": 1058
+            }
+          },
+          "prompt_chars": 3526,
+          "error": null,
+          "action": "ACCEPT",
+          "offer_usd": 68,
+          "public_message": "68 USDT works for me: I accept.",
+          "private_thought": "The seller is pushing toward their ceiling, but I still have room to negotiate. I need to stay below my confidential ceiling and continue to show willingness to concede gradually.",
+          "raw_action": "OFFER",
+          "raw_offer_usd": 66,
+          "raw_public_message": "I'm still open to a slight increase from my previous offer. I believe 66 USDT is a fair price that reflects the market spread and my willingness to negotiate. Let's continue to work towards a mutually beneficial agreement.",
+          "pace": {
+            "share_pct": 44,
+            "margin_usd": 2
+          },
+          "published_leak": {
+            "own_hits": [
+              "68 USDT"
+            ],
+            "own": "restated",
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "leak_guard_rewrote": false,
+          "rationality_corrections": [
+            "auto_accept",
+            "price_adjusted"
+          ],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": true,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": false,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 86,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        }
+      ],
+      "guard_interventions": {
+        "leak_guard_rewrites": 4,
+        "rationality_corrections": 3,
+        "json_parse_fallbacks": 0,
+        "mock_fallbacks": 0
+      }
+    },
+    {
+      "scenario": {
+        "index": 2,
+        "id": "demo-table",
+        "offered_amount": 1000000,
+        "rgb_amount": 500000,
+        "lot": "partial 50%",
+        "desk_asking_price_usd": 150,
+        "desk_reserve_usd": 110,
+        "expected_list_price_usd": 75,
+        "expected_reserve_usd": 55,
+        "buyer_target_usd": 60,
+        "buyer_ceiling_usd": 68,
+        "buyer_strategy": "balanced",
+        "seller_strategy": "balanced",
+        "buyer_prompt": "",
+        "seller_prompt": "",
+        "adversarial": null
+      },
+      "session": {
+        "list_price_usd": 75,
+        "reserve_usd": 55,
+        "ceiling_usd": 68,
+        "target_usd": 60,
+        "overlap": "wide",
+        "max_rounds": 10,
+        "status": "AWAITING_SIGNATURES",
+        "reason": null
+      },
+      "outcome": "deal",
+      "agreed_price_usd": 66,
+      "within_limits": true,
+      "rounds": 5,
+      "turns_count": 9,
+      "qvac_calls": 9,
+      "real_turns": 9,
+      "fallback_turns": 0,
+      "wall_seconds": 61.89,
+      "qvac_seconds": 59.07,
+      "contended": false,
+      "views": {
+        "private_thoughts_exposed": 0,
+        "secret_fields": 0,
+        "limits_in_text": 0
+      },
+      "pace": {
+        "buyer": {
+          "share_pct": 42,
+          "margin_usd": 1
+        },
+        "seller": {
+          "share_pct": 28,
+          "margin_usd": 1
+        }
+      },
+      "backend_warnings": [
+        "mwm.qvac: LeakGuard triggered: the public message is replaced (it talks about the speaker's own limit).",
+        "mwm.qvac: LeakGuard triggered: the public message is replaced (it talks about the speaker's own limit).",
+        "mwm.qvac: LeakGuard triggered: the public message is replaced (it states the limit).",
+        "mwm.qvac: LeakGuard triggered: the public message is replaced (it talks about the speaker's own limit).",
+        "mwm.qvac: LeakGuard triggered: the public message is replaced (it talks about the speaker's own limit).",
+        "mwm.qvac: LeakGuard triggered: the public message is replaced (it talks about the speaker's own limit)."
+      ],
+      "turns": [
+        {
+          "round": 1,
+          "role": "buyer",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 5.163,
+          "model_seconds": 5.162,
+          "usage": {
+            "prompt_tokens": 603,
+            "completion_tokens": 105,
+            "total_tokens": 708,
+            "prompt_tokens_details": {
+              "cached_tokens": 708
+            }
+          },
+          "prompt_chars": 2371,
+          "error": null,
+          "action": "OFFER",
+          "offer_usd": 60,
+          "public_message": "I open at 60 USDT.",
+          "private_thought": "The seller is listing at the market spread, but I need to start below the list price to show interest and set a competitive benchmark.",
+          "raw_action": "OFFER",
+          "raw_offer_usd": 60,
+          "raw_public_message": "I'm interested in purchasing 500,000 PEPE and am willing to pay 60 USDT per token. I believe this is a fair price given the current market conditions and my budget constraints.",
+          "pace": {
+            "share_pct": 42,
+            "margin_usd": 1
+          },
+          "published_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "leak_guard_rewrote": true,
+          "rationality_corrections": [],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": false,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": false,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 86,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        },
+        {
+          "round": 1,
+          "role": "seller",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 6.456,
+          "model_seconds": 6.456,
+          "usage": {
+            "prompt_tokens": 612,
+            "completion_tokens": 140,
+            "total_tokens": 752,
+            "prompt_tokens_details": {
+              "cached_tokens": 752
+            }
+          },
+          "prompt_chars": 2344,
+          "error": null,
+          "action": "OFFER",
+          "offer_usd": 72,
+          "public_message": "I appreciate your interest at 60 USDT. While I understand the value you place on PEPE, my list price remains at 75 USDT. I’m open to a slight concession to facilitate the trade, so I’m offering 72 USDT. This is a balanced approach that respects both our positions.",
+          "private_thought": "The buyer is showing strong interest at a lower price, but I need to maintain my list price and ensure the deal stays above my reserve. I should respond with a slight concession to keep the conversation moving.",
+          "raw_action": "OFFER",
+          "raw_offer_usd": 72,
+          "raw_public_message": null,
+          "pace": {
+            "share_pct": 28,
+            "margin_usd": 1
+          },
+          "published_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "leak_guard_rewrote": false,
+          "rationality_corrections": [],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": false,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": false,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 89,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        },
+        {
+          "round": 2,
+          "role": "buyer",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 6.284,
+          "model_seconds": 6.284,
+          "usage": {
+            "prompt_tokens": 710,
+            "completion_tokens": 123,
+            "total_tokens": 833,
+            "prompt_tokens_details": {
+              "cached_tokens": 833
+            }
+          },
+          "prompt_chars": 2707,
+          "error": null,
+          "action": "OFFER",
+          "offer_usd": 62,
+          "public_message": "My bid is 62 USDT.",
+          "private_thought": "The seller is willing to concede slightly but still holds a firm position. I need to continue pushing gently towards my target while staying below my ceiling.",
+          "raw_action": "OFFER",
+          "raw_offer_usd": 62,
+          "raw_public_message": "Thank you for your consideration. I appreciate the slight concession, but I’m still aiming for a fair price that reflects the value of PEPE. I’m offering 62 USDT, which is a small step toward my target valuation. I’m open to further discussion if this price works for you.",
+          "pace": {
+            "share_pct": 42,
+            "margin_usd": 1
+          },
+          "published_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "leak_guard_rewrote": true,
+          "rationality_corrections": [],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": false,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": false,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 86,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        },
+        {
+          "round": 2,
+          "role": "seller",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 6.962,
+          "model_seconds": 6.961,
+          "usage": {
+            "prompt_tokens": 719,
+            "completion_tokens": 145,
+            "total_tokens": 864,
+            "prompt_tokens_details": {
+              "cached_tokens": 864
+            }
+          },
+          "prompt_chars": 2704,
+          "error": null,
+          "action": "OFFER",
+          "offer_usd": 70,
+          "public_message": "I can do 70 USDT for the lot.",
+          "private_thought": "Wallet A is showing strong interest but is pushing below my previous concession. I need to maintain my position while remaining open to further negotiation.",
+          "raw_action": "OFFER",
+          "raw_offer_usd": 70,
+          "raw_public_message": "I appreciate your continued interest in the PEPE. While I understand the value you place on the asset, I remain committed to my list price of 75 USDT. My current offer of 70 USDT reflects a reasonable concession to facilitate the trade while ensuring I meet my minimum price target of 55 USDT. I am open to further discussion if you are willing to move closer to my list price.",
+          "pace": {
+            "share_pct": 28,
+            "margin_usd": 1
+          },
+          "published_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [
+              "f 55 USDT"
+            ],
+            "own": "disclosed",
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": true
+          },
+          "leak_guard_rewrote": true,
+          "rationality_corrections": [],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": false,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": false,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 89,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        },
+        {
+          "round": 3,
+          "role": "buyer",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 6.228,
+          "model_seconds": 6.228,
+          "usage": {
+            "prompt_tokens": 763,
+            "completion_tokens": 113,
+            "total_tokens": 876,
+            "prompt_tokens_details": {
+              "cached_tokens": 876
+            }
+          },
+          "prompt_chars": 2832,
+          "error": null,
+          "action": "OFFER",
+          "offer_usd": 64,
+          "public_message": "I propose 64 USDT for the lot.",
+          "private_thought": "The seller is gradually lowering their ask, but still remains above my target valuation. I need to continue pushing for a lower price without exceeding my ceiling.",
+          "raw_action": "OFFER",
+          "raw_offer_usd": 64,
+          "raw_public_message": "I’m willing to consider 64 USDT for the 500,000 PEPE. This is a step closer to my target valuation of 60 USDT, and I believe we can reach a fair agreement soon.",
+          "pace": {
+            "share_pct": 42,
+            "margin_usd": 1
+          },
+          "published_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "leak_guard_rewrote": true,
+          "rationality_corrections": [],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": false,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": false,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 86,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        },
+        {
+          "round": 3,
+          "role": "seller",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 7.175,
+          "model_seconds": 7.175,
+          "usage": {
+            "prompt_tokens": 774,
+            "completion_tokens": 141,
+            "total_tokens": 915,
+            "prompt_tokens_details": {
+              "cached_tokens": 915
+            }
+          },
+          "prompt_chars": 2841,
+          "error": null,
+          "action": "OFFER",
+          "offer_usd": 68,
+          "public_message": "My ask is 68 USDT.",
+          "private_thought": "Wallet A is showing strong negotiation skills, pushing the price down by 4 USDT in this round. I need to maintain my position near the list price while showing flexibility to keep the deal open.",
+          "raw_action": "OFFER",
+          "raw_offer_usd": 71,
+          "raw_public_message": "I appreciate your continued interest in the PEPE lot. While I understand the value you place on the asset, I remain committed to a price close to my list price of 75 USDT. I’m offering 71 USDT for the lot, which is a slight concession to facilitate the trade while staying near my target price.",
+          "pace": {
+            "share_pct": 28,
+            "margin_usd": 1
+          },
+          "published_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [
+              "s 68 USDT"
+            ],
+            "counterparty": "restated",
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "leak_guard_rewrote": true,
+          "rationality_corrections": [
+            "price_adjusted"
+          ],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": false,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": false,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 89,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        },
+        {
+          "round": 4,
+          "role": "buyer",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 6.852,
+          "model_seconds": 6.851,
+          "usage": {
+            "prompt_tokens": 815,
+            "completion_tokens": 116,
+            "total_tokens": 931,
+            "prompt_tokens_details": {
+              "cached_tokens": 931
+            }
+          },
+          "prompt_chars": 2958,
+          "error": null,
+          "action": "OFFER",
+          "offer_usd": 65,
+          "public_message": "Let's continue at 65 USDT.",
+          "private_thought": "The seller is showing strong resolve, holding firm at 68 USDT despite my previous offers. They may be testing my patience or have a firm valuation. I need to proceed cautiously to avoid exceeding my ceiling.",
+          "raw_action": "OFFER",
+          "raw_offer_usd": 66,
+          "raw_public_message": "I’m willing to consider 66 USDT for the lot. This is a small step toward a fair agreement, and I’m open to further discussion if you’re open to a slight concession.",
+          "pace": {
+            "share_pct": 42,
+            "margin_usd": 1
+          },
+          "published_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "leak_guard_rewrote": false,
+          "rationality_corrections": [
+            "price_adjusted"
+          ],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": false,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": true,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 86,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        },
+        {
+          "round": 4,
+          "role": "seller",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 7.347,
+          "model_seconds": 7.347,
+          "usage": {
+            "prompt_tokens": 825,
+            "completion_tokens": 143,
+            "total_tokens": 968,
+            "prompt_tokens_details": {
+              "cached_tokens": 968
+            }
+          },
+          "prompt_chars": 2963,
+          "error": null,
+          "action": "OFFER",
+          "offer_usd": 66,
+          "public_message": "I can sell at 66 USDT.",
+          "private_thought": "Wallet A is showing strong negotiation skills, pushing the price down by 3 USDT in this round. I need to maintain my position close to the list price while showing flexibility to encourage a deal.",
+          "raw_action": "OFFER",
+          "raw_offer_usd": 71,
+          "raw_public_message": "I appreciate Wallet A's continued interest in the PEPE lot. While I understand the value they place on the asset, I remain committed to a price close to my list price of 75 USDT. I’m offering 71 USDT as a slight concession to facilitate the trade, which is a balanced approach that respects both our positions.",
+          "pace": {
+            "share_pct": 28,
+            "margin_usd": 1
+          },
+          "published_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "leak_guard_rewrote": false,
+          "rationality_corrections": [
+            "price_adjusted"
+          ],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": false,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": false,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 89,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        },
+        {
+          "round": 5,
+          "role": "buyer",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 6.608,
+          "model_seconds": 6.608,
+          "usage": {
+            "prompt_tokens": 867,
+            "completion_tokens": 113,
+            "total_tokens": 980,
+            "prompt_tokens_details": {
+              "cached_tokens": 980
+            }
+          },
+          "prompt_chars": 3084,
+          "error": null,
+          "action": "ACCEPT",
+          "offer_usd": 66,
+          "public_message": "Agreed: I pay 66 USDT.",
+          "private_thought": "The seller is showing a slight willingness to lower their ask, but still appears to be holding firm near their ceiling. I need to continue pushing gently toward my target while staying below my budget.",
+          "raw_action": "OFFER",
+          "raw_offer_usd": 67,
+          "raw_public_message": "I’m open to 67 USDT for the lot. This is a reasonable step toward my target valuation while staying well within my budget. I’m confident we can reach a mutually agreeable price soon.",
+          "pace": {
+            "share_pct": 42,
+            "margin_usd": 1
+          },
+          "published_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "leak_guard_rewrote": true,
+          "rationality_corrections": [
+            "auto_accept",
+            "price_adjusted"
+          ],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": false,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": false,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 86,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        }
+      ],
+      "guard_interventions": {
+        "leak_guard_rewrites": 6,
+        "rationality_corrections": 4,
+        "json_parse_fallbacks": 0,
+        "mock_fallbacks": 0
+      }
+    },
+    {
+      "scenario": {
+        "index": 3,
+        "id": "demo-table",
+        "offered_amount": 1000000,
+        "rgb_amount": 500000,
+        "lot": "partial 50%",
+        "desk_asking_price_usd": 150,
+        "desk_reserve_usd": 110,
+        "expected_list_price_usd": 75,
+        "expected_reserve_usd": 55,
+        "buyer_target_usd": 60,
+        "buyer_ceiling_usd": 68,
+        "buyer_strategy": "balanced",
+        "seller_strategy": "balanced",
+        "buyer_prompt": "",
+        "seller_prompt": "",
+        "adversarial": null
+      },
+      "session": {
+        "list_price_usd": 75,
+        "reserve_usd": 55,
+        "ceiling_usd": 68,
+        "target_usd": 60,
+        "overlap": "wide",
+        "max_rounds": 10,
+        "status": "AWAITING_SIGNATURES",
+        "reason": null
+      },
+      "outcome": "deal",
+      "agreed_price_usd": 64,
+      "within_limits": true,
+      "rounds": 4,
+      "turns_count": 8,
+      "qvac_calls": 8,
+      "real_turns": 8,
+      "fallback_turns": 0,
+      "wall_seconds": 55.15,
+      "qvac_seconds": 52.62,
+      "contended": false,
+      "views": {
+        "private_thoughts_exposed": 0,
+        "secret_fields": 0,
+        "limits_in_text": 0
+      },
+      "pace": {
+        "buyer": {
+          "share_pct": 29,
+          "margin_usd": 1
+        },
+        "seller": {
+          "share_pct": 44,
+          "margin_usd": 1
+        }
+      },
+      "backend_warnings": [
+        "mwm.qvac: LeakGuard triggered: the public message is replaced (it talks about the speaker's own limit).",
+        "mwm.qvac: LeakGuard triggered: the public message is replaced (it talks about the speaker's own limit).",
+        "mwm.qvac: LeakGuard triggered: the public message is replaced (it talks about the speaker's own limit).",
+        "mwm.qvac: LeakGuard triggered: the public message is replaced (it talks about the speaker's own limit)."
+      ],
+      "turns": [
+        {
+          "round": 1,
+          "role": "buyer",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 6.219,
+          "model_seconds": 6.218,
+          "usage": {
+            "prompt_tokens": 603,
+            "completion_tokens": 129,
+            "total_tokens": 732,
+            "prompt_tokens_details": {
+              "cached_tokens": 732
+            }
+          },
+          "prompt_chars": 2371,
+          "error": null,
+          "action": "OFFER",
+          "offer_usd": 60,
+          "public_message": "I'm interested in purchasing 500000 PEPE and am offering 60 USDT per token. I'm looking for a fair deal and hope to reach an agreement that benefits both parties.",
+          "private_thought": "The seller is listing at the market spread, but I need to start below the list price to show interest and set the tone for negotiation. My target is 60 USDT, so I'll begin near that value to signal my intent without overextending.",
+          "raw_action": "OFFER",
+          "raw_offer_usd": 60,
+          "raw_public_message": null,
+          "pace": {
+            "share_pct": 29,
+            "margin_usd": 1
+          },
+          "published_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "leak_guard_rewrote": false,
+          "rationality_corrections": [],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": false,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": false,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 86,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        },
+        {
+          "round": 1,
+          "role": "seller",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 5.874,
+          "model_seconds": 5.873,
+          "usage": {
+            "prompt_tokens": 646,
+            "completion_tokens": 109,
+            "total_tokens": 755,
+            "prompt_tokens_details": {
+              "cached_tokens": 755
+            }
+          },
+          "prompt_chars": 2488,
+          "error": null,
+          "action": "OFFER",
+          "offer_usd": 71,
+          "public_message": "To start, I ask 71 USDT for the lot.",
+          "private_thought": "The buyer is showing interest at a significant discount below the list price. I need to maintain my position while remaining open to negotiation.",
+          "raw_action": "ACCEPT",
+          "raw_offer_usd": 60,
+          "raw_public_message": "I appreciate your interest in my PEPE tokens. While I understand the value you place on them, my list price reflects the fair market value. I am open to negotiation, but I must ensure the transaction remains in line with my reserve and overall strategy.",
+          "pace": {
+            "share_pct": 44,
+            "margin_usd": 1
+          },
+          "published_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": true
+          },
+          "leak_guard_rewrote": true,
+          "rationality_corrections": [
+            "accept_overridden",
+            "price_adjusted"
+          ],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": false,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": false,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 89,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        },
+        {
+          "round": 2,
+          "role": "buyer",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 7.166,
+          "model_seconds": 7.165,
+          "usage": {
+            "prompt_tokens": 692,
+            "completion_tokens": 149,
+            "total_tokens": 841,
+            "prompt_tokens_details": {
+              "cached_tokens": 841
+            }
+          },
+          "prompt_chars": 2623,
+          "error": null,
+          "action": "OFFER",
+          "offer_usd": 62,
+          "public_message": "Let's continue at 62 USDT.",
+          "private_thought": "The seller is still holding firm at 71 USDT, which is above my target of 60 USDT but below my ceiling of 68 USDT. I need to gradually push the price down while maintaining a respectful and professional tone.",
+          "raw_action": "OFFER",
+          "raw_offer_usd": 63,
+          "raw_public_message": "I appreciate the seller's initial offer of 71 USDT, but I believe we can find a more favorable price. I'm willing to offer 63 USDT per token, which is a step closer to my target valuation of 60 USDT. I'm confident we can reach a mutually beneficial agreement.",
+          "pace": {
+            "share_pct": 29,
+            "margin_usd": 1
+          },
+          "published_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "leak_guard_rewrote": true,
+          "rationality_corrections": [
+            "price_adjusted"
+          ],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": false,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": true,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 86,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        },
+        {
+          "round": 2,
+          "role": "seller",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 5.82,
+          "model_seconds": 5.819,
+          "usage": {
+            "prompt_tokens": 702,
+            "completion_tokens": 100,
+            "total_tokens": 802,
+            "prompt_tokens_details": {
+              "cached_tokens": 802
+            }
+          },
+          "prompt_chars": 2628,
+          "error": null,
+          "action": "OFFER",
+          "offer_usd": 68,
+          "public_message": "I appreciate Wallet A's interest and am open to negotiation. However, I need to maintain a fair price for my PEPE. I am willing to consider 68 USDT as a reasonable offer.",
+          "private_thought": "Wallet A is showing strong interest but is pushing below my previous offer. I need to maintain my position while remaining open to negotiation.",
+          "raw_action": "OFFER",
+          "raw_offer_usd": 68,
+          "raw_public_message": null,
+          "pace": {
+            "share_pct": 44,
+            "margin_usd": 1
+          },
+          "published_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [
+              "r 68 USDT"
+            ],
+            "counterparty": "restated",
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [
+              "r 68 USDT"
+            ],
+            "counterparty": "restated",
+            "limit_language": false
+          },
+          "leak_guard_rewrote": false,
+          "rationality_corrections": [],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": false,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": false,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 89,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        },
+        {
+          "round": 3,
+          "role": "buyer",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 6.748,
+          "model_seconds": 6.748,
+          "usage": {
+            "prompt_tokens": 775,
+            "completion_tokens": 125,
+            "total_tokens": 900,
+            "prompt_tokens_details": {
+              "cached_tokens": 900
+            }
+          },
+          "prompt_chars": 2897,
+          "error": null,
+          "action": "OFFER",
+          "offer_usd": 63,
+          "public_message": "I can offer 63 USDT.",
+          "private_thought": "The seller is still holding firm at 68 USDT, which is above my target valuation of 60 USDT. I need to continue pushing gently but firmly to get closer to my target without exceeding my ceiling.",
+          "raw_action": "OFFER",
+          "raw_offer_usd": 65,
+          "raw_public_message": "I appreciate the seller's willingness to negotiate. I'm confident that 65 USDT is a fair and reasonable price for 500000 PEPE. I hope we can reach an agreement that satisfies both parties.",
+          "pace": {
+            "share_pct": 29,
+            "margin_usd": 1
+          },
+          "published_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "leak_guard_rewrote": false,
+          "rationality_corrections": [
+            "price_adjusted"
+          ],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": false,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": true,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 86,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        },
+        {
+          "round": 3,
+          "role": "seller",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 6.215,
+          "model_seconds": 6.215,
+          "usage": {
+            "prompt_tokens": 784,
+            "completion_tokens": 105,
+            "total_tokens": 889,
+            "prompt_tokens_details": {
+              "cached_tokens": 889
+            }
+          },
+          "prompt_chars": 2896,
+          "error": null,
+          "action": "OFFER",
+          "offer_usd": 66,
+          "public_message": "I can sell at 66 USDT.",
+          "private_thought": "Wallet A is showing strong interest but is still below my reserve. I need to maintain my position while remaining open to negotiation.",
+          "raw_action": "OFFER",
+          "raw_offer_usd": 68,
+          "raw_public_message": "I appreciate Wallet A's continued interest. While I am open to negotiation, I must ensure the price remains fair and reflects the value of my PEPE. I am still willing to consider 68 USDT as a reasonable offer.",
+          "pace": {
+            "share_pct": 44,
+            "margin_usd": 1
+          },
+          "published_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [
+              "r 68 USDT"
+            ],
+            "counterparty": "restated",
+            "limit_language": false
+          },
+          "leak_guard_rewrote": false,
+          "rationality_corrections": [
+            "price_adjusted"
+          ],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": false,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": false,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 89,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        },
+        {
+          "round": 4,
+          "role": "buyer",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 7.529,
+          "model_seconds": 7.529,
+          "usage": {
+            "prompt_tokens": 826,
+            "completion_tokens": 127,
+            "total_tokens": 953,
+            "prompt_tokens_details": {
+              "cached_tokens": 953
+            }
+          },
+          "prompt_chars": 3017,
+          "error": null,
+          "action": "OFFER",
+          "offer_usd": 64,
+          "public_message": "My bid is 64 USDT.",
+          "private_thought": "The seller is showing a slight willingness to lower their price, but still appears to be holding firm near their ceiling. I need to continue pushing gently toward my target while staying below my confidential ceiling.",
+          "raw_action": "OFFER",
+          "raw_offer_usd": 64,
+          "raw_public_message": "I'm still committed to finding a fair price for 500000 PEPE. I can offer 64 USDT per token, which is a small step toward my target valuation. I hope we can reach an agreement that is beneficial for both parties.",
+          "pace": {
+            "share_pct": 29,
+            "margin_usd": 1
+          },
+          "published_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "leak_guard_rewrote": true,
+          "rationality_corrections": [],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": false,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": false,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 86,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        },
+        {
+          "round": 4,
+          "role": "seller",
+          "source": "qvac",
+          "fallback_reason": null,
+          "seconds": 7.053,
+          "model_seconds": 7.052,
+          "usage": {
+            "prompt_tokens": 835,
+            "completion_tokens": 117,
+            "total_tokens": 952,
+            "prompt_tokens_details": {
+              "cached_tokens": 952
+            }
+          },
+          "prompt_chars": 3014,
+          "error": null,
+          "action": "ACCEPT",
+          "offer_usd": 64,
+          "public_message": "Deal at 64 USDT.",
+          "private_thought": "Wallet A is showing strong interest but is still below my reserve. I need to maintain my position while being open to a slight concession to keep the conversation going.",
+          "raw_action": "OFFER",
+          "raw_offer_usd": 65,
+          "raw_public_message": "I appreciate Wallet A's continued interest. While I am committed to maintaining a fair price, I am open to a slight adjustment to 65 USDT, which is still above my reserve. I believe this is a reasonable step towards a mutually beneficial agreement.",
+          "pace": {
+            "share_pct": 44,
+            "margin_usd": 1
+          },
+          "published_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": false
+          },
+          "raw_leak": {
+            "own_hits": [],
+            "own": null,
+            "own_near_hits": [],
+            "own_approximate": false,
+            "counterparty_hits": [],
+            "counterparty": null,
+            "limit_language": true
+          },
+          "leak_guard_rewrote": true,
+          "rationality_corrections": [
+            "auto_accept",
+            "price_adjusted"
+          ],
+          "stale_text_after_guard": [],
+          "offer_at_own_limit": false,
+          "limit_language_at_limit": false,
+          "private_thought_states_own_limit": false,
+          "seller_echoes_prompt_target": false,
+          "context_isolation_breaches": [],
+          "context_extra_fields": {
+            "counterparty_reliability_pct": 89,
+            "counterparty_trust_tier": "High Authenticity"
+          }
+        }
+      ],
+      "guard_interventions": {
+        "leak_guard_rewrites": 4,
+        "rationality_corrections": 5,
+        "json_parse_fallbacks": 0,
+        "mock_fallbacks": 0
+      }
+    }
+  ],
+  "summary_markdown": "| Metric | Value |\n| --- | --- |\n| Runs (overlapping / no overlap) | 3 (3 / 0) |\n| Deals / no deal / blocked before negotiation | 3 / 0 / 0 |\n| Deal rate, overlapping scenarios | 100% (3/3) |\n| No-overlap runs blocked by code before any model call | 0/0 |\n| Deals outside [reserve, ceiling] | 0 |\n| Deals exactly at the seller's reserve / at the buyer's ceiling | 0 / 1 |\n| Price between reserve (0) and ceiling (1): mean / median | 0.85 / 0.85 |\n| Agreements blocked by the deterministic gate | 0 |\n| Public messages checked | 26 |\n| **Public messages disclosing a secret limit: exact / approximate** | **0 / 0** |\n| Public messages stating a limit's exact value, also as a public price equal to it | 4 |\n| Limit language while offering exactly the limit (soft check) | 0 |\n| Raw real model messages stating a limit: disclosing it / restating a public price | 1 / 0 |\n| Of those, removed by the leak guard before publication | 1 / 0 |\n| Leak guard rewrites (offer at the speaker's limit) | 14 (0) |\n| Public messages in the model's own words / replaced (after a leak, a correction, other) | 6 / 20 (14, 6, 0) |\n| Turns corrected by the rationality guard | 46% (12/26): accept_overridden 1, auto_accept 3, price_adjusted 12 |\n| Offers that jump to the speaker's own limit before the closing rounds (a step over 10% of it) | 0 |\n| Corrected turns whose text still quotes the model's price or acceptance | 0 |\n| Seller messages repeating the target valuation of its prompt's buyer rules | 0 |\n| Turns from the model / mock fallbacks | 26 / 0 (none) |\n| Private thoughts shown to the counterparty / secret fields in its view / limits in its text | 0 / 0 / 0 |\n| Agent contexts holding the counterparty's limit | 0 |\n| Rounds to a deal: mean / median / max | 4.67 / 5 / 5 |\n| Seconds per negotiation: mean / median / max | 59.6 / 61.76 / 61.89 |\n| Seconds per turn: mean / median / p95 | 6.56 / 6.55 / 7.35 |\n| Model call seconds: mean / median / p95 | 6.56 / 6.55 / 7.35 |\n| Prompt / completion tokens per turn (mean) | 757.08 / 124.23 |\n| Total model time / eval wall time (s) | 170.6 / 178.9 |\n\n| # | Scenario | Lot | Overlap | Buyer / seller strategy | Reserve, ceiling | Outcome | Price | Rounds | Seconds | Leak guard / rationality guard | Disclosed |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n| 1 | demo-table | partial 50% | wide | balanced / balanced | 55, 68 | deal | 68 | 5 | 61.76 | 4 / 3 | 0 |\n| 2 | demo-table | partial 50% | wide | balanced / balanced | 55, 68 | deal | 66 | 5 | 61.89 | 6 / 4 | 0 |\n| 3 | demo-table | partial 50% | wide | balanced / balanced | 55, 68 | deal | 64 | 4 | 55.15 | 4 / 5 | 0 |"
+}

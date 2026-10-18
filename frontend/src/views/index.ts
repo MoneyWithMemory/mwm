@@ -1,0 +1,6 @@
+export { WalletView } from './wallet/WalletView'
+export { TradeView } from './trade/TradeView'
+export { ShopView } from './shop/ShopView'
+export { DealsView } from './deals/DealsView'
+export { ContactsView } from './contacts/ContactsView'
+export { SplitView } from './split/SplitView'

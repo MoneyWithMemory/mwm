@@ -20,18 +20,20 @@ function LocalBadge() {
 }
 
 /**
- * Your AI: a button on every view of the pane that opens a chat with the wallet's local model.
- * `floating`: a panel in the content's corner (wide single view); otherwise a bottom sheet, with
- * the button above the tab bar.
+ * Your AI: a button on the pane's Wallet tab only that opens a chat with the wallet's local model;
+ * leaving the tab closes it. `floating`: a panel in the content's corner (wide single view);
+ * otherwise a bottom sheet, with the button above the tab bar.
  */
 export function Assistant({ floating }: { floating: boolean }) {
-  const { walletId, current, reset } = useWalletContext()
+  const { walletId, current } = useWalletContext()
+  const onWallet = current.view === 'wallet'
   const [open, setOpen] = useState(false)
+  if (open && !onWallet) setOpen(false)
   const close = () => setOpen(false)
 
+  // Opened from the Wallet tab, so the Wallet view is on screen to take the request.
   const moveToVault = () => {
     setOpen(false)
-    if (current.view !== 'wallet') reset('wallet')
     requestMoveToVault(walletId)
   }
   const chat = <AssistantChat walletId={walletId} onMoveToVault={moveToVault} className="h-full" />
@@ -39,7 +41,7 @@ export function Assistant({ floating }: { floating: boolean }) {
   return (
     <>
       <AnimatePresence initial={false}>
-        {!(floating && open) && (
+        {onWallet && !(floating && open) && (
           <motion.button
             key="fab"
             type="button"

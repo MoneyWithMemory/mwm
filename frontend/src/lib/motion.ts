@@ -16,7 +16,7 @@ export const DUR = {
   stagger: 0.04,  // --duration-stagger: per-item offset in a cascade
   micro: 0.08,    // --duration-micro: intent delay, success check stroke delay
   quick: 0.15,    // --duration-quick: close, press, text swap
-  iconSwap: 0.17, // icon and state swaps (CLAUDE.md 160–180ms)
+  iconSwap: 0.17, // icon and state swaps (160–180ms)
   open: 0.25,     // --duration-fast: sheet/modal/dropdown open, page slide
   medium: 0.35,   // --duration-medium: error shake, checkbox draw, chat bubble slide-in
   badge: 0.5,     // --duration-very-slow: badge appear

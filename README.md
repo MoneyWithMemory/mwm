@@ -24,7 +24,7 @@ Everything runs live on one laptop, on Bitcoin regtest: rgb-lib, the local QVAC 
 | **Settle** | Watch 7 steps and a txid. | An rgb-lib on-chain atomic swap (KaleidoSwap's PR #85 plus our fixes) on regtest, done 7 to 8 s after the second approval. Partial lots work too. |
 | **Vault** | Switch the wallet to *Vault*, create it with a WDK recovery phrase and a password, then *Move* USDT or PEPE between the two parts. | Real RGB transfers between the AI wallet (rgb-lib, Python) and a self-custodial Tether WDK Vault (UTEXO's `@utexo/wdk-wallet-rgb`). A WDK policy denies every other destination: value leaves the Vault only through *Move*, back to your own Wallet. |
 | **Trust** | Contacts show each reliability score. Sybil is *Low reliability*. | The score is computed by code from settled swaps and kept on disk. A ring member is capped at 20. Anything but High Authenticity needs the buyer's explicit consent before QVAC is called. |
-| **Your AI** | Tap *Ask your AI* (bottom right, on every view): *Analyze my account*, *What happened this week?*, *Should I move funds to my Vault?*, or your own question. | Code computes the facts from your own data; the local QVAC model only words a two-sentence answer, and a guard rejects any number or advice the facts do not contain. Idle funds come with a *Move to Vault* button. |
+| **Your AI** | Tap *Ask your AI* (bottom right, on the Wallet tab): *Analyze my account*, *What happened this week?*, *Should I move funds to my Vault?*, or your own question. | Code computes the facts from your own data; the local QVAC model only words a two-sentence answer, and a guard rejects any number or advice the facts do not contain. Idle funds come with a *Move to Vault* button. |
 
 **Proof** (details in [Tests](#7-tests)):
 

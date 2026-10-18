@@ -1,0 +1,533 @@
+{
+  "meta": {
+    "script": "evals/offer_channel_attack.py",
+    "command": ".venv/bin/python evals/offer_channel_attack.py",
+    "scenarios": 321,
+    "eval_scenarios": 21,
+    "seed": 7,
+    "pace_key": "mwm-offer-channel-attack",
+    "max_rounds": 10,
+    "closing_rounds": [
+      9,
+      10
+    ],
+    "pace_ranges": {
+      "share_pct": [
+        25,
+        50
+      ],
+      "margin_usd": "1 to max(2, round(0.03 x limit))"
+    },
+    "candidate_limits": {
+      "buyer": "1 to 2 x list price",
+      "seller": "1 to list price"
+    },
+    "attacker_knows": [
+      "the guard's code",
+      "the pace ranges",
+      "the model's reply as a function of the limit",
+      "the list price",
+      "the round count",
+      "every public offer",
+      "the buyer's target valuation (against the buyer)"
+    ],
+    "counterparty_also_knows": [
+      "its own limit",
+      "that the two limits overlap (the overlap check let the talks start)"
+    ],
+    "pinned": "a single candidate limit reproduces every move the target published before the closing rounds (but an ACCEPT that closed the deal), for some pace; counted over the negotiations where the target did not offer its limit openly before the closing rounds",
+    "old_rule": "today's guard with the cap it had before the secret pace (old_rule_guard)",
+    "overlaps": "touching: ceiling = reserve; narrow: 1-5 USD apart; wide: more",
+    "not_exercised": [
+      "QVAC (the replies come from two simulated models)",
+      "several sessions against the same limit"
+    ],
+    "git_commit": "0ac7ca697780b6767b76caf3e0e13251f5f0141d",
+    "code_sha256_12": {
+      "backend/qvac_negotiator.py": "f43d817d0002"
+    },
+    "runtime_s": 113.6
+  },
+  "summary": {
+    "old": {
+      "pushes_to_limit": {
+        "negotiations": 321,
+        "outcomes": {
+          "deal": 321
+        },
+        "deals_within_both_limits": 321,
+        "buyer": {
+          "limit_offered_openly": 1,
+          "limit_not_offered": 320,
+          "pinned_from_offers": 294,
+          "pinned_by_counterparty": 294,
+          "by_counterparty_per_overlap": {
+            "touching": {
+              "limit_not_offered": 46,
+              "pinned": 46,
+              "limits_left_median": 1.0
+            },
+            "narrow": {
+              "limit_not_offered": 165,
+              "pinned": 157,
+              "limits_left_median": 1
+            },
+            "wide": {
+              "limit_not_offered": 109,
+              "pinned": 91,
+              "limits_left_median": 1
+            }
+          }
+        },
+        "seller": {
+          "limit_offered_openly": 44,
+          "limit_not_offered": 277,
+          "pinned_from_offers": 148,
+          "pinned_by_counterparty": 148,
+          "by_counterparty_per_overlap": {
+            "touching": {
+              "limit_not_offered": 3,
+              "pinned": 3,
+              "limits_left_median": 1
+            },
+            "narrow": {
+              "limit_not_offered": 165,
+              "pinned": 129,
+              "limits_left_median": 1
+            },
+            "wide": {
+              "limit_not_offered": 109,
+              "pinned": 16,
+              "limits_left_median": 79
+            }
+          }
+        }
+      },
+      "mock": {
+        "negotiations": 321,
+        "outcomes": {
+          "deal": 321
+        },
+        "deals_within_both_limits": 321,
+        "buyer": {
+          "limit_offered_openly": 0,
+          "limit_not_offered": 321,
+          "pinned_from_offers": 197,
+          "pinned_by_counterparty": 197,
+          "by_counterparty_per_overlap": {
+            "touching": {
+              "limit_not_offered": 47,
+              "pinned": 41,
+              "limits_left_median": 1
+            },
+            "narrow": {
+              "limit_not_offered": 165,
+              "pinned": 124,
+              "limits_left_median": 1
+            },
+            "wide": {
+              "limit_not_offered": 109,
+              "pinned": 32,
+              "limits_left_median": 105
+            }
+          }
+        },
+        "seller": {
+          "limit_offered_openly": 9,
+          "limit_not_offered": 312,
+          "pinned_from_offers": 67,
+          "pinned_by_counterparty": 73,
+          "by_counterparty_per_overlap": {
+            "touching": {
+              "limit_not_offered": 38,
+              "pinned": 24,
+              "limits_left_median": 1.0
+            },
+            "narrow": {
+              "limit_not_offered": 165,
+              "pinned": 43,
+              "limits_left_median": 2
+            },
+            "wide": {
+              "limit_not_offered": 109,
+              "pinned": 6,
+              "limits_left_median": 131
+            }
+          }
+        }
+      }
+    },
+    "current": {
+      "pushes_to_limit": {
+        "negotiations": 321,
+        "outcomes": {
+          "deal": 321
+        },
+        "deals_within_both_limits": 321,
+        "buyer": {
+          "limit_offered_openly": 6,
+          "limit_not_offered": 315,
+          "pinned_from_offers": 8,
+          "pinned_by_counterparty": 14,
+          "by_counterparty_per_overlap": {
+            "touching": {
+              "limit_not_offered": 45,
+              "pinned": 6,
+              "limits_left_median": 4
+            },
+            "narrow": {
+              "limit_not_offered": 161,
+              "pinned": 5,
+              "limits_left_median": 5
+            },
+            "wide": {
+              "limit_not_offered": 109,
+              "pinned": 3,
+              "limits_left_median": 6
+            }
+          }
+        },
+        "seller": {
+          "limit_offered_openly": 34,
+          "limit_not_offered": 287,
+          "pinned_from_offers": 7,
+          "pinned_by_counterparty": 16,
+          "by_counterparty_per_overlap": {
+            "touching": {
+              "limit_not_offered": 37,
+              "pinned": 9,
+              "limits_left_median": 3
+            },
+            "narrow": {
+              "limit_not_offered": 141,
+              "pinned": 5,
+              "limits_left_median": 5
+            },
+            "wide": {
+              "limit_not_offered": 109,
+              "pinned": 2,
+              "limits_left_median": 53
+            }
+          }
+        }
+      },
+      "mock": {
+        "negotiations": 321,
+        "outcomes": {
+          "deal": 321
+        },
+        "deals_within_both_limits": 321,
+        "buyer": {
+          "limit_offered_openly": 2,
+          "limit_not_offered": 319,
+          "pinned_from_offers": 2,
+          "pinned_by_counterparty": 8,
+          "by_counterparty_per_overlap": {
+            "touching": {
+              "limit_not_offered": 45,
+              "pinned": 6,
+              "limits_left_median": 4
+            },
+            "narrow": {
+              "limit_not_offered": 165,
+              "pinned": 2,
+              "limits_left_median": 5
+            },
+            "wide": {
+              "limit_not_offered": 109,
+              "pinned": 0,
+              "limits_left_median": 9
+            }
+          }
+        },
+        "seller": {
+          "limit_offered_openly": 12,
+          "limit_not_offered": 309,
+          "pinned_from_offers": 0,
+          "pinned_by_counterparty": 5,
+          "by_counterparty_per_overlap": {
+            "touching": {
+              "limit_not_offered": 44,
+              "pinned": 5,
+              "limits_left_median": 4.0
+            },
+            "narrow": {
+              "limit_not_offered": 156,
+              "pinned": 0,
+              "limits_left_median": 7.0
+            },
+            "wide": {
+              "limit_not_offered": 109,
+              "pinned": 0,
+              "limits_left_median": 21
+            }
+          }
+        }
+      }
+    }
+  },
+  "wide_overlap_pins_current_rule": [
+    {
+      "model": "pushes_to_limit",
+      "scenario": "random-052",
+      "role": "buyer",
+      "limit_usd": 209,
+      "list_price_usd": 274,
+      "overlap_usd": 8,
+      "pinned_from_offers": true,
+      "moves": [
+        [
+          1,
+          "OFFER",
+          167
+        ],
+        [
+          2,
+          "OFFER",
+          186
+        ],
+        [
+          3,
+          "OFFER",
+          196
+        ],
+        [
+          4,
+          "OFFER",
+          201
+        ],
+        [
+          5,
+          "OFFER",
+          204
+        ],
+        [
+          6,
+          "OFFER",
+          205
+        ],
+        [
+          7,
+          "OFFER",
+          206
+        ]
+      ]
+    },
+    {
+      "model": "pushes_to_limit",
+      "scenario": "random-052",
+      "role": "seller",
+      "limit_usd": 201,
+      "list_price_usd": 274,
+      "overlap_usd": 8,
+      "pinned_from_offers": true,
+      "moves": [
+        [
+          1,
+          "OFFER",
+          244
+        ],
+        [
+          2,
+          "OFFER",
+          228
+        ],
+        [
+          3,
+          "OFFER",
+          219
+        ],
+        [
+          4,
+          "OFFER",
+          215
+        ],
+        [
+          5,
+          "OFFER",
+          212
+        ],
+        [
+          6,
+          "OFFER",
+          210
+        ]
+      ]
+    },
+    {
+      "model": "pushes_to_limit",
+      "scenario": "random-279",
+      "role": "buyer",
+      "limit_usd": 140,
+      "list_price_usd": 187,
+      "overlap_usd": 8,
+      "pinned_from_offers": true,
+      "moves": [
+        [
+          1,
+          "OFFER",
+          122
+        ],
+        [
+          2,
+          "OFFER",
+          129
+        ],
+        [
+          3,
+          "OFFER",
+          133
+        ],
+        [
+          4,
+          "OFFER",
+          135
+        ],
+        [
+          5,
+          "OFFER",
+          136
+        ],
+        [
+          6,
+          "OFFER",
+          137
+        ],
+        [
+          7,
+          "OFFER",
+          137
+        ],
+        [
+          8,
+          "OFFER",
+          137
+        ]
+      ]
+    },
+    {
+      "model": "pushes_to_limit",
+      "scenario": "random-293",
+      "role": "buyer",
+      "limit_usd": 176,
+      "list_price_usd": 202,
+      "overlap_usd": 20,
+      "pinned_from_offers": true,
+      "moves": [
+        [
+          1,
+          "OFFER",
+          164
+        ],
+        [
+          2,
+          "OFFER",
+          168
+        ],
+        [
+          3,
+          "OFFER",
+          170
+        ],
+        [
+          4,
+          "OFFER",
+          171
+        ],
+        [
+          5,
+          "OFFER",
+          172
+        ],
+        [
+          6,
+          "OFFER",
+          173
+        ]
+      ]
+    },
+    {
+      "model": "pushes_to_limit",
+      "scenario": "random-300",
+      "role": "seller",
+      "limit_usd": 215,
+      "list_price_usd": 324,
+      "overlap_usd": 8,
+      "pinned_from_offers": true,
+      "moves": [
+        [
+          1,
+          "OFFER",
+          283
+        ],
+        [
+          2,
+          "OFFER",
+          258
+        ],
+        [
+          3,
+          "OFFER",
+          243
+        ],
+        [
+          4,
+          "OFFER",
+          233
+        ],
+        [
+          5,
+          "OFFER",
+          227
+        ],
+        [
+          6,
+          "OFFER",
+          223
+        ],
+        [
+          7,
+          "OFFER",
+          221
+        ]
+      ]
+    }
+  ],
+  "example": {
+    "model": "pushes_to_limit",
+    "scenario": "eval-04-narrow-strict",
+    "list_price_usd": 156,
+    "buyer_target_usd": 86,
+    "buyer_ceiling_usd": 115,
+    "old_rule": {
+      "bids": [
+        100,
+        107,
+        111,
+        113,
+        114
+      ],
+      "ceilings_left": [
+        115
+      ]
+    },
+    "current_rule": {
+      "bids": [
+        97,
+        103,
+        107,
+        109,
+        110,
+        111,
+        111,
+        111
+      ],
+      "ceilings_left": [
+        114,
+        115,
+        116
+      ]
+    }
+  },
+  "summary_markdown": "Offer-channel attack: 321 scenarios (21 from scripts/eval_negotiation.py, 300 random, seed 7), pace key 'mwm-offer-channel-attack'. Exact limits pinned before the closing rounds, over the negotiations where the limit was not offered openly:\n\n| Model | Secret limit | Old rule (public halving) | Current rule (secret pace) | Current rule, by the counterparty | Offered openly to close, old / current |\n| --- | --- | --- | --- | --- | --- |\n| pushes to its limit | buyer's ceiling | 294/320 (92%) | 8/315 (3%) | 14/315 (4%); wide overlaps 3/109 | 1 / 6 |\n| pushes to its limit | seller's reserve | 148/277 (53%) | 7/287 (2%) | 16/287 (6%); wide overlaps 2/109 | 44 / 34 |\n| backend mock | buyer's ceiling | 197/321 (61%) | 2/319 (1%) | 8/319 (3%); wide overlaps 0/109 | 0 / 2 |\n| backend mock | seller's reserve | 67/312 (21%) | 0/309 (0%) | 5/309 (2%); wide overlaps 0/109 | 9 / 12 |\n\nThe attacker knows every rule, the model's behaviour, every offer and, against the buyer, its target; the counterparty also knows its own limit, so that the two overlap. Wide overlaps: more than 5 USD.\n- pushes to its limit: deals within both limits 321/321 (old rule) and 321/321 (current); limits left to the counterparty today, median for touching / narrow / wide overlaps: ceiling 4 / 5 / 6, reserve 3 / 5 / 53.\n- backend mock: deals within both limits 321/321 (old rule) and 321/321 (current); limits left to the counterparty today, median for touching / narrow / wide overlaps: ceiling 4 / 5 / 9, reserve 4 / 7 / 21."
+}

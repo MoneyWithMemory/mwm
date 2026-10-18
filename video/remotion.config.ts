@@ -8,6 +8,8 @@ Config.setCodec('h264')
 // UI text and thin lines: a low CRF keeps them crisp.
 Config.setCrf(16)
 Config.setPixelFormat('yuv420p')
+// Limited-range BT.709, the standard players and upload sites expect (the default is full-range BT.601).
+Config.setColorSpace('bt709')
 // Use a local Chromium when Remotion cannot download its own (offline or proxied machines).
 if (process.env.REMOTION_BROWSER) Config.setBrowserExecutable(process.env.REMOTION_BROWSER)
 // Some containers report a bogus memory limit; without a cap the frame cache can get the

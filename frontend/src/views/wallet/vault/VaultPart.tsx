@@ -1,4 +1,4 @@
-import { ArrowDownUp, ArrowUpRight, Lock, ShieldCheck } from 'lucide-react'
+import { ArrowDownUp, Lock, ShieldCheck } from 'lucide-react'
 import { AnimatePresence, motion, useAnimate } from 'motion/react'
 import { lazy, Suspense, useState, type FormEvent } from 'react'
 import type { ActivityItem, Market, WalletId, WalletState } from '@/api'
@@ -21,14 +21,13 @@ interface VaultPartProps {
   wallet: WalletState | undefined
   market: Market | undefined
   onMove: (direction: MoveDirection) => void
-  onSend: () => void
   onRename: (address: string) => void
 }
 
 type View = 'loading' | 'error' | 'missing' | 'locked' | 'unlocked'
 
 /** The self-custodial part of the account: create it, unlock it, or see and move what it holds. */
-export function VaultPart({ walletId, vault, wallet, market, onMove, onSend, onRename }: VaultPartProps) {
+export function VaultPart({ walletId, vault, wallet, market, onMove, onRename }: VaultPartProps) {
   const [onboarding, setOnboarding] = useState<{ mode: OnboardingMode; open: boolean } | null>(null)
   const state = vault.data
   const view: View = !state ? (vault.error ? 'error' : 'loading') : !state.exists ? 'missing' : state.unlocked ? 'unlocked' : 'locked'
@@ -57,7 +56,6 @@ export function VaultPart({ walletId, vault, wallet, market, onMove, onSend, onR
               wallet={wallet}
               market={market}
               onMove={onMove}
-              onSend={onSend}
               onRename={onRename}
               onLocked={vault.accept}
             />
@@ -160,7 +158,7 @@ interface UnlockedVaultProps extends Omit<VaultPartProps, 'vault'> {
   onLocked: (state: VaultState) => void
 }
 
-function UnlockedVault({ walletId, state, wallet, market, onMove, onSend, onRename, onLocked }: UnlockedVaultProps) {
+function UnlockedVault({ walletId, state, wallet, market, onMove, onRename, onLocked }: UnlockedVaultProps) {
   const lock = useLockVault()
   const assets = partAssets(state, wallet?.assets ?? [], market)
   const moves: ActivityItem[] = (wallet?.activity ?? []).filter((item) => item.kind === 'vault')
@@ -184,7 +182,6 @@ function UnlockedVault({ walletId, state, wallet, market, onMove, onSend, onRena
         </header>
         <div className="flex gap-5">
           <ActionButton variant="primary" icon={<ArrowDownUp size={22} />} label="Move" onClick={() => onMove('to_vault')} />
-          <ActionButton icon={<ArrowUpRight size={22} />} label="Send" onClick={onSend} />
           <ActionButton icon={<Lock size={20} />} label="Lock" onClick={lockNow} disabled={lock.pending} />
         </div>
         <VaultAssets assets={assets} market={market} btcSats={state.btc_sats} />

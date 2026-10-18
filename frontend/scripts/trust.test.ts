@@ -38,14 +38,14 @@ test("the owner's own explanation says what the score does to their trades, neve
 
 test('every tier but High Authenticity asks for consent, a ring the loudest', () => {
   assert.deepEqual(riskConsent('Low Reliability', 'Merchant'), {
-    title: 'Low reliability',
-    body: 'Merchant has little reliable trade history. Trading with it is a risk.',
+    title: 'Be careful',
+    body: "Merchant isn't considered reliable. Continue only if you trust it.",
     severe: false,
   })
-  assert.equal(riskConsent('Unverified', 'Bob')?.title, 'No history yet')
+  assert.equal(riskConsent('Unverified', 'Bob')?.body, 'Bob has no trade history yet. Continue only if you trust it.')
   assert.deepEqual(riskConsent('Ring Anomaly Detected', 'Sybil'), {
-    title: 'Suspicious activity',
-    body: 'Sybil trades in loops with itself, a pattern used to fake reliability. Trading with it is a high risk.',
+    title: 'Be careful',
+    body: "Sybil isn't considered reliable. Continue only if you trust it.",
     severe: true,
   })
   assert.equal(riskConsent('High Authenticity', 'Wallet B'), null)

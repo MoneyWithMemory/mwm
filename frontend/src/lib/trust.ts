@@ -59,11 +59,11 @@ export interface RiskWarning {
 
 /** Every tier but High Authenticity is a risk the user confirms before trading (accept_risk). */
 const CONSENT_COPY: Partial<Record<TrustTier, { title: string; body: (name: string) => string; severe?: boolean }>> = {
-  'Low Reliability': { title: 'Low reliability', body: (name) => `${name} has little reliable trade history. Trading with it is a risk.` },
-  Unverified: { title: 'No history yet', body: (name) => `${name} has no settled trades yet. Trading with it is a risk.` },
+  'Low Reliability': { title: 'Be careful', body: (name) => `${name} isn't considered reliable. Continue only if you trust it.` },
+  Unverified: { title: 'Be careful', body: (name) => `${name} has no trade history yet. Continue only if you trust it.` },
   'Ring Anomaly Detected': {
-    title: 'Suspicious activity',
-    body: (name) => `${name} trades in loops with itself, a pattern used to fake reliability. Trading with it is a high risk.`,
+    title: 'Be careful',
+    body: (name) => `${name} isn't considered reliable. Continue only if you trust it.`,
     severe: true,
   },
 }

@@ -17,7 +17,6 @@ import { totalValueUsd, withCurrentPoint } from './valuation'
 import { MoveSheet } from './vault/MoveSheet'
 import { useMoveToVaultRequests } from './vault/moveRequest'
 import { useWalletPart, type WalletPart } from './vault/part'
-import { SendSheet } from './vault/SendSheet'
 import { VaultPart } from './vault/VaultPart'
 
 const PARTS: TabItem<WalletPart>[] = [
@@ -35,7 +34,6 @@ export function WalletView() {
   const [receiveOpen, setReceiveOpen] = useState(false)
   const [rename, setRename] = useState<{ address: string; open: boolean } | null>(null)
   const [move, setMove] = useState<{ direction: MoveDirection; open: boolean } | null>(null)
-  const [sendOpen, setSendOpen] = useState(false)
 
   const state = wallet.data
   const openMove = (direction: MoveDirection) => setMove({ direction, open: true })
@@ -60,7 +58,6 @@ export function WalletView() {
                 wallet={state}
                 market={market.data}
                 onMove={openMove}
-                onSend={() => setSendOpen(true)}
                 onRename={(address) => setRename({ address, open: true })}
               />
             ) : state ? (
@@ -94,7 +91,6 @@ export function WalletView() {
           market={market.data}
         />
       )}
-      <SendSheet open={sendOpen} onClose={() => setSendOpen(false)} walletId={walletId} market={market.data} />
       {state && rename && (
         <RenameSheet
           key={rename.address}

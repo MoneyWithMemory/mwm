@@ -75,7 +75,8 @@ export function Intro({ layout }: { layout: Layout }) {
           width: '100%',
           height: '100%',
           objectFit: 'cover',
-          transform: `scale(${1.1 - 0.07 * smoothOut(k)})`,
+          // The vertical still's lower orb sits mid-frame: lift it clear of the title.
+          transform: `translateY(${desktop ? 0 : -150}px) scale(${1.1 - 0.07 * smoothOut(k)})`,
           opacity: interpolate(frame, [0, 20], [0, 1], { extrapolateRight: 'clamp' }),
         }}
       />
@@ -85,7 +86,7 @@ export function Intro({ layout }: { layout: Layout }) {
           justifyContent: 'flex-end',
           alignItems: 'center',
           textAlign: 'center',
-          padding: desktop ? '0 240px 120px' : '0 80px 230px',
+          padding: desktop ? '0 240px 120px' : '0 80px 150px',
         }}
       >
         <Img src={staticFile('brand/mwm-mark-white.svg')} style={{ width: desktop ? 104 : 132, marginBottom: desktop ? 26 : 34, ...rise(frame, 10) }} />

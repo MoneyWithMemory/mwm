@@ -10,6 +10,8 @@ interface SheetProps {
   open: boolean
   onClose: () => void
   title: string
+  /** A small tag on the title's line, e.g. where the content comes from. */
+  badge?: ReactNode
   children: ReactNode
 }
 
@@ -22,13 +24,13 @@ interface SheetProps {
  * Must be inside an <OverlayLayer> and covers it (its pane in split view). Escape and the
  * backdrop close it; focus moves in on open and returns to the trigger on close.
  */
-export function Sheet({ open, onClose, title, children }: SheetProps) {
+export function Sheet({ open, onClose, title, badge, children }: SheetProps) {
   const root = useOverlayRoot()
 
   const content = (
     <AnimatePresence>
       {open && (
-        <SheetPanel onClose={onClose} title={title}>
+        <SheetPanel onClose={onClose} title={title} badge={badge}>
           {children}
         </SheetPanel>
       )}
@@ -39,13 +41,9 @@ export function Sheet({ open, onClose, title, children }: SheetProps) {
   return root ? createPortal(content, root) : null
 }
 
-interface SheetPanelProps {
-  onClose: () => void
-  title: string
-  children: ReactNode
-}
+type SheetPanelProps = Omit<SheetProps, 'open'>
 
-function SheetPanel({ onClose, title, children }: SheetPanelProps) {
+function SheetPanel({ onClose, title, badge, children }: SheetPanelProps) {
   const titleId = useId()
   const panelRef = useRef<HTMLDivElement>(null)
   const [isScrolled, setIsScrolled] = useState(false)
@@ -101,9 +99,12 @@ function SheetPanel({ onClose, title, children }: SheetPanelProps) {
             isScrolled ? 'border-separator' : 'border-transparent'
           )}
         >
-          <h2 id={titleId} className="pr-10 text-base leading-6 font-semibold">
-            {title}
-          </h2>
+          <div className="flex min-w-0 items-center gap-2 pr-10">
+            <h2 id={titleId} className="text-base leading-6 font-semibold">
+              {title}
+            </h2>
+            {badge}
+          </div>
           <CloseButton className="absolute top-2 right-2" onClick={onClose} />
         </div>
 

@@ -1,10 +1,11 @@
 import { useWallet } from '@/api'
 import { Avatar, Card, CopyButton, Skeleton, TrustBadge } from '@/components/ui'
 import { shortAddress } from '@/lib/format'
+import { ownTrustExplanation } from '@/lib/trust'
 
 /**
  * The wallet itself, first in Contacts: its reliability as counterparties see it (the one loud
- * number), what the label means behind the (?), and the address to share.
+ * number), what the label means for its owner behind the (?), and the address to share.
  */
 export function ProfileCard({ walletId }: { walletId: string }) {
   const wallet = useWallet(walletId)
@@ -50,7 +51,7 @@ export function ProfileCard({ walletId }: { walletId: string }) {
           <span className="amount text-2xl leading-none font-semibold">{pct === null ? '—' : `${Math.round(pct)}%`}</span>
         </div>
         {trust ? (
-          <TrustBadge tier={trust.trust_tier} size="sm" explain />
+          <TrustBadge tier={trust.trust_tier} size="sm" explain explanation={ownTrustExplanation(trust.trust_tier)} />
         ) : (
           <span className="text-xs text-hint">Not available yet</span>
         )}

@@ -1,15 +1,22 @@
-import { ApiError, ERROR_CODES, type ApiClient, type RequestOptions } from './client'
+import { ApiError, ERROR_CODES, readableMessage, type ApiClient, type RequestOptions } from './client'
 import type {
+  AdviceView,
   AgentProfile,
   AgentSearchRequest,
   AgentSearchResult,
+  AskRequest,
+  AskView,
   ApiErrorBody,
+  AssetAmountRequest,
+  AssetId,
   Contact,
   CreateSessionRequest,
   CreateWantRequest,
   CreateWalletRequest,
   Health,
   Market,
+  ReceiveInvoice,
+  RefreshResult,
   SessionId,
   SessionSummary,
   SessionView,
@@ -17,6 +24,7 @@ import type {
   ShopListing,
   ShopQuery,
   SignRequest,
+  TransferResult,
   UpdateAgentProfileRequest,
   WalletId,
   WalletState,
@@ -26,13 +34,62 @@ import type {
 const DEFAULT_TIMEOUT_MS = 15_000
 /** Signing can start the on-chain swap; allow for slow regtest calls. */
 const SIGN_TIMEOUT_MS = 120_000
+/** A move waits for the swap lock, pays, mines a block and refreshes both sides. */
+export const MOVE_TIMEOUT_MS = 120_000
+/** The local model answers in at most ~12 s, else the backend sends the quick version. */
+const ASK_TIMEOUT_MS = 25_000
 
-type Method = 'GET' | 'POST' | 'PUT'
+export type Method = 'GET' | 'POST' | 'PUT'
+
+export type JsonRequestOptions = RequestOptions & { body?: unknown; timeoutMs?: number }
 
 const enc = encodeURIComponent
 
 function isErrorBody(value: unknown): value is ApiErrorBody {
   return typeof value === 'object' && value !== null && 'code' in value && 'message' in value
+}
+
+/**
+ * One JSON request to `${base}${path}`. Rejects with ApiError: the {code, message} body of a
+ * non-2xx response, or a client-side code. The Vault client (src/vault/http.ts) shares it.
+ */
+export async function requestJson<T>(base: string, method: Method, path: string, opts: JsonRequestOptions = {}): Promise<T> {
+  const controller = new AbortController()
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+  const onAbort = () => controller.abort()
+  opts.signal?.addEventListener('abort', onAbort, { once: true })
+  if (opts.signal?.aborted) controller.abort()
+
+  try {
+    const res = await fetch(`${base}${path}`, {
+      method,
+      signal: controller.signal,
+      headers: opts.body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+    })
+    const data: unknown = await res.json().catch(() => undefined)
+    if (!res.ok) {
+      if (isErrorBody(data)) throw new ApiError(data.code, readableMessage(data.code, data.message), res.status)
+      throw new ApiError(`http_${res.status}`, res.statusText || `HTTP ${res.status}`, res.status)
+    }
+    if (data === undefined) throw new ApiError(ERROR_CODES.badResponse, `Invalid JSON from ${path}`, res.status)
+    return data as T
+  } catch (err) {
+    if (err instanceof ApiError) throw err
+    if (controller.signal.aborted) {
+      throw timedOut
+        ? new ApiError(ERROR_CODES.timeout, `Request to ${path} timed out`)
+        : new ApiError(ERROR_CODES.aborted, 'Request aborted')
+    }
+    throw new ApiError(ERROR_CODES.network, err instanceof Error ? err.message : 'Network error')
+  } finally {
+    clearTimeout(timer)
+    opts.signal?.removeEventListener('abort', onAbort)
+  }
 }
 
 /** Talks to the backend through the same-origin /api proxy (see vite.config.ts). */
@@ -43,43 +100,8 @@ export class HttpApiClient implements ApiClient {
     this.base = base
   }
 
-  private async request<T>(method: Method, path: string, opts: RequestOptions & { body?: unknown; timeoutMs?: number } = {}): Promise<T> {
-    const controller = new AbortController()
-    let timedOut = false
-    const timer = setTimeout(() => {
-      timedOut = true
-      controller.abort()
-    }, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS)
-    const onAbort = () => controller.abort()
-    opts.signal?.addEventListener('abort', onAbort, { once: true })
-    if (opts.signal?.aborted) controller.abort()
-
-    try {
-      const res = await fetch(`${this.base}${path}`, {
-        method,
-        signal: controller.signal,
-        headers: opts.body === undefined ? undefined : { 'Content-Type': 'application/json' },
-        body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-      })
-      const data: unknown = await res.json().catch(() => undefined)
-      if (!res.ok) {
-        if (isErrorBody(data)) throw new ApiError(data.code, data.message, res.status)
-        throw new ApiError(`http_${res.status}`, res.statusText || `HTTP ${res.status}`, res.status)
-      }
-      if (data === undefined) throw new ApiError(ERROR_CODES.badResponse, `Invalid JSON from ${path}`, res.status)
-      return data as T
-    } catch (err) {
-      if (err instanceof ApiError) throw err
-      if (controller.signal.aborted) {
-        throw timedOut
-          ? new ApiError(ERROR_CODES.timeout, `Request to ${path} timed out`)
-          : new ApiError(ERROR_CODES.aborted, 'Request aborted')
-      }
-      throw new ApiError(ERROR_CODES.network, err instanceof Error ? err.message : 'Network error')
-    } finally {
-      clearTimeout(timer)
-      opts.signal?.removeEventListener('abort', onAbort)
-    }
+  private request<T>(method: Method, path: string, opts: JsonRequestOptions = {}): Promise<T> {
+    return requestJson<T>(this.base, method, path, opts)
   }
 
   health(opts?: RequestOptions) {
@@ -112,6 +134,28 @@ export class HttpApiClient implements ApiClient {
 
   getContacts(walletId: WalletId, opts?: RequestOptions) {
     return this.request<Contact[]>('GET', `/wallets/${enc(walletId)}/contacts`, opts)
+  }
+
+  receiveInvoice(walletId: WalletId, assetId: AssetId, amount: number, opts?: RequestOptions) {
+    const body: AssetAmountRequest = { asset_id: assetId, amount }
+    return this.request<ReceiveInvoice>('POST', `/wallets/${enc(walletId)}/receive_invoice`, { ...opts, body })
+  }
+
+  refreshWallet(walletId: WalletId, opts?: RequestOptions) {
+    return this.request<RefreshResult>('POST', `/wallets/${enc(walletId)}/refresh`, opts)
+  }
+
+  moveToVault(walletId: WalletId, assetId: AssetId, amount: number, opts?: RequestOptions) {
+    const body: AssetAmountRequest = { asset_id: assetId, amount }
+    return this.request<TransferResult>('POST', `/wallets/${enc(walletId)}/move_to_vault`, { ...opts, body, timeoutMs: MOVE_TIMEOUT_MS })
+  }
+
+  getAdvice(walletId: WalletId, opts?: RequestOptions) {
+    return this.request<AdviceView>('GET', `/wallets/${enc(walletId)}/advice`, opts)
+  }
+
+  ask(walletId: WalletId, body: AskRequest, opts?: RequestOptions) {
+    return this.request<AskView>('POST', `/wallets/${enc(walletId)}/ask`, { ...opts, body, timeoutMs: ASK_TIMEOUT_MS })
   }
 
   createSession(body: CreateSessionRequest, opts?: RequestOptions) {

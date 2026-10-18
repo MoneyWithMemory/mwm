@@ -23,8 +23,9 @@ import {
   TrustBadge,
 } from '@/components/ui'
 import { formatAssetAmount, formatUnitPrice, formatUsd, shortAddress } from '@/lib/format'
-import { lotIssue, minLotAmount, proRataPrice, suggestedLimits } from '@/lib/lots'
+import { lotIssue, MIN_PART_USD, minLotAmount, proRataPrice, suggestedLimits } from '@/lib/lots'
 import { useWalletContext } from '@/lib/navigation'
+import { parseUsd, WHOLE_USD_ERROR } from '@/lib/usd'
 import { BuyerLimits } from '../shared/BuyerLimits'
 import { StrategyPicker } from '../shared/StrategyPicker'
 import { useBuyerLimits } from '../shared/useBuyerLimits'
@@ -124,8 +125,10 @@ export function SetupForm({ wallet, contacts, market, initialAddress, onCreated 
     { target: String(wallet.agent_profile.buyer_target_usd || ''), ceiling: String(wallet.agent_profile.buyer_max_ceiling_usd || '') },
     listPrice === null ? null : suggestedLimits(listPrice, available),
   )
-  const ceilingValue = parse(limits.ceiling)
-  const targetValue = parse(limits.target)
+  const ceiling = parseUsd(limits.ceiling)
+  const target = parseUsd(limits.target)
+  const ceilingValue = ceiling.value
+  const targetValue = target.value
 
   let amountError: string | undefined
   if (!amount || atomic === null || atomic <= 0) amountError = 'Enter an amount greater than 0.'
@@ -135,16 +138,22 @@ export function SetupForm({ wallet, contacts, market, initialAddress, onCreated 
     if (issue === 'exceeds_lot') amountError = `The seller offers ${lot}.`
     else if (issue === 'partial_not_allowed') amountError = `Full order only: buy all ${lot}.`
     else if (issue === 'amount_too_small') {
-      amountError = `Take at least ${formatAssetAmount(minLotAmount(desk.asking_price_usd, desk.offered_amount), precision, asset?.ticker)}: 1 ${payment?.ticker ?? 'USDT'} worth.`
+      // A lot worth less than the minimum part is sold whole.
+      const min = minLotAmount(desk.asking_price_usd, desk.offered_amount)
+      amountError = min === desk.offered_amount
+        ? `Full order only: buy all ${lot}.`
+        : `At least ${formatAssetAmount(min, precision, asset?.ticker)} (about $${MIN_PART_USD}).`
     }
   }
 
   let ceilingError: string | undefined
-  if (!limits.ceiling || ceilingValue === null || ceilingValue <= 0) ceilingError = 'Enter a maximum greater than 0.'
+  if (ceiling.cents) ceilingError = WHOLE_USD_ERROR
+  else if (ceilingValue === null || ceilingValue <= 0) ceilingError = 'Enter a maximum greater than 0.'
   else if (ceilingValue > available) ceilingError = `Your balance is ${formatAssetAmount(paymentBalance?.amount ?? 0, paymentBalance?.precision ?? 0, payment?.ticker)}.`
 
   let targetError: string | undefined
-  if (!limits.target || targetValue === null || targetValue <= 0) targetError = 'Enter a target greater than 0.'
+  if (target.cents) targetError = WHOLE_USD_ERROR
+  else if (targetValue === null || targetValue <= 0) targetError = 'Enter a target greater than 0.'
   else if (ceilingValue !== null && targetValue > ceilingValue) targetError = 'The target must not exceed your maximum.'
 
   const valid = Boolean(address && asset && !amountError && !ceilingError && !targetError)
@@ -217,8 +226,8 @@ export function SetupForm({ wallet, contacts, market, initialAddress, onCreated 
                 <Chip
                   key={part.label}
                   active={atomic === partAtomic}
-                  // "All" stays available: it is the only amount a full order allows.
-                  disabled={fullOnly && partAtomic !== desk.offered_amount}
+                  // A part the desk would refuse (a full order, or under the minimum) is off; "All" never is.
+                  disabled={lotIssue(desk, partAtomic) !== null}
                   onClick={() => editAmount(amountText(partAtomic, precision))}
                 >
                   {part.label}

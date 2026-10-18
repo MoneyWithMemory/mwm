@@ -13,6 +13,10 @@ export const POLL_MS = {
   health: 5000,
   market: 10_000,
   wallets: 10_000,
+  // A poll never waits for the local model: the backend phrases the summary in the background and caches it.
+  advice: 30_000,
+  // How soon to look again while it phrases (a short sentence takes the model a few seconds).
+  advicePhrasing: 3000,
 } as const
 
 // Every successful mutation refreshes all mounted polls, so both panes update at once.
@@ -128,6 +132,19 @@ export function useWallet(walletId: WalletId | null) {
 
 export function useContacts(walletId: WalletId | null) {
   return usePoll(walletId && `contacts:${walletId}`, (signal) => api.getContacts(walletId as WalletId, { signal }), POLL_MS.contacts)
+}
+
+/** The advisor's observations on walletId's own data, phrased on this device. */
+export function useAdvice(walletId: WalletId | null) {
+  const poll = usePoll(walletId && `advice:${walletId}`, (signal) => api.getAdvice(walletId as WalletId, { signal }), POLL_MS.advice)
+  const { data, refresh } = poll
+  // While the local model phrases the summary, look again soon instead of at the next poll.
+  useEffect(() => {
+    if (!data?.phrasing) return
+    const timer = setTimeout(refresh, POLL_MS.advicePhrasing)
+    return () => clearTimeout(timer)
+  }, [data, refresh])
+  return poll
 }
 
 export function useSessions(walletId: WalletId | null) {

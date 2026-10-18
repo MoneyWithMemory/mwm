@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import type { AssetBalance, Market } from '@/api'
 import { AssetBadge } from '@/components/ui'
 import { formatUsd } from '@/lib/format'
@@ -7,12 +8,17 @@ interface AssetListProps {
   assets: AssetBalance[]
   costBasis: Record<string, number | null>
   market: Market | undefined
+  /** Right end of the title row, e.g. "Move to Vault". */
+  action?: ReactNode
 }
 
-export function AssetList({ assets, costBasis, market }: AssetListProps) {
+export function AssetList({ assets, costBasis, market, action }: AssetListProps) {
   return (
     <section className="flex flex-col gap-2" aria-label="Assets">
-      <h2 className="px-1 text-sm font-semibold text-hint">Assets</h2>
+      <div className="flex min-h-8 items-center justify-between gap-2 px-1">
+        <h2 className="text-sm font-semibold text-hint">Assets</h2>
+        {action}
+      </div>
       <ul className="flex flex-col divide-y divide-separator rounded-card bg-surface shadow-card">
         {assets.map((asset) => {
           const value = assetValueUsd(asset, market)

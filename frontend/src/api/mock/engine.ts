@@ -1,14 +1,19 @@
-import { ApiError } from '../client'
+import { ApiError, WHOLE_USD_MESSAGE } from '../client'
 import {
   CANCELLABLE_STATES,
   MAX_ROUNDS,
   SETTLEMENT_STEPS,
   TERMINAL_STATES,
+  type AdviceView,
+  type AskRequest,
+  type AskView,
   type AgentAction,
   type AgentProfile,
   type AssetBalance,
   type AgentSearchRequest,
   type AgentSearchResult,
+  type AssetAmountRequest,
+  type AssetId,
   type AssetRef,
   type CanonicalSwapTerms,
   type Contact,
@@ -18,6 +23,8 @@ import {
   type Health,
   type Market,
   type PublicDesk,
+  type ReceiveInvoice,
+  type RefreshResult,
   type Role,
   type SessionId,
   type SessionState,
@@ -27,6 +34,8 @@ import {
   type SettlementStep,
   type ShopListing,
   type ShopQuery,
+  type TransferResult,
+  type TrustAudit,
   type UpdateAgentProfileRequest,
   type WalletId,
   type WalletState,
@@ -43,10 +52,13 @@ import {
   randomHex,
   totalUsd,
   trustFor,
+  withWalkAways,
   type MockWallet,
   type MockWant,
 } from './seed'
-import { minLotAmount, proRataPrice } from '@/lib/lots'
+import { computeAdvice, type OwnSession } from './advice'
+import { computeAnswer } from './ask'
+import { MIN_PART_USD, minLotAmount, proRataPrice } from '@/lib/lots'
 import { canonicalJson, sha256Hex, sha256HexSync } from './sha256'
 
 /** In-memory backend shared by every pane in the tab. All timings in ms. */
@@ -86,6 +98,9 @@ interface MockSession {
   /** The desk's list price and secret reserve for this amount (pro rata for part of the lot). */
   listPriceUsd: number
   reserveUsd: number
+  /** Each owner's strategy for their own agent, fixed when the session starts. */
+  buyerPrompt: string
+  sellerPrompt: string
   state: SessionState
   rounds: MockRound[]
   thinking: Role | null
@@ -128,6 +143,20 @@ function walletByAddress(address: string): MockWallet | undefined {
   return undefined
 }
 
+// ── Trust ──────────────────────────────────────────────────────────
+
+/** Agreed deals each address walked away from: it cancelled them, or left them unsigned to expiry while the other side signed. */
+const walkAways = new Map<string, number>()
+
+function walkAway(address: string) {
+  walkAways.set(address, (walkAways.get(address) ?? 0) + 1)
+}
+
+/** The address's trust as the backend scores it now: the seeded one, minus its walk-aways. */
+function trustOf(address: string): TrustAudit {
+  return withWalkAways(trustFor(address), walkAways.get(address) ?? 0)
+}
+
 /** Only the public fields of an active desk: the reserve and the prompt stay private. */
 function publicDesk(address: string): PublicDesk | null {
   const profile = walletByAddress(address)?.agent_profile
@@ -155,7 +184,7 @@ function wantListing(want: MockWant, viewer: MockWallet): ShopListing {
     // A request is answered with its whole amount.
     allow_partial: false,
     note: want.note,
-    trust: trustFor(want.ownerAddress),
+    trust: trustOf(want.ownerAddress),
     created_at: want.createdAt,
   }
 }
@@ -177,7 +206,7 @@ function sellListings(viewer: MockWallet): ShopListing[] {
       price_usd: desk.asking_price_usd,
       allow_partial: desk.allow_partial,
       note: null,
-      trust: trustFor(owner.summary.address),
+      trust: trustOf(owner.summary.address),
       created_at: null,
     })
   }
@@ -201,6 +230,16 @@ const units = (amount: number, asset: AssetRef) => amount / 10 ** asset.precisio
 
 // ── Views ──────────────────────────────────────────────────────────
 
+/** The wallet's sessions as it sees them, with the strategy it gave its own agent in each. */
+function ownSessions(walletId: WalletId): OwnSession[] {
+  return [...sessions.values()]
+    .filter((s) => s.buyerId === walletId || s.sellerId === walletId)
+    .map((s) => {
+      const role = roleOrThrow(s, walletId)
+      return { ...sessionView(s, role), my_ai_prompt: role === 'buyer' ? s.buyerPrompt : s.sellerPrompt }
+    })
+}
+
 function walletState(w: MockWallet): WalletState {
   const assets: AssetBalance[] = ASSET_LIST.filter(
     (a) => a.asset_id === ASSETS.btc.asset_id || (w.balances[a.asset_id] ?? 0) > 0,
@@ -213,7 +252,7 @@ function walletState(w: MockWallet): WalletState {
     activity: w.activity,
     local_aliases: w.local_aliases,
     agent_profile: w.agent_profile,
-    trust: trustFor(w.summary.address),
+    trust: trustOf(w.summary.address),
   }
 }
 
@@ -236,7 +275,7 @@ function summaryView(s: MockSession, role: Role): SessionSummary {
 /** Perspective masking: only the viewer's own thought; never the other side's secrets. */
 function sessionView(s: MockSession, role: Role): SessionView {
   const summary = summaryView(s, role)
-  const counterpartyTrust = trustFor(summary.counterparty_address)
+  const counterpartyTrust = trustOf(summary.counterparty_address)
   return {
     ...summary,
     payment_asset: s.paymentAsset,
@@ -287,6 +326,12 @@ function schedule(s: MockSession, ms: number, fn: () => void) {
   s.timers.add(timer)
 }
 
+/** Terms past their expiry: a party that left them unsigned while the other signed walked away. */
+function expire(s: MockSession) {
+  if (s.buyerSigned !== s.sellerSigned) walkAway(s.buyerSigned ? s.sellerAddress : walletOrThrow(s.buyerId).summary.address)
+  setState(s, 'EXPIRED')
+}
+
 function block(s: MockSession, reasons: string[]) {
   s.gate = { passed: false, reasons }
   setState(s, 'BLOCKED_BY_GATE')
@@ -294,7 +339,7 @@ function block(s: MockSession, reasons: string[]) {
 
 /** As api_server.create_session: one reason per side whose trust check fails, naming only its tier. */
 function trustReasons(address: string, who: 'Counterparty' | 'Buyer'): string[] {
-  const trust = trustFor(address)
+  const trust = trustOf(address)
   return trust.trusted ? [] : [`${who} trust check failed: ${trust.trust_tier}`]
 }
 
@@ -463,7 +508,7 @@ async function runGate(s: MockSession) {
   s.termsHash = hash
   setState(s, 'AWAITING_SIGNATURES')
   schedule(s, TIMING.termsTtlSeconds * 1000, () => {
-    if (s.state === 'AWAITING_SIGNATURES') setState(s, 'EXPIRED')
+    if (s.state === 'AWAITING_SIGNATURES') expire(s)
   })
 }
 
@@ -536,6 +581,142 @@ function applySettlement(s: MockSession) {
   setState(s, 'SETTLED')
 }
 
+// ── Vault moves ────────────────────────────────────────────────────
+
+/** An RGB invoice issued by POST /api/wallets/{id}/receive_invoice. */
+export interface MockInvoice {
+  walletId: WalletId
+  asset: AssetRef
+  amount: number
+  paid: boolean
+}
+
+const INVOICE_TTL_SECONDS = 3600
+const invoices = new Map<string, MockInvoice>()
+
+/** The Vault service as the backend reaches it (VAULT_URL); src/vault/mock.ts connects it. */
+export interface MockVaultLink {
+  /** Throws as invoice would, vault_missing (404) or vault_locked (409), without issuing one. */
+  ready(walletId: WalletId): void
+  /** POST /vault/{id}/invoice. Throws vault_missing (404) or vault_locked (409). */
+  invoice(walletId: WalletId, assetId: AssetId, amount: number): string
+  /** The paid invoice reaches the Vault (the backend then refreshes it). */
+  receive(invoice: string): void
+}
+
+let vaultLink: MockVaultLink | null = null
+
+/** Until the mock Vault connects, move_to_vault answers 503, like a backend whose Vault is down. */
+export function connectMockVault(link: MockVaultLink): void {
+  vaultLink = link
+}
+
+/** The connected Vault, or the backend's 503 for a Vault service that does not answer. */
+function linkOrThrow(): MockVaultLink {
+  if (!vaultLink) throw new ApiError('vault_unavailable', 'The Vault is not reachable right now. Try again in a moment.', 503)
+  return vaultLink
+}
+
+/** As api_server._vault_invoice: the Vault's errors reach the client, its 404 vault_missing as a 409. */
+function askVault<T>(ask: () => T): T {
+  try {
+    return ask()
+  } catch (err) {
+    if (err instanceof ApiError && err.code === 'vault_missing') throw conflict(err.code, 'You have no Vault yet. Create it first.')
+    throw err
+  }
+}
+
+/** The mock wallet an RGB invoice pays, if one of them issued it. */
+export function invoicePayee(invoice: string): MockInvoice | undefined {
+  return invoices.get(invoice)
+}
+
+function rgbAssetOrThrow(assetId: AssetId): AssetRef {
+  const asset = ASSET_LIST.find((a) => a.asset_id === assetId && a.schema !== 'BTC')
+  if (!asset) throw badRequest('invalid_request', 'Only USDT and PEPE move between your Wallet and your Vault.')
+  return asset
+}
+
+function amountOrThrow(amount: number): void {
+  if (!Number.isInteger(amount) || amount <= 0) throw badRequest('invalid_request', 'Enter a whole amount greater than 0.')
+}
+
+/** A move between a wallet and its own Vault: no counterparty, and no memory-graph edge. */
+function vaultItem(direction: 'in' | 'out', asset: AssetRef, amount: number, txid: string) {
+  return {
+    id: `vault-${txid.slice(0, 12)}`,
+    t: now(),
+    kind: 'vault' as const,
+    direction,
+    asset,
+    amount,
+    counterparty_address: null,
+    txid,
+    session_id: null,
+    status: 'confirmed' as const,
+  }
+}
+
+/** Records a Vault move on the wallet: an activity item and a point of its balance chart, like the backend. */
+function recordVaultMove(wallet: MockWallet, direction: 'in' | 'out', asset: AssetRef, amount: number, txid: string) {
+  wallet.activity.unshift(vaultItem(direction, asset, amount, txid))
+  wallet.history_points.push({ t: now(), balances: { ...wallet.balances }, total_usd: totalUsd(wallet.balances, pepePriceUsd) })
+}
+
+/** As api_server.DEALS_IN_PROGRESS: deals that can still settle. */
+const DEALS_IN_PROGRESS: readonly SessionState[] = ['NEGOTIATING', 'AWAITING_SIGNATURES', 'SETTLING']
+
+/**
+ * As api_server._promised: what the wallet promised of an asset in deals that can still settle,
+ * each lot it sells and, as the buyer, the agreed payment, or its ceiling while the price is negotiated.
+ */
+function promisedAmount(walletId: WalletId, assetId: AssetId): number {
+  let promised = 0
+  for (const s of sessions.values()) {
+    if (!DEALS_IN_PROGRESS.includes(s.state)) continue
+    if (s.sellerId === walletId && s.asset.asset_id === assetId) promised += s.rgbAmount
+    if (s.buyerId === walletId && s.paymentAsset.asset_id === assetId) {
+      promised += s.state === 'NEGOTIATING' ? s.ceilingUsd * 10 ** s.paymentAsset.precision : (s.terms?.payment_amount ?? 0)
+    }
+  }
+  return promised
+}
+
+/**
+ * move_to_vault's own refusals, in the backend's order, before the Vault is asked for an invoice:
+ * the balance, then what must stay in the wallet (api_server._keep_promises), i.e. the lot its
+ * active Seller Desk lists and what its deals in progress promise.
+ */
+function moveToVaultChecks(walletId: WalletId, body: AssetAmountRequest): { wallet: MockWallet; asset: AssetRef } {
+  const wallet = walletOrThrow(walletId)
+  const asset = rgbAssetOrThrow(body.asset_id)
+  amountOrThrow(body.amount)
+  const amountText = (amount: number) => `${amount.toLocaleString('en-US')} ${asset.ticker}`
+  const held = wallet.balances[asset.asset_id] ?? 0
+  if (held < body.amount) throw conflict('insufficient_funds', `Your wallet does not hold ${amountText(body.amount)}.`)
+  const desk = wallet.agent_profile
+  const lot = desk.seller_active && desk.offered_asset_id === asset.asset_id ? desk.offered_amount : 0
+  if (held - body.amount < lot) {
+    throw conflict('desk_lot', `${amountText(lot)} are listed on your Seller Desk. Lower the lot or pause the desk first.`)
+  }
+  const promised = promisedAmount(walletId, asset.asset_id)
+  if (held - body.amount < promised) {
+    throw conflict('funds_committed', `${amountText(promised)} are promised in a deal in progress. Wait for it to finish or cancel it.`)
+  }
+  return { wallet, asset }
+}
+
+/** The Vault paid one of a wallet's invoices: the funds arrive as a "vault in" movement. */
+export function receiveFromVault(invoice: string, txid: string): void {
+  const entry = invoices.get(invoice)
+  if (!entry || entry.paid) throw conflict('invalid_invoice', 'This invoice is unknown or already paid.')
+  const wallet = walletOrThrow(entry.walletId)
+  entry.paid = true
+  wallet.balances[entry.asset.asset_id] = (wallet.balances[entry.asset.asset_id] ?? 0) + entry.amount
+  recordVaultMove(wallet, 'in', entry.asset, entry.amount, txid)
+}
+
 // ── Public API (sync; MockApiClient adds latency and copies) ───────
 
 export const mockEngine = {
@@ -592,6 +773,8 @@ export const mockEngine = {
   updateAgentProfile(walletId: WalletId, body: UpdateAgentProfileRequest): AgentProfile {
     const wallet = walletOrThrow(walletId)
     const next = { ...wallet.agent_profile, ...body }
+    const prices = [next.asking_price_usd, next.secret_min_reserve_usd, next.buyer_target_usd, next.buyer_max_ceiling_usd]
+    if (!prices.every((usd) => Number.isInteger(usd))) throw badRequest('invalid_request', WHOLE_USD_MESSAGE)
     if (next.seller_active && next.secret_min_reserve_usd > next.asking_price_usd) {
       throw badRequest('invalid_profile', 'The secret reserve must not exceed the asking price')
     }
@@ -602,6 +785,42 @@ export const mockEngine = {
     return next
   },
 
+  receiveInvoice(walletId: WalletId, body: AssetAmountRequest): ReceiveInvoice {
+    walletOrThrow(walletId)
+    const asset = rgbAssetOrThrow(body.asset_id)
+    amountOrThrow(body.amount)
+    const recipientId = `utxob:${randomHex(16)}`
+    const expiresAt = now() + INVOICE_TTL_SECONDS
+    const invoice = `rgb:${asset.asset_id.slice(4)}/RGB20/${body.amount}+bcrt:${recipientId}?expiry=${expiresAt}&endpoints=rpc://127.0.0.1:3000/json-rpc`
+    invoices.set(invoice, { walletId, asset, amount: body.amount, paid: false })
+    return { invoice, recipient_id: recipientId, asset_id: asset.asset_id, amount: body.amount, expires_at: expiresAt }
+  },
+
+  /** Incoming transfers settle as they are paid here, so there is nothing left to do. */
+  refreshWallet(walletId: WalletId): RefreshResult {
+    walletOrThrow(walletId)
+    return { wallet_id: walletId, refreshed: true }
+  },
+
+  /** move_to_vault's refusals alone, the Vault's included: MockApiClient answers them at once, before the slow move. */
+  checkMoveToVault(walletId: WalletId, body: AssetAmountRequest): void {
+    moveToVaultChecks(walletId, body)
+    const link = linkOrThrow()
+    askVault(() => link.ready(walletId))
+  },
+
+  /** The only endpoint that sends funds: it pays the Vault of the same wallet id, never an invoice from the client. */
+  moveToVault(walletId: WalletId, body: AssetAmountRequest): TransferResult {
+    const { wallet, asset } = moveToVaultChecks(walletId, body)
+    const link = linkOrThrow()
+    const invoice = askVault(() => link.invoice(walletId, asset.asset_id, body.amount))
+    const txid = randomHex(32)
+    wallet.balances[asset.asset_id] -= body.amount
+    recordVaultMove(wallet, 'out', asset, body.amount, txid)
+    link.receive(invoice)
+    return { txid, asset_id: asset.asset_id, amount: body.amount }
+  },
+
   getContacts(walletId: WalletId): Contact[] {
     const wallet = walletOrThrow(walletId)
     // Wallets and the demo's external addresses, plus every address this wallet has named.
@@ -610,7 +829,21 @@ export const mockEngine = {
     ]
     return addresses
       .filter((address) => address !== wallet.summary.address)
-      .map((address) => ({ address, alias: wallet.local_aliases[address] ?? null, trust: trustFor(address), desk: publicDesk(address) }))
+      .map((address) => ({ address, alias: wallet.local_aliases[address] ?? null, trust: trustOf(address), desk: publicDesk(address) }))
+  },
+
+  /** The advisor on the owner's own data: its wallet, its sessions as it sees them and its own strategy in each. */
+  getAdvice(walletId: WalletId): AdviceView {
+    const wallet = walletOrThrow(walletId)
+    return computeAdvice(walletId, walletState(wallet), ownSessions(walletId), mockEngine.market(), now())
+  },
+
+  /** Your AI on the same data, with the backend's rules answers (no local model in the browser). */
+  ask(walletId: WalletId, body: AskRequest): AskView {
+    const wallet = walletOrThrow(walletId)
+    if (!body.preset && !body.question?.trim()) throw badRequest('invalid_request', 'Pick a preset or ask a question.')
+    if ((body.question ?? '').length > 280) throw badRequest('invalid_request', 'Keep the question under 280 characters.')
+    return computeAnswer(walletState(wallet), ownSessions(walletId), mockEngine.market(), body, now())
   },
 
   createSession(body: CreateSessionRequest): SessionView {
@@ -620,6 +853,8 @@ export const mockEngine = {
     if (!asset || asset.schema === 'BTC') throw badRequest('invalid_asset', 'Unknown RGB asset')
     if (seller?.summary.wallet_id === buyer.summary.wallet_id) throw badRequest('self_trade', 'Cannot trade with yourself')
     if (!Number.isInteger(body.rgb_amount) || body.rgb_amount <= 0) throw badRequest('invalid_amount', 'Amount must be a positive integer')
+    // The backend's schema takes whole dollars only; the client reads its refusal as this sentence.
+    if (!Number.isInteger(body.buyer_target_usd) || !Number.isInteger(body.buyer_max_ceiling_usd)) throw badRequest('invalid_request', WHOLE_USD_MESSAGE)
     if (body.buyer_target_usd <= 0 || body.buyer_target_usd > body.buyer_max_ceiling_usd) {
       throw badRequest('invalid_limits', 'Target must be positive and not above the ceiling')
     }
@@ -638,6 +873,8 @@ export const mockEngine = {
       targetUsd: body.buyer_target_usd,
       listPriceUsd: prices.list,
       reserveUsd: prices.reserve,
+      buyerPrompt: body.buyer_ai_prompt,
+      sellerPrompt: seller?.agent_profile.seller_ai_prompt ?? '',
       state: 'NEGOTIATING',
       rounds: [],
       thinking: null,
@@ -655,7 +892,7 @@ export const mockEngine = {
       timers: new Set(),
     }
 
-    // Layer-0 gate before any negotiation: rings and unverified addresses never reach the agents.
+    // Layer-0 gate before any negotiation: only High Authenticity addresses reach the agents.
     const trustBlock = [...trustReasons(body.seller_address, 'Counterparty'), ...trustReasons(buyer.summary.address, 'Buyer')]
     if (trustBlock.length > 0 || !seller) {
       sessions.set(s.id, s)
@@ -670,7 +907,9 @@ export const mockEngine = {
       throw conflict('partial_not_allowed', `The seller sells only the whole lot of ${desk.offered_amount}`)
     }
     const minAmount = minLotAmount(desk.asking_price_usd, desk.offered_amount)
-    if (body.rgb_amount < minAmount) throw badRequest('amount_too_small', `Buy at least ${minAmount}: a smaller part costs less than 1 USDT`)
+    if (body.rgb_amount < minAmount) {
+      throw badRequest('amount_too_small', `Buy at least ${minAmount} ${asset.ticker}: a smaller part is worth less than ${MIN_PART_USD} USDT.`)
+    }
     if ((seller.balances[asset.asset_id] ?? 0) < body.rgb_amount) throw conflict('insufficient_funds', 'The seller does not hold that amount')
     if ((buyer.balances[ASSETS.usdt.asset_id] ?? 0) < body.buyer_max_ceiling_usd * 10 ** ASSETS.usdt.precision) {
       throw conflict('insufficient_funds', 'USDT balance is below the ceiling')
@@ -704,7 +943,7 @@ export const mockEngine = {
     const role = roleOrThrow(s, walletId)
     if (s.state !== 'AWAITING_SIGNATURES') throw conflict('not_awaiting_signatures', `Session is ${s.state}`)
     if (s.terms && now() > s.terms.expiry_unix) {
-      setState(s, 'EXPIRED')
+      expire(s)
       throw conflict('expired', 'The terms expired before both signatures')
     }
     if (termsHash !== s.termsHash) throw conflict('terms_hash_mismatch', 'The signed terms differ from the active terms')
@@ -760,7 +999,8 @@ export const mockEngine = {
 
   /**
    * The buyer's agent shops for the cheapest fitting Seller Desk and opens a session with it.
-   * Agents skip owners flagged as a ring, so the demo's tempting Sybil offer is not picked.
+   * Agents skip untrusted owners (rings, Low Reliability, Unverified), so the demo's tempting
+   * Sybil offer is not picked.
    */
   agentSearch(body: AgentSearchRequest): AgentSearchResult {
     const buyer = walletOrThrow(body.buyer_wallet_id)
@@ -768,7 +1008,7 @@ export const mockEngine = {
     const fits = sellListings(buyer)
       .filter((l) => !l.is_mine && l.asset.asset_id === body.asset_id && l.amount >= body.rgb_amount)
       .filter((l) => l.allow_partial || l.amount === body.rgb_amount)
-      .filter((l) => l.trust.trust_tier !== 'Ring Anomaly Detected')
+      .filter((l) => l.trust.trusted)
       .filter((l) => priceFor(l) <= body.buyer_max_ceiling_usd * 1.5)
       // Server-side only: a desk whose secret floor is above the buyer's maximum could never close.
       .filter((l) => {
@@ -795,6 +1035,8 @@ export const mockEngine = {
     const s = sessionOrThrow(sessionId)
     const role = roleOrThrow(s, walletId)
     if (!CANCELLABLE_STATES.includes(s.state)) throw conflict('not_cancellable', `Session is ${s.state}`)
+    // Cancelling agreed terms is walking away from them.
+    if (s.state === 'AWAITING_SIGNATURES') walkAway(role === 'buyer' ? walletOrThrow(s.buyerId).summary.address : s.sellerAddress)
     setState(s, 'CANCELLED_BY_USER')
     return sessionView(s, role)
   },

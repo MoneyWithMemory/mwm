@@ -1,6 +1,8 @@
 import { ApiError, ERROR_CODES, type ApiClient, type RequestOptions } from '../client'
 import type {
   AgentSearchRequest,
+  AskRequest,
+  AssetId,
   CreateSessionRequest,
   CreateWalletRequest,
   CreateWantRequest,
@@ -15,10 +17,13 @@ import { mockEngine } from './engine'
 /** Fake network latency, so loading states show up like they will against the backend. */
 const MIN_LATENCY_MS = 150
 const MAX_LATENCY_MS = 400
+/** An on-chain move pays, mines a block and refreshes both sides: long enough to show its progress. */
+export const MOVE_LATENCY_MS = 2_000
+const ASK_LATENCY_MS = 900
 
-function wait(signal?: AbortSignal): Promise<void> {
+function wait(signal?: AbortSignal, ms = MIN_LATENCY_MS + Math.random() * (MAX_LATENCY_MS - MIN_LATENCY_MS)): Promise<void> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, MIN_LATENCY_MS + Math.random() * (MAX_LATENCY_MS - MIN_LATENCY_MS))
+    const timer = setTimeout(resolve, ms)
     signal?.addEventListener(
       'abort',
       () => {
@@ -30,9 +35,12 @@ function wait(signal?: AbortSignal): Promise<void> {
   })
 }
 
-/** Runs `fn` after the latency and returns a deep copy, so callers never share engine state. */
-async function call<T>(fn: () => T, opts?: RequestOptions): Promise<T> {
-  await wait(opts?.signal)
+/**
+ * Runs `fn` after the latency and returns a deep copy, so callers never share engine state.
+ * The mock Vault (src/vault/mock.ts) answers through it too.
+ */
+export async function call<T>(fn: () => T, opts?: RequestOptions, latencyMs?: number): Promise<T> {
+  await wait(opts?.signal, latencyMs)
   return structuredClone(fn())
 }
 
@@ -68,6 +76,30 @@ export class MockApiClient implements ApiClient {
 
   getContacts(walletId: WalletId, opts?: RequestOptions) {
     return call(() => mockEngine.getContacts(walletId), opts)
+  }
+
+  receiveInvoice(walletId: WalletId, assetId: AssetId, amount: number, opts?: RequestOptions) {
+    return call(() => mockEngine.receiveInvoice(walletId, { asset_id: assetId, amount }), opts)
+  }
+
+  refreshWallet(walletId: WalletId, opts?: RequestOptions) {
+    return call(() => mockEngine.refreshWallet(walletId), opts)
+  }
+
+  /** A refusal comes back at once; only a move that goes through waits for the chain. */
+  async moveToVault(walletId: WalletId, assetId: AssetId, amount: number, opts?: RequestOptions) {
+    const body = { asset_id: assetId, amount }
+    await call(() => mockEngine.checkMoveToVault(walletId, body), opts)
+    return call(() => mockEngine.moveToVault(walletId, body), opts, MOVE_LATENCY_MS)
+  }
+
+  getAdvice(walletId: WalletId, opts?: RequestOptions) {
+    return call(() => mockEngine.getAdvice(walletId), opts)
+  }
+
+  /** A short wait, like the local model, so the thinking state shows. */
+  ask(walletId: WalletId, body: AskRequest, opts?: RequestOptions) {
+    return call(() => mockEngine.ask(walletId, body), opts, ASK_LATENCY_MS)
   }
 
   createSession(body: CreateSessionRequest, opts?: RequestOptions) {

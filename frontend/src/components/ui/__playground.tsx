@@ -207,7 +207,8 @@ export function UiPlayground() {
                 <span className="text-xs text-hint block mb-2">Trust Tiers (Layer-0 Memory Graph)</span>
                 <div className="flex flex-wrap items-center gap-2">
                   <TrustBadge tier="High Authenticity" reliabilityPct={94} />
-                  <TrustBadge tier="Ring Anomaly Detected" reliabilityPct={38} />
+                  <TrustBadge tier="Low Reliability" reliabilityPct={41} />
+                  <TrustBadge tier="Ring Anomaly Detected" reliabilityPct={18} />
                   <TrustBadge tier="Unverified" />
                 </div>
               </div>

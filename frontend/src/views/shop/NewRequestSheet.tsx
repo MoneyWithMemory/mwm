@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { useCreateWant, type Market } from '@/api'
 import { AssetBadge, Button, Input, SegmentedControl, Sheet, TextArea } from '@/components/ui'
 import { useWalletContext } from '@/lib/navigation'
+import { parseUsd, WHOLE_USD_ERROR } from '@/lib/usd'
 
 const NUMBER = /^\d*\.?\d*$/
 const NOTE_MAX = 140
@@ -32,9 +33,12 @@ export function NewRequestSheet({ open, onClose, market }: NewRequestSheetProps)
   const asset = tradable.find((a) => a.asset_id === assetId)
   const amountValue = parse(amount)
   const atomic = amountValue === null || !asset ? null : Math.round(amountValue * 10 ** asset.precision)
-  const targetValue = parse(target)
+  const targetTyped = parseUsd(target)
+  const targetValue = targetTyped.value
   const amountError = atomic === null || atomic <= 0 ? 'Enter an amount greater than 0.' : undefined
-  const targetError = targetValue === null || targetValue <= 0 ? 'Enter a price greater than 0.' : undefined
+  let targetError: string | undefined
+  if (targetTyped.cents) targetError = WHOLE_USD_ERROR
+  else if (targetValue === null || targetValue <= 0) targetError = 'Enter a price greater than 0.'
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
@@ -93,11 +97,12 @@ export function NewRequestSheet({ open, onClose, market }: NewRequestSheetProps)
         <Input
           className="amount"
           label="Price you offer (public)"
-          inputMode="decimal"
-          placeholder="0.00"
+          inputMode="numeric"
+          placeholder="0"
           value={target}
           prefix="$"
-          error={touched ? targetError : undefined}
+          // Cents are flagged as they are typed, the rest on submit.
+          error={touched || targetTyped.cents ? targetError : undefined}
           hint="Total for the whole lot. Visible to everyone."
           onChange={(e) => setTarget(e.target.value)}
         />
@@ -113,7 +118,7 @@ export function NewRequestSheet({ open, onClose, market }: NewRequestSheetProps)
         <p className="min-h-4 text-xs text-danger" role="alert">
           {error?.message}
         </p>
-        <Button type="submit" fullWidth loading={pending}>
+        <Button type="submit" fullWidth loading={pending} disabled={targetTyped.cents || (touched && Boolean(amountError || targetError))}>
           Post request
         </Button>
       </form>

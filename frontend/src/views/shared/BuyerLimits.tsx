@@ -11,7 +11,7 @@ interface BuyerLimitsProps {
   show: boolean
 }
 
-/** Target and maximum side by side, low to high, with one line for errors or the rule. */
+/** Target and maximum side by side, low to high, in whole dollars, with one line for errors or the rule. */
 export function BuyerLimits({ target, ceiling, onTarget, onCeiling, targetError, ceilingError, show }: BuyerLimitsProps) {
   return (
     <div className="flex flex-col gap-3">
@@ -21,6 +21,7 @@ export function BuyerLimits({ target, ceiling, onTarget, onCeiling, targetError,
           label="Target"
           placeholder="0"
           prefix="$"
+          inputMode="numeric"
           value={target}
           invalid={show && Boolean(targetError)}
           onChange={(e) => onTarget(e.target.value)}
@@ -30,6 +31,7 @@ export function BuyerLimits({ target, ceiling, onTarget, onCeiling, targetError,
           aside={<PrivacyTag kind="private" />}
           placeholder="0"
           prefix="$"
+          inputMode="numeric"
           value={ceiling}
           invalid={show && Boolean(ceilingError)}
           onChange={(e) => onCeiling(e.target.value)}

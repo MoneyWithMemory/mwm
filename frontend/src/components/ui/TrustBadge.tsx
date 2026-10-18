@@ -12,13 +12,25 @@ export interface TrustBadgeProps {
   variant?: 'badge' | 'inline'
   /** A (?) that explains the label. Leave it off inside another button (rows): the title says it on hover. */
   explain?: boolean
+  /** Replaces the label's explanation, e.g. written for the wallet's own owner (lib/trust ownTrustExplanation). */
+  explanation?: string
   showIcon?: boolean
   className?: string
 }
 
-const TIER_STYLE: Record<TrustTier, { color: string; inlineColor: string; Icon: typeof HelpCircle }> = {
+interface TierStyle {
+  color: string
+  inlineColor: string
+  Icon: typeof HelpCircle
+}
+
+/** Every way of being untrustworthy reads "Low reliability" (lib/trust), with one look. */
+const LOW_RELIABILITY_STYLE: TierStyle = { color: 'bg-danger/15 text-danger border-danger/30', inlineColor: 'text-danger', Icon: ShieldAlert }
+
+const TIER_STYLE: Record<TrustTier, TierStyle> = {
   'High Authenticity': { color: 'bg-success/15 text-success border-success/30', inlineColor: 'text-hint', Icon: ShieldCheck },
-  'Ring Anomaly Detected': { color: 'bg-danger/15 text-danger border-danger/30', inlineColor: 'text-danger', Icon: ShieldAlert },
+  'Low Reliability': LOW_RELIABILITY_STYLE,
+  'Ring Anomaly Detected': LOW_RELIABILITY_STYLE,
   Unverified: { color: 'bg-surface-muted text-hint border-separator', inlineColor: 'text-hint', Icon: HelpCircle },
 }
 
@@ -34,12 +46,12 @@ export function TrustBadge({
   size = 'md',
   variant = 'badge',
   explain = false,
+  explanation = trustExplanation(tier),
   showIcon = true,
   className,
 }: TrustBadgeProps) {
   const { color, inlineColor, Icon } = TIER_STYLE[tier]
   const label = trustLabel(tier)
-  const explanation = trustExplanation(tier)
   const pct = tier !== 'Unverified' && reliabilityPct !== null && reliabilityPct !== undefined ? Math.round(reliabilityPct) : null
   const isSmall = size === 'sm' || variant === 'inline'
 

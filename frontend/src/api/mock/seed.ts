@@ -44,20 +44,31 @@ export const ADDRESSES = {
   miningPool: 'bcrt1qmin1ngp00l8strat2kdls82kdls83kdls8277',
 } as const
 
+const LOW_RELIABILITY_SUMMARY = 'Settlement history too thin or inconsistent to rely on.'
+
 const TRUST: Record<string, TrustAudit> = {
+  // As the backend scores its seeded month of trades (backend/memory_graph.py).
   [ADDRESSES.a]: {
     trusted: true,
     sybil_ring_detected: false,
-    reliability_pct: 88,
+    reliability_pct: 89,
     trust_tier: 'High Authenticity',
     assessment_summary: 'Organic activity with independent counterparties over the past month.',
   },
   [ADDRESSES.b]: {
     trusted: true,
     sybil_ring_detected: false,
-    reliability_pct: 92,
+    reliability_pct: 86,
     trust_tier: 'High Authenticity',
     assessment_summary: 'Settled swaps with many unrelated counterparties and no circular flows.',
+  },
+  // A real but thin history: below the 60 that High Authenticity needs.
+  [ADDRESSES.merchant]: {
+    trusted: false,
+    sybil_ring_detected: false,
+    reliability_pct: 41,
+    trust_tier: 'Low Reliability',
+    assessment_summary: LOW_RELIABILITY_SUMMARY,
   },
   [ADDRESSES.sybil]: {
     trusted: false,
@@ -85,6 +96,21 @@ const UNVERIFIED: TrustAudit = {
 
 export function trustFor(address: string): TrustAudit {
   return TRUST[address] ?? UNVERIFIED
+}
+
+/** As backend/memory_graph.py: 10% off the score per agreed deal walked away from, at most 50%. */
+const WALK_AWAY_PENALTY = 0.1
+const MAX_WALK_AWAY_PENALTY = 0.5
+/** High Authenticity needs this score: below it a wallet is Low Reliability, and the gate blocks it. */
+const HIGH_AUTHENTICITY_MIN_SCORE = 60
+
+/** An address's trust once it walked away from `walkAways` agreed deals. A ring stays a ring, with a lower score. */
+export function withWalkAways(trust: TrustAudit, walkAways: number): TrustAudit {
+  if (walkAways === 0 || trust.reliability_pct === null) return trust
+  const penalty = Math.min(WALK_AWAY_PENALTY * walkAways, MAX_WALK_AWAY_PENALTY)
+  const pct = Math.max(1, Math.round(trust.reliability_pct * (1 - penalty)))
+  if (trust.trust_tier === 'Ring Anomaly Detected' || pct >= HIGH_AUTHENTICITY_MIN_SCORE) return { ...trust, reliability_pct: pct }
+  return { ...trust, trusted: false, reliability_pct: pct, trust_tier: 'Low Reliability', assessment_summary: LOW_RELIABILITY_SUMMARY }
 }
 
 /** Value in USD of a balance map; assets without a price count as 0. */
@@ -315,7 +341,7 @@ export function createSeedWallets(now: number): MockWallet[] {
         asking_price_usd: ECONOMY.askUsd,
         secret_min_reserve_usd: ECONOMY.reserveUsd,
         seller_ai_prompt: '',
-        allow_partial: false,
+        allow_partial: true,
         ...BUYER_DEFAULTS,
       },
       {

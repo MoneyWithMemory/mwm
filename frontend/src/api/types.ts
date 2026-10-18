@@ -74,9 +74,13 @@ export interface HistoryPoint {
   total_usd: number
 }
 
-export type ActivityKind = 'swap' | 'receive' | 'issue'
+/** "vault": a move between the wallet and its own Vault (out = to the Vault, in = from it). */
+export type ActivityKind = 'swap' | 'receive' | 'issue' | 'vault'
 
-/** One asset movement. A swap produces two items (one out, one in) sharing session_id and txid. */
+/**
+ * One asset movement. A swap produces two items (one out, one in) sharing session_id and txid.
+ * A Vault move has counterparty_address null.
+ */
 export interface ActivityItem {
   id: string
   t: number
@@ -125,10 +129,16 @@ export interface WalletState extends WalletSummary {
 
 // ── Trust (Layer-0 memory graph) ───────────────────────────────────
 
-export type TrustTier = 'High Authenticity' | 'Ring Anomaly Detected' | 'Unverified'
+/**
+ * Computed by the backend from settled trades: "Unverified" without any, "Ring Anomaly Detected"
+ * for a closed trading loop (score capped at 20), otherwise "High Authenticity" from a score of 60
+ * and "Low Reliability" below it.
+ */
+export type TrustTier = 'High Authenticity' | 'Low Reliability' | 'Ring Anomaly Detected' | 'Unverified'
 
 /** Never exposes loop percentages or raw trade counts. */
 export interface TrustAudit {
+  /** True only for High Authenticity: the gate blocks every other tier. */
   trusted: boolean
   sybil_ring_detected: boolean
   /** null means Unverified (cold start). */
@@ -221,6 +231,64 @@ export interface AgentSearchRequest {
 export interface AgentSearchResult {
   listing: ShopListing
   session: SessionView
+}
+
+// ── Advisor (internal memory) ──────────────────────────────────────
+
+/** activity: what moved in the last 7 days (Your AI's week answer only). */
+export type AdviceKind = 'negotiation_savings' | 'idle_funds' | 'concentration' | 'pace' | 'activity'
+export type AdviceSeverity = 'info' | 'tip' | 'warning'
+
+/** One observation computed from the owner's own data; code computes every number. */
+export interface AdviceSignal {
+  /** Stable per kind and subject, e.g. "idle_funds:<asset_id>" or "pace:buyer". */
+  id: string
+  kind: AdviceKind
+  severity: AdviceSeverity
+  /** At most 40 characters. */
+  title: string
+  /** At most 90 characters. */
+  detail: string
+  /** The numbers behind the texts; the only numbers a phrased summary may quote. */
+  numbers: Record<string, number>
+}
+
+/** GET /api/wallets/{id}/advice: at most 4 signals, most severe first. */
+export interface AdviceView {
+  wallet_id: WalletId
+  generated_at: number
+  /** qvac: phrased by the local model on this device; rules: the deterministic template. */
+  generated_by: 'qvac' | 'rules'
+  /** The local model is phrasing these signals in the background: ask again in a few seconds. */
+  phrasing: boolean
+  summary: string
+  signals: AdviceSignal[]
+}
+
+// ── Your AI (the local assistant) ──────────────────────────────────
+
+export type AskPreset = 'analyze' | 'week' | 'vault'
+
+/** POST /api/wallets/{id}/ask: a preset, else a free question about the account. */
+export interface AskRequest {
+  preset?: AskPreset
+  /** At most 280 characters. */
+  question?: string
+}
+
+/** The one action an answer can offer: open the move to the owner's Vault. */
+export type AskAction = 'move_to_vault'
+
+export interface AskView {
+  /** At most two short sentences. */
+  answer: string
+  /** qvac: worded by the local model and checked against the facts; rules: the deterministic text. */
+  generated_by: 'qvac' | 'rules'
+  /** The facts behind the answer (empty for a question about something else). */
+  signals: AdviceSignal[]
+  action: AskAction | null
+  /** Why the quick rules version is shown (the local model busy, slow or off the facts); null otherwise. */
+  note: string | null
 }
 
 // ── Sessions ───────────────────────────────────────────────────────
@@ -387,6 +455,34 @@ export interface SetAliasRequest {
 
 /** PUT /api/wallets/{id}/agent_profile */
 export type UpdateAgentProfileRequest = Partial<AgentProfile>
+
+/** POST /api/wallets/{id}/move_to_vault and POST /api/wallets/{id}/receive_invoice. amount in atomic units. */
+export interface AssetAmountRequest {
+  asset_id: AssetId
+  amount: number
+}
+
+/** POST /api/wallets/{id}/receive_invoice: an RGB invoice that pays this wallet (receive only). */
+export interface ReceiveInvoice {
+  invoice: string
+  recipient_id: string
+  asset_id: AssetId
+  amount: number
+  expires_at: number | null
+}
+
+/** POST /api/wallets/{id}/refresh: incoming RGB transfers settled. */
+export interface RefreshResult {
+  wallet_id: WalletId
+  refreshed: true
+}
+
+/** A completed move or send: POST /api/wallets/{id}/move_to_vault, and the Vault's move_to_wallet and send. */
+export interface TransferResult {
+  txid: string
+  asset_id: AssetId
+  amount: number
+}
 
 // ── Errors ─────────────────────────────────────────────────────────
 

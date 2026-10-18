@@ -1,19 +1,26 @@
 import type {
+  AdviceView,
   AgentProfile,
   AgentSearchRequest,
   AgentSearchResult,
+  AskRequest,
+  AskView,
+  AssetId,
   Contact,
   CreateSessionRequest,
   CreateWantRequest,
   CreateWalletRequest,
   Health,
   Market,
+  ReceiveInvoice,
+  RefreshResult,
   SessionId,
   SessionSummary,
   SessionView,
   SetAliasRequest,
   ShopListing,
   ShopQuery,
+  TransferResult,
   UpdateAgentProfileRequest,
   WalletId,
   WalletState,
@@ -34,6 +41,13 @@ export interface ApiClient {
   setAlias(walletId: WalletId, body: SetAliasRequest, opts?: RequestOptions): Promise<Record<string, string>>
   updateAgentProfile(walletId: WalletId, body: UpdateAgentProfileRequest, opts?: RequestOptions): Promise<AgentProfile>
   getContacts(walletId: WalletId, opts?: RequestOptions): Promise<Contact[]>
+  receiveInvoice(walletId: WalletId, assetId: AssetId, amount: number, opts?: RequestOptions): Promise<ReceiveInvoice>
+  refreshWallet(walletId: WalletId, opts?: RequestOptions): Promise<RefreshResult>
+  /** Pays the wallet's own Vault: the backend asks the Vault for the invoice itself, never the client. */
+  moveToVault(walletId: WalletId, assetId: AssetId, amount: number, opts?: RequestOptions): Promise<TransferResult>
+  getAdvice(walletId: WalletId, opts?: RequestOptions): Promise<AdviceView>
+  /** Your AI: a preset or a free question, answered from the owner's own data on this device. */
+  ask(walletId: WalletId, body: AskRequest, opts?: RequestOptions): Promise<AskView>
   createSession(body: CreateSessionRequest, opts?: RequestOptions): Promise<SessionView>
   listSessions(walletId: WalletId, opts?: RequestOptions): Promise<SessionSummary[]>
   getSession(sessionId: SessionId, walletId: WalletId, opts?: RequestOptions): Promise<SessionView>
@@ -73,4 +87,17 @@ export function toApiError(err: unknown): ApiError {
   if (err instanceof ApiError) return err
   if (err instanceof Error) return new ApiError(ERROR_CODES.network, err.message)
   return new ApiError(ERROR_CODES.network, String(err))
+}
+
+/** Shown when the backend refuses a price with cents: prices are whole dollars (src/lib/usd.ts). */
+export const WHOLE_USD_MESSAGE = 'Use whole dollars, for example 2.'
+
+/**
+ * A backend error message as people read it. A 400 invalid_request from the request schema lists
+ * fields ("body.buyer_target_usd: Input should be a valid integer, …"): it becomes one plain
+ * sentence. Every other message is already written for people and stays as it is.
+ */
+export function readableMessage(code: string, message: string): string {
+  if (code !== 'invalid_request' || !/^(body|query|path)\./.test(message)) return message
+  return /_usd: [^;]*integer/.test(message) ? WHOLE_USD_MESSAGE : 'Some values are not valid. Check them and try again.'
 }

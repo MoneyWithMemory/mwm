@@ -2,8 +2,9 @@ import { useState, type FormEvent } from 'react'
 import { useAgentSearch, type Market, type ShopListing, type WalletState } from '@/api'
 import { AssetBadge, Button, FormNote, NumberField, SegmentedControl, Sheet } from '@/components/ui'
 import { formatAssetAmount } from '@/lib/format'
-import { lotIssue, proRataPrice, suggestedLimits, type LotTerms } from '@/lib/lots'
+import { lotIssue, MIN_PART_USD, minLotAmount, proRataPrice, suggestedLimits, type LotTerms } from '@/lib/lots'
 import { useWalletContext } from '@/lib/navigation'
+import { parseUsd, WHOLE_USD_ERROR } from '@/lib/usd'
 import { BuyerLimits } from '../shared/BuyerLimits'
 import { StrategyPicker } from '../shared/StrategyPicker'
 import { useBuyerLimits } from '../shared/useBuyerLimits'
@@ -53,12 +54,12 @@ export function AgentSearchSheet({ open, onClose, market, wallet, listings }: Ag
   const amountValue = parse(amount)
   const atomic = amountValue === null || !asset ? null : Math.round(amountValue * 10 ** asset.precision)
   // Until edited, the limits follow the best list price for this amount among the sellers the
-  // agent may pick: rings left out, a part of a larger lot only where its seller consents.
+  // agent may pick: untrusted ones left out, a part of a larger lot only where its seller consents.
   const payment = market.assets.find((a) => a.source === 'fixed_peg')
   const paymentBalance = wallet.assets.find((a) => a.asset_id === payment?.asset_id)
   const available = paymentBalance ? paymentBalance.amount / 10 ** paymentBalance.precision : 0
   const sellers = listings.filter(
-    (l) => l.kind === 'sell' && !l.is_mine && l.asset.asset_id === assetId && l.trust.trust_tier !== 'Ring Anomaly Detected',
+    (l) => l.kind === 'sell' && !l.is_mine && l.asset.asset_id === assetId && l.trust.trusted,
   )
   const fitting = atomic && atomic > 0 ? sellers.filter((l) => lotIssue(lotTerms(l), atomic) === null) : []
   const bestPrice = atomic && atomic > 0 ? Math.min(...fitting.map((l) => proRataPrice(l.price_usd, l.amount, atomic))) : Infinity
@@ -66,25 +67,43 @@ export function AgentSearchSheet({ open, onClose, market, wallet, listings }: Ag
     { target: String(wallet.agent_profile.buyer_target_usd || ''), ceiling: String(wallet.agent_profile.buyer_max_ceiling_usd || '') },
     Number.isFinite(bestPrice) ? suggestedLimits(bestPrice, available) : null,
   )
-  const ceilingValue = parse(limits.ceiling)
-  const targetValue = parse(limits.target)
+  const ceiling = parseUsd(limits.ceiling)
+  const target = parseUsd(limits.target)
+  const ceilingValue = ceiling.value
+  const targetValue = target.value
 
   let amountError: string | undefined
   if (atomic === null || atomic <= 0) amountError = 'Enter an amount greater than 0.'
   else if (fitting.length === 0) {
-    // Larger lots are on sale, but their sellers sell them whole: point at the closest one.
-    const whole = sellers.filter((l) => l.amount > atomic && !l.allow_partial).map((l) => l.amount)
-    if (whole.length > 0) amountError = `Full order only: try ${formatAssetAmount(Math.min(...whole), asset?.precision ?? 0, asset?.ticker)}.`
+    // Larger lots are on sale, but not this little of them (sold whole, or a part under the
+    // minimum): point at the smallest amount one of them sells.
+    const closest = sellers
+      .filter((l) => l.amount > atomic)
+      .map((l) => ({ lot: l.amount, min: l.allow_partial ? minLotAmount(l.price_usd, l.amount) : l.amount }))
+      .sort((a, b) => a.min - b.min)[0]
+    if (closest) {
+      const min = formatAssetAmount(closest.min, asset?.precision ?? 0, asset?.ticker)
+      amountError = closest.min < closest.lot ? `At least ${min} (about $${MIN_PART_USD}).` : `Full order only: try ${min}.`
+    }
   }
-  const ceilingError = ceilingValue === null || ceilingValue <= 0 ? 'Enter a maximum greater than 0.' : undefined
+  let ceilingError: string | undefined
+  if (ceiling.cents) ceilingError = WHOLE_USD_ERROR
+  else if (ceilingValue === null || ceilingValue <= 0) ceilingError = 'Enter a maximum greater than 0.'
   let targetError: string | undefined
-  if (targetValue === null || targetValue <= 0) targetError = 'Enter a target greater than 0.'
+  if (target.cents) targetError = WHOLE_USD_ERROR
+  else if (targetValue === null || targetValue <= 0) targetError = 'Enter a target greater than 0.'
   else if (ceilingValue !== null && targetValue > ceilingValue) targetError = 'The target must not exceed your maximum.'
+
+  const invalid = Boolean(amountError || ceilingError || targetError)
+  const editLimit = (edit: (text: string) => void) => (text: string) => {
+    edit(text)
+    setTouched(true)
+  }
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
     setTouched(true)
-    if (amountError || ceilingError || targetError || !asset || atomic === null || ceilingValue === null || targetValue === null || pending) return
+    if (invalid || !asset || atomic === null || ceilingValue === null || targetValue === null || pending) return
     run({
       buyer_wallet_id: wallet.wallet_id,
       asset_id: asset.asset_id,
@@ -143,8 +162,8 @@ export function AgentSearchSheet({ open, onClose, market, wallet, listings }: Ag
         <BuyerLimits
           target={limits.target}
           ceiling={limits.ceiling}
-          onTarget={limits.onTarget}
-          onCeiling={limits.onCeiling}
+          onTarget={editLimit(limits.onTarget)}
+          onCeiling={editLimit(limits.onCeiling)}
           targetError={targetError}
           ceilingError={ceilingError}
           show={touched}
@@ -159,7 +178,7 @@ export function AgentSearchSheet({ open, onClose, market, wallet, listings }: Ag
           <p className="min-h-4 text-xs text-danger" role="alert">
             {error?.message}
           </p>
-          <Button type="submit" fullWidth trailingArrow loading={pending}>
+          <Button type="submit" fullWidth trailingArrow loading={pending} disabled={touched && invalid}>
             Search and negotiate
           </Button>
         </div>

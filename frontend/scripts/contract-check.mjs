@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 // Contract check: runs the frontend's API contract (src/api/types.ts, API_CONTRACT.md)
-// against a live backend. Writes only two short sessions (one blocked, one cancelled);
+// against a live backend, and changes no reliability score. It writes three short sessions:
+// one blocked by the gate, one cancelled before any agreement, and one agreed and left
+// unsigned, a deal in progress of Wallet A and Wallet B until it expires 600 s later without
+// a walk-away (unless someone signs one side of it in the UI). Cancelling agreed terms would
+// be a walk-away, saved for good in that wallet's score, so the check never does it.
 // --e2e instead signs both sides and waits for the on-chain settlement, which moves
 // regtest balances and sets the PEPE market price.
 //
@@ -106,7 +110,7 @@ function checkShape(obj, spec, label) {
 }
 
 const STATES = ['NEGOTIATING', 'AWAITING_SIGNATURES', 'SETTLING', 'SETTLED', 'CANCELLED_BY_USER', 'BLOCKED_BY_GATE', 'FAILED', 'EXPIRED']
-const TRUST_TIERS = ['High Authenticity', 'Ring Anomaly Detected', 'Unverified']
+const TRUST_TIERS = ['High Authenticity', 'Low Reliability', 'Ring Anomaly Detected', 'Unverified']
 const ROLE = oneOf('buyer', 'seller')
 const ACTION = nullable(oneOf('OFFER', 'ACCEPT'))
 
@@ -133,7 +137,7 @@ const HISTORY_POINT = { t: isInt, balances: isObj, total_usd: isNum }
 const ACTIVITY = {
   id: isStr,
   t: isInt,
-  kind: oneOf('swap', 'receive', 'issue'),
+  kind: oneOf('swap', 'receive', 'issue', 'vault'),
   direction: oneOf('in', 'out'),
   asset: ASSET_REF,
   amount: isInt,
@@ -161,6 +165,29 @@ const WALLET_STATE = {
 }
 const DESK = { asset: ASSET_REF, offered_amount: isInt, asking_price_usd: isNum, allow_partial: isBool }
 const CONTACT = { address: isStr, alias: nullable(isStr), trust: TRUST, desk: maybe(DESK) }
+const ADVICE_SIGNAL = {
+  id: isStr,
+  kind: oneOf('negotiation_savings', 'idle_funds', 'concentration', 'pace', 'activity'),
+  severity: oneOf('info', 'tip', 'warning'),
+  title: (v) => isStr(v) && v.length <= 40,
+  detail: (v) => isStr(v) && v.length <= 90,
+  numbers: (v) => isObj(v) && Object.values(v).every(isNum),
+}
+const ADVICE = {
+  wallet_id: isStr,
+  generated_at: isInt,
+  generated_by: oneOf('qvac', 'rules'),
+  phrasing: isBool,
+  summary: (v) => isStr(v) && v.length > 0,
+  signals: (v) => Array.isArray(v) && v.length <= 4,
+}
+const ASK = {
+  answer: (v) => isStr(v) && v.length > 0,
+  generated_by: oneOf('qvac', 'rules'),
+  signals: (v) => Array.isArray(v) && v.length <= 4,
+  action: (v) => v === null || v === 'move_to_vault',
+  note: (v) => v === null || isStr(v),
+}
 const ROUND = {
   n: isInt,
   buyer_offer_usd: nullable(isNum),
@@ -297,8 +324,39 @@ async function main() {
     JSON.stringify(contactB?.desk),
   )
   const contactSybil = contacts.find((c) => c.address === wallets.sybil.address)
-  check(contactSybil?.trust.trust_tier === 'Ring Anomaly Detected', 'Sybil is flagged as a ring')
+  check(contactSybil?.trust.trust_tier === 'Ring Anomaly Detected' && contactSybil.trust.reliability_pct <= 20, 'Sybil is flagged as a ring, capped at 20%', `${contactSybil?.trust.reliability_pct}%`)
   warn(contactSybil?.desk !== null, 'Sybil shows a desk (the gate still blocks it)')
+
+  section('Advisor')
+  for (const [key, id] of Object.entries(WALLET_IDS)) {
+    const advice = (await get(`/wallets/${id}/advice`)).data
+    checkShape(advice, ADVICE, `${id} AdviceView shape`)
+    const problems = (advice.signals ?? []).flatMap((s) => shape(s, ADVICE_SIGNAL).map((p) => `${s.id}: ${p}`))
+    check(problems.length === 0, `${id} advice signals shape (title ≤ 40, detail ≤ 90)`, problems.slice(0, 3).join('; '))
+    check(!SECRET_KEYS.test(JSON.stringify(advice)), `${id} advice has no secret fields`)
+    const profile = wallets[key].agent_profile
+    const text = [advice.summary, ...(advice.signals ?? []).flatMap((s) => [s.title, s.detail])].join(' ')
+    // A deal may legitimately close at a limit (e.g. at the ceiling): its public prices are not a leak.
+    const dealPrices = new Set((advice.signals ?? []).filter((s) => s.kind === 'negotiation_savings').flatMap((s) => Object.values(s.numbers)))
+    const quoted = [profile.buyer_max_ceiling_usd, profile.secret_min_reserve_usd].filter((n) => n > 0 && !dealPrices.has(n) && new RegExp(`\\b${n}\\b`).test(text))
+    warn(quoted.length === 0, `${id} advice does not quote its own secret limits`, quoted.join(', '))
+    console.log(`        ${id}: ${advice.generated_by} · ${(advice.signals ?? []).map((s) => s.kind).join(', ') || 'no signals'} · "${advice.summary}"`)
+  }
+  expectError(await get('/wallets/does_not_exist/advice'), 404, 'wallet_not_found', 'advice for an unknown wallet → 404 wallet_not_found')
+
+  section('Your AI')
+  for (const preset of ['analyze', 'week', 'vault']) {
+    const reply = (await post(`/wallets/${WALLET_IDS.a}/ask`, { preset }, 20_000)).data
+    checkShape(reply, ASK, `ask ${preset}: AskView shape`)
+    const problems = (reply.signals ?? []).flatMap((s) => shape(s, ADVICE_SIGNAL).map((p) => `${s.id}: ${p}`))
+    check(problems.length === 0, `ask ${preset}: signals shape`, problems.slice(0, 3).join('; '))
+    check(!SECRET_KEYS.test(JSON.stringify(reply)), `ask ${preset}: no secret fields`)
+    console.log(`        ${preset}: ${reply.generated_by}${reply.note ? ` (${reply.note})` : ''} · "${reply.answer}"`)
+  }
+  const offTopic = (await post(`/wallets/${WALLET_IDS.a}/ask`, { question: "What's the weather in Turin?" })).data
+  check(offTopic?.answer === 'I only know your account. Try: Analyze my account.' && offTopic.signals.length === 0, 'ask: an off-topic question gets the fixed reply')
+  expectError(await post(`/wallets/${WALLET_IDS.a}/ask`, {}), 400, 'invalid_request', 'ask with neither preset nor question → 400 invalid_request')
+  expectError(await post('/wallets/does_not_exist/ask', { preset: 'week' }), 404, 'wallet_not_found', 'ask for an unknown wallet → 404 wallet_not_found')
 
   section('Errors')
   expectError(await get('/wallets/does_not_exist'), 404, 'wallet_not_found', '404 wallet_not_found')
@@ -379,10 +437,19 @@ async function main() {
   check(still.state === 'AWAITING_SIGNATURES' && !still.buyer_signed && !still.seller_signed, 'rejected calls leave the session untouched')
 
   if (!E2E) {
+    // The agreed session stays unsigned: cancelling it would cost Wallet A 10% of its score for good.
+    // Cancel runs on a second session instead, before its agents agree, which costs nothing.
     section('Cancel')
-    const cancelled = await post(`/sessions/${sessionId}/cancel`, { wallet_id: WALLET_IDS.a })
-    check(cancelled.data?.state === 'CANCELLED_BY_USER', 'cancel → CANCELLED_BY_USER', cancelled.data?.state)
-    expectError(await post(`/sessions/${sessionId}/cancel`, { wallet_id: WALLET_IDS.a }), 409, 'not_cancellable', 'second cancel → 409 not_cancellable')
+    const second = (await post('/sessions', request(wallets.b.address))).data
+    check(second?.state === 'NEGOTIATING', 'a second session starts NEGOTIATING', second?.state)
+    if (second?.state !== 'NEGOTIATING') return
+    const cancelled = await post(`/sessions/${second.session_id}/cancel`, { wallet_id: WALLET_IDS.a })
+    check(cancelled.data?.state === 'CANCELLED_BY_USER', 'cancel while negotiating → CANCELLED_BY_USER', cancelled.data?.state)
+    expectError(await post(`/sessions/${second.session_id}/cancel`, { wallet_id: WALLET_IDS.a }), 409, 'not_cancellable', 'second cancel → 409 not_cancellable')
+    const before = wallets.a.trust.reliability_pct
+    const after = (await get(`/wallets/${WALLET_IDS.a}`)).data.trust.reliability_pct
+    check(after >= before, `cancelling before an agreement keeps Wallet A's reliability (${before}% → ${after}%)`)
+    console.log(`        ${sessionId} stays agreed and unsigned: it expires in ${ttl}s, without a walk-away`)
     return
   }
 
@@ -417,6 +484,7 @@ async function main() {
   const market1 = (await get('/market')).data
   const pepe1 = market1.assets.find((a) => a.asset_id === pepe.asset_id)
   check(Math.abs(pepe1.price_usd - agreed / (lot / 10 ** pepe.precision)) < 1e-12, 'PEPE market price = agreed / lot', `${pepe1.price_usd}`)
+  warn(a1.trust.reliability_pct > wallets.a.trust.reliability_pct, 'the settled swap raises Wallet A\'s reliability', `${wallets.a.trust.reliability_pct}% → ${a1.trust.reliability_pct}%`)
 }
 
 try {

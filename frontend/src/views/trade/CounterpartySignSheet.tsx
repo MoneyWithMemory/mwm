@@ -36,7 +36,7 @@ export function CounterpartySignSheet({ open, onClose, sessionId, counterparty, 
   return (
     <Sheet open={open} onClose={onClose} title={`Sign as ${counterparty.label}`}>
       <div className="flex flex-col gap-3">
-        <p className="text-sm text-hint">{counterparty.label} is on this device too: it signs here, with its own key.</p>
+        <p className="text-sm text-hint">{counterparty.label} is on this device too: it approves the same terms here.</p>
         {session?.terms ? (
           <ApprovalCard
             terms={session.terms}

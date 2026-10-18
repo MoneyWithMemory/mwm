@@ -7,9 +7,16 @@ export function proRataPrice(totalUsd: number, lotAmount: number, amount: number
   return Math.floor((totalUsd * amount) / lotAmount + 0.5)
 }
 
-/** Smallest part of a lot worth at least 1 USDT at its list price (atomic units). */
+/**
+ * The smallest part of a lot a buyer may take is worth this much at the list price, so the agents
+ * have room to negotiate in whole dollars (backend: api_server.MIN_PART_USD, same value).
+ */
+export const MIN_PART_USD = 10
+
+/** Smallest part of a lot worth at least MIN_PART_USD at its list price (atomic units); a cheaper lot sells whole. */
 export function minLotAmount(totalUsd: number, lotAmount: number): number {
-  return totalUsd > 0 ? Math.max(1, Math.ceil(lotAmount / totalUsd)) : lotAmount
+  if (totalUsd <= 0) return lotAmount
+  return Math.min(lotAmount, Math.max(1, Math.ceil((lotAmount * MIN_PART_USD) / totalUsd)))
 }
 
 /** The public terms of a desk's lot that decide which amounts a buyer may take. */

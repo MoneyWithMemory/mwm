@@ -3,8 +3,16 @@ import { AllocationCard } from './AllocationCard'
 import { CounterpartiesCard } from './CounterpartiesCard'
 import { FlowCard } from './FlowCard'
 
-/** Three charts built only from the wallet's own balances and activity: nothing is estimated. */
-export function Insights({ wallet, market, nowSeconds }: { wallet: WalletState; market: Market; nowSeconds: number }) {
+/** Three charts, all built only from the wallet's own balances, deals and activity: nothing is estimated. */
+export function Insights({
+  wallet,
+  market,
+  nowSeconds,
+}: {
+  wallet: WalletState
+  market: Market
+  nowSeconds: number
+}) {
   return (
     <section className="flex flex-col gap-3" aria-label="Insights">
       <h2 className="px-1 text-sm font-semibold text-hint">Insights</h2>

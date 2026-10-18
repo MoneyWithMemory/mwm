@@ -13,6 +13,8 @@ export interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 
   containerClassName?: string
   /** A line kept under the field so a hint or an error never moves what follows; off for fields that never show one (e.g. search). */
   reserveMessage?: boolean
+  /** The parent shakes the whole group, so on an error the field only turns red. */
+  shakeWithGroup?: boolean
 }
 
 const shakeVariants = {
@@ -36,6 +38,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
     className,
     containerClassName,
     reserveMessage = true,
+    shakeWithGroup = false,
     ...rest
   },
   ref
@@ -44,7 +47,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
   const inputId = explicitId ?? `input-${autoId}`
   const hintId = `hint-${autoId}`
   const hasError = Boolean(error)
-  const isShaking = shake || hasError
+  const isShaking = !shakeWithGroup && (shake || hasError)
 
   return (
     <div className={cn('w-full flex flex-col', containerClassName)}>

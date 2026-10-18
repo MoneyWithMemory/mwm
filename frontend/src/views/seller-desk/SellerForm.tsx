@@ -2,9 +2,10 @@ import { Check } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useUpdateAgentProfile, type AgentProfile, type AssetBalance, type Market } from '@/api'
-import { AssetBadge, Button, Card, CardContent, FormNote, NumberField, PrivacyTag, SegmentedControl, Toggle } from '@/components/ui'
+import { AssetBadge, Button, Card, CardContent, FormNote, MaxButton, NumberField, PrivacyTag, SegmentedControl, Toggle } from '@/components/ui'
 import { formatAssetAmount, formatUnitPrice } from '@/lib/format'
 import { textSwap } from '@/lib/motion'
+import { parseUsd, WHOLE_USD_ERROR } from '@/lib/usd'
 import { StrategyPicker } from '../shared/StrategyPicker'
 
 /** Starting values that differ from the saved profile, e.g. answering a request in the Shop. */
@@ -68,8 +69,10 @@ export function SellerForm({ walletId, profile, assets, market, draft, onSaved }
   }
 
   const amountValue = parse(amount)
-  const askValue = parse(ask)
-  const reserveValue = parse(reserve)
+  const askTyped = parseUsd(ask)
+  const reserveTyped = parseUsd(reserve)
+  const askValue = askTyped.value
+  const reserveValue = reserveTyped.value
   const precision = asset?.precision ?? 0
   const balance = asset ? asset.amount / 10 ** precision : 0
 
@@ -80,11 +83,13 @@ export function SellerForm({ walletId, profile, assets, market, draft, onSaved }
   } else if (active && !amount) amountError = 'Enter an amount greater than 0.'
 
   let askError: string | undefined
-  if (ask && (askValue === null || askValue <= 0)) askError = 'Enter a price greater than 0.'
+  if (askTyped.cents) askError = WHOLE_USD_ERROR
+  else if (ask && (askValue === null || askValue <= 0)) askError = 'Enter a price greater than 0.'
   else if (active && !ask) askError = 'Enter a price greater than 0.'
 
   let reserveError: string | undefined
-  if (reserve && reserveValue === null) reserveError = 'Enter a valid minimum.'
+  if (reserveTyped.cents) reserveError = WHOLE_USD_ERROR
+  else if (reserve && reserveValue === null) reserveError = 'Enter a valid minimum.'
   else if (reserveValue !== null && askValue !== null && reserveValue > askValue) {
     reserveError = 'Your minimum must not exceed the asking price.'
   }
@@ -158,17 +163,7 @@ export function SellerForm({ walletId, profile, assets, market, draft, onSaved }
               suffix={asset?.ticker}
               disabled={!asset}
               invalid={show && Boolean(amountError)}
-              aside={
-                asset && (
-                  <button
-                    type="button"
-                    className="pressable pressable-flat amount rounded-full px-1.5 text-xs font-medium text-accent hover:bg-accent/10"
-                    onClick={() => edit(setAmount)(String(balance))}
-                  >
-                    Max {formatAssetAmount(asset.amount, precision)}
-                  </button>
-                )
-              }
+              aside={asset && <MaxButton amount={formatAssetAmount(asset.amount, precision)} onClick={() => edit(setAmount)(String(balance))} />}
               onChange={(e) => edit(setAmount)(e.target.value)}
             />
           )}
@@ -193,6 +188,7 @@ export function SellerForm({ walletId, profile, assets, market, draft, onSaved }
               aside={<PrivacyTag kind="public" />}
               placeholder="0"
               prefix="$"
+              inputMode="numeric"
               value={ask}
               invalid={show && Boolean(askError)}
               onChange={(e) => edit(setAsk)(e.target.value)}
@@ -202,6 +198,7 @@ export function SellerForm({ walletId, profile, assets, market, draft, onSaved }
               aside={<PrivacyTag kind="private" />}
               placeholder="0"
               prefix="$"
+              inputMode="numeric"
               value={reserve}
               invalid={show && Boolean(reserveError)}
               onChange={(e) => edit(setReserve)(e.target.value)}

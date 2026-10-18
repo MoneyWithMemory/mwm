@@ -1,9 +1,9 @@
 import { Ban, CircleAlert, Scale, ShieldAlert, TimerOff, type LucideIcon } from 'lucide-react'
-import type { SessionView } from '@/api'
+import { useWallet, type SessionView } from '@/api'
 import { Button, Card, CardContent, TrustBadge } from '@/components/ui'
 import { useWalletContext } from '@/lib/navigation'
-import { withTrustLabels } from '@/lib/trust'
-import { isNoOverlap } from '../shared/sessionState'
+import { ownTrustExplanation, withTrustLabels } from '@/lib/trust'
+import { isNoAgreement, isNoOverlap, ownTrustFailure } from '../shared/sessionState'
 import { TxidRow } from './TxidRow'
 
 interface Notice {
@@ -12,24 +12,40 @@ interface Notice {
   body: string
 }
 
+/** Why the gate blocked the session, said from the viewer's side: their own wallet may be the one it refused. */
+function blockedNotice(session: SessionView): Notice {
+  const reasons = session.gate?.reasons
+  if (isNoOverlap(reasons)) {
+    return {
+      icon: Scale,
+      title: 'No deal at these limits',
+      body:
+        session.my_role === 'buyer'
+          ? 'Your maximum is below what this seller accepts, so the agents did not start. No funds moved.'
+          : "The buyer's maximum is below your minimum, so the agents did not start. No funds moved.",
+    }
+  }
+  const ownTier = ownTrustFailure(session)
+  if (ownTier === 'Unverified') {
+    return {
+      icon: ShieldAlert,
+      title: 'Your wallet has no history yet',
+      body: 'Agents trade only with wallets that have a reliable trade history, so no funds moved.',
+    }
+  }
+  if (ownTier !== null) {
+    return { icon: ShieldAlert, title: 'Your reliability is too low', body: 'Agents trade only between reliable wallets, so no funds moved.' }
+  }
+  if (isNoAgreement(reasons)) {
+    return { icon: Scale, title: 'No agreement', body: 'The agents could not agree on a price, so no funds moved.' }
+  }
+  return { icon: ShieldAlert, title: 'Trade blocked', body: 'The safety check did not pass, so no funds moved.' }
+}
+
 function noticeFor(session: SessionView): Notice | null {
   switch (session.state) {
     case 'BLOCKED_BY_GATE':
-      if (isNoOverlap(session.gate?.reasons)) {
-        return {
-          icon: Scale,
-          title: 'No deal at these limits',
-          body:
-            session.my_role === 'buyer'
-              ? 'Your maximum is below what this seller accepts, so the agents did not start. No funds moved.'
-              : "The buyer's maximum is below your minimum, so the agents did not start. No funds moved.",
-        }
-      }
-      return {
-        icon: ShieldAlert,
-        title: 'Trade blocked',
-        body: 'The safety check did not pass, so no funds moved.',
-      }
+      return blockedNotice(session)
     case 'CANCELLED_BY_USER':
       return { icon: Ban, title: 'Session cancelled', body: 'No funds moved.' }
     case 'FAILED':
@@ -45,13 +61,25 @@ function noticeFor(session: SessionView): Notice | null {
   }
 }
 
+/** The viewer's own reliability, which the gate refused: its current score, explained for its owner. */
+function OwnTrust() {
+  const { walletId } = useWalletContext()
+  const trust = useWallet(walletId).data?.trust
+  if (!trust) return null
+  return <TrustBadge tier={trust.trust_tier} reliabilityPct={trust.reliability_pct} explain explanation={ownTrustExplanation(trust.trust_tier)} />
+}
+
 export function TerminalNotice({ session }: { session: SessionView }) {
   const { reset, replace } = useWalletContext()
   const notice = noticeFor(session)
   if (!notice) return null
   const Icon = notice.icon
-  const noOverlap = session.state === 'BLOCKED_BY_GATE' && isNoOverlap(session.gate?.reasons)
-  const reasons = session.state === 'BLOCKED_BY_GATE' && !noOverlap ? (session.gate?.reasons ?? []) : []
+  const blocked = session.state === 'BLOCKED_BY_GATE'
+  const noOverlap = blocked && isNoOverlap(session.gate?.reasons)
+  const ownBlocked = blocked && ownTrustFailure(session) !== null
+  // Any other block: the counterparty's trust and the gate's own reasons.
+  const verdict = blocked && !noOverlap && !ownBlocked && !isNoAgreement(session.gate?.reasons)
+  const reasons = verdict ? (session.gate?.reasons ?? []) : []
 
   return (
     <Card>
@@ -69,7 +97,8 @@ export function TerminalNotice({ session }: { session: SessionView }) {
             <p className="text-xs text-hint">This transaction was broadcast before the failure. Check it before trying again.</p>
           </div>
         )}
-        {session.state === 'BLOCKED_BY_GATE' && !noOverlap && (
+        {ownBlocked && <OwnTrust />}
+        {verdict && (
           <TrustBadge tier={session.counterparty_trust.trust_tier} reliabilityPct={session.counterparty_trust.reliability_pct} explain />
         )}
         {reasons.length > 0 && (
@@ -95,9 +124,15 @@ export function TerminalNotice({ session }: { session: SessionView }) {
             <Button variant="secondary" fullWidth onClick={() => reset('wallet')}>
               Back to Wallet
             </Button>
-            <Button fullWidth onClick={() => reset('shop')}>
-              Find another deal
-            </Button>
+            {ownBlocked ? (
+              <Button fullWidth trailingArrow onClick={() => reset('contacts')}>
+                Your reliability
+              </Button>
+            ) : (
+              <Button fullWidth onClick={() => reset('shop')}>
+                Find another deal
+              </Button>
+            )}
           </div>
         )}
       </CardContent>

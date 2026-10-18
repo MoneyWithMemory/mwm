@@ -1,13 +1,14 @@
 import { Eye, EyeOff, ShieldAlert } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
-import { useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useCreateWallet, type WalletSummary } from '@/api'
 import { Button, CopyButton, IconButton, IconSwap, Input, Sheet, Tabs, TextArea, type TabItem } from '@/components/ui'
 import { cn } from '@/lib/cn'
 import { fade } from '@/lib/motion'
 import { deriveAddress, generateSeed, normalizeSeed, validateSeed } from './wdk'
 
-type Mode = 'create' | 'import'
+export type OnboardingMode = 'create' | 'import'
+type Mode = OnboardingMode
 type Step = 'phrase' | 'confirm' | 'finish'
 
 const TABS: TabItem<Mode>[] = [
@@ -17,6 +18,7 @@ const TABS: TabItem<Mode>[] = [
 
 const CONFIRM_COUNT = 3
 const DEFAULT_LABEL = 'WDK Wallet'
+const WALLET_NOTICE = 'Regtest demo: the recovery phrase is sent to your local MwM backend to open the RGB wallet. Never use a real seed.'
 
 /** Three distinct word positions (0-based, ascending) the user must type back. */
 function pickPositions(total: number): number[] {
@@ -43,62 +45,74 @@ interface WdkOnboardingSheetProps {
 export function WdkOnboardingSheet({ open, onClose, onCreated }: WdkOnboardingSheetProps) {
   return (
     <Sheet open={open} onClose={onClose} title="Wallet via Tether WDK">
-      <OnboardingFlow onCreated={onCreated} />
+      <OnboardingFlow
+        notice={WALLET_NOTICE}
+        finish={({ seed, back }) => <FinishStep seed={seed} onBack={back} onCreated={onCreated} />}
+      />
     </Sheet>
   )
 }
 
-function OnboardingFlow({ onCreated }: Pick<WdkOnboardingSheetProps, 'onCreated'>) {
-  const [mode, setMode] = useState<Mode>('create')
+export interface FinishControls {
+  /** The confirmed (create) or validated (import) phrase. */
+  seed: string
+  back: () => void
+  /** Drops the phrase from the flow's state, once it has been handed over. */
+  wipe: () => void
+}
+
+interface OnboardingFlowProps {
+  initialMode?: Mode
+  /** Where the phrase goes, on top of every step. */
+  notice: string
+  /** The step after the phrase: what the phrase is for (a wallet name, the Vault's password). */
+  finish: (controls: FinishControls) => ReactNode
+}
+
+/** Phrase by Tether WDK: generated in the browser and confirmed (three words), or imported and validated. */
+export function OnboardingFlow({ initialMode = 'create', notice, finish }: OnboardingFlowProps) {
+  const [mode, setMode] = useState<Mode>(initialMode)
   const [step, setStep] = useState<Step>('phrase')
   // Create: generated once per opening. Import: whatever the user pastes.
-  const [generated] = useState(generateSeed)
+  const [generated, setGenerated] = useState(generateSeed)
   const [imported, setImported] = useState('')
-  const [address, setAddress] = useState<string | null>(null)
   const seed = mode === 'create' ? generated : normalizeSeed(imported)
 
   const switchMode = (next: Mode) => {
     setMode(next)
     setStep('phrase')
-    setAddress(null)
   }
 
-  const finish = () => {
-    setStep('finish')
-    setAddress(null)
-    deriveAddress(seed).then(setAddress, () => setAddress(''))
+  const wipe = () => {
+    setGenerated('')
+    setImported('')
   }
 
   return (
     <div className="flex flex-col gap-4 pb-2">
-      <RegtestBanner />
+      <RegtestBanner notice={notice} />
       <Tabs tabs={TABS} activeId={mode} onChange={switchMode} layoutId="wdk-mode" fullWidth />
       <AnimatePresence mode="wait" initial={false}>
         <motion.div key={`${mode}:${step}`} variants={fade} initial="initial" animate="animate" exit="exit" className="flex flex-col gap-4">
           {mode === 'create' && step === 'phrase' && <RevealStep phrase={generated} onContinue={() => setStep('confirm')} />}
           {mode === 'create' && step === 'confirm' && (
-            <ConfirmStep phrase={generated} onBack={() => setStep('phrase')} onContinue={finish} />
+            <ConfirmStep phrase={generated} onBack={() => setStep('phrase')} onContinue={() => setStep('finish')} />
           )}
-          {mode === 'import' && step === 'phrase' && <ImportStep value={imported} onChange={setImported} onContinue={finish} />}
-          {step === 'finish' && (
-            <FinishStep
-              seed={seed}
-              address={address}
-              onBack={() => setStep(mode === 'create' ? 'confirm' : 'phrase')}
-              onCreated={onCreated}
-            />
+          {mode === 'import' && step === 'phrase' && (
+            <ImportStep value={imported} onChange={setImported} onContinue={() => setStep('finish')} />
           )}
+          {step === 'finish' && finish({ seed, back: () => setStep(mode === 'create' ? 'confirm' : 'phrase'), wipe })}
         </motion.div>
       </AnimatePresence>
     </div>
   )
 }
 
-function RegtestBanner() {
+function RegtestBanner({ notice }: { notice: string }) {
   return (
     <div role="note" className="flex items-start gap-2.5 rounded-control border border-warning/25 bg-warning/10 p-3 text-xs leading-relaxed text-warning">
       <ShieldAlert size={16} className="mt-px shrink-0" aria-hidden="true" />
-      <p>Regtest demo: the recovery phrase is sent to your local MwM backend to open the RGB wallet. Never use a real seed.</p>
+      <p>{notice}</p>
     </div>
   )
 }
@@ -151,7 +165,7 @@ function RevealStep({ phrase, onContinue }: { phrase: string; onContinue: () => 
       </div>
 
       <div className="flex min-h-8 items-center justify-between gap-3">
-        <p className="text-xs text-hint">Anyone with these words controls the wallet.</p>
+        <p className="text-xs text-hint">Anyone with these words controls these funds.</p>
         {revealed && <CopyButton text={phrase} label="Copy" copiedLabel="Copied" variant="button" size="sm" />}
       </div>
 
@@ -256,18 +270,23 @@ function ImportStep({ value, onChange, onContinue }: { value: string; onChange: 
   )
 }
 
-function FinishStep({
-  seed,
-  address,
-  onBack,
-  onCreated,
-}: {
-  seed: string
-  address: string | null
-  onBack: () => void
-  onCreated: (wallet: WalletSummary) => void
-}) {
+function FinishStep({ seed, onBack, onCreated }: { seed: string; onBack: () => void; onCreated: (wallet: WalletSummary) => void }) {
   const [label, setLabel] = useState(DEFAULT_LABEL)
+  const [address, setAddress] = useState<string | null>(null)
+  useEffect(() => {
+    let current = true
+    deriveAddress(seed).then(
+      (derived) => {
+        if (current) setAddress(derived)
+      },
+      () => {
+        if (current) setAddress('')
+      },
+    )
+    return () => {
+      current = false
+    }
+  }, [seed])
   const createWallet = useCreateWallet()
   const trimmed = label.trim()
 

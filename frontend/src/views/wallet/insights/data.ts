@@ -34,7 +34,7 @@ export interface WeekBucket {
   sent: number
 }
 
-/** Received and sent value per week for the last WEEKS weeks, oldest first. Issuance is not income. */
+/** Received and sent value per week for the last WEEKS weeks, oldest first. Issuance is not income, and a move to or from the Vault stays within the account. */
 export function weeklyFlow(activity: ActivityItem[], market: Market, nowSeconds: number): WeekBucket[] {
   const buckets: WeekBucket[] = Array.from({ length: WEEKS }, (_, i) => ({
     start: nowSeconds - (WEEKS - i) * WEEK,
@@ -42,7 +42,7 @@ export function weeklyFlow(activity: ActivityItem[], market: Market, nowSeconds:
     sent: 0,
   }))
   for (const item of activity) {
-    if (item.kind === 'issue') continue
+    if (item.kind === 'issue' || item.kind === 'vault') continue
     const age = Math.floor((nowSeconds - item.t) / WEEK)
     if (age < 0 || age >= WEEKS) continue
     const value = movementUsd(item, market)

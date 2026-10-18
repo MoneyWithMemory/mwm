@@ -44,6 +44,10 @@ export const DIST = {
   large: 30, // --distance-large: sheet entry
 } as const
 
+/** Error shake (transitions-dev 12): one decaying shake of the field, or of the whole group in error. */
+export const SHAKE_X = [0, -6, 6, -4, 4, -2, 2, 0]
+export const SHAKE_TRANSITION = { duration: DUR.medium, ease: EASE_OUT } as const satisfies Transition
+
 /** Sliding tab/segment indicator (layoutId). */
 export const SPRING_TABS = { type: 'spring', stiffness: 450, damping: 35 } as const satisfies Transition
 

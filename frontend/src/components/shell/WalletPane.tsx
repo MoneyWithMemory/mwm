@@ -18,6 +18,7 @@ import { DealsView } from '@/views/deals/DealsView'
 import { ShopView } from '@/views/shop/ShopView'
 import { TradeView } from '@/views/trade/TradeView'
 import { WalletView } from '@/views/wallet/WalletView'
+import { Assistant } from '@/views/assistant/Assistant'
 import { BottomNav } from './BottomNav'
 import { SideNav } from './SideNav'
 
@@ -116,7 +117,7 @@ export function WalletPane({ walletId, nav = 'bottom', autoHideIsland = true }: 
               animate="animate"
               exit="exit"
               onScroll={onScroll}
-              className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain', nav === 'bottom' && 'pane-scroll-island')}
+              className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain', nav === 'bottom' ? 'pane-scroll-island' : 'pane-scroll-fab')}
             >
               {/* Each page keeps the context it was rendered with: a page that is leaving still
                   shows its own entry (a deal does not turn into the new-deal form on its way out). */}
@@ -126,6 +127,7 @@ export function WalletPane({ walletId, nav = 'bottom', autoHideIsland = true }: 
             </motion.div>
           </AnimatePresence>
           {nav === 'bottom' && <BottomNav hidden={autoHideIsland && islandHiddenFor === viewKey} />}
+          <Assistant floating={nav === 'side'} />
         </OverlayLayer>
       </div>
     </WalletContext.Provider>

@@ -43,9 +43,9 @@ CORNERS = [(share, margin) for share in (25, 37, 50) for margin in ("least", "wi
 
 
 def _fix_paces(monkeypatch, buyer=(50, "least"), seller=(50, "least")):
-    def pace(session_id, role, limit):
+    def pace(session_id, role, limit, strategy="balanced"):
         share, margin = buyer if role == "buyer" else seller
-        return ConcessionPace(share, 1 if margin == "least" else _widest(limit))
+        return ConcessionPace(share, 1 if margin == "least" else _widest(limit), strategy)
 
     monkeypatch.setattr("backend.qvac_negotiator.concession_pace", pace)
 
@@ -61,11 +61,11 @@ def _context(**overrides) -> NegotiationContext:
     return NegotiationContext(**ctx)
 
 
-def _negotiate(reserve, ceiling, list_price, target, max_rounds=10):
+def _negotiate(reserve, ceiling, list_price, target, max_rounds=10, buyer_prompt="", seller_prompt=""):
     """
     The product's loop (api_server.run_negotiation_loop) on generate_turn: the buyer then the seller
     each round, a deal as soon as one side takes the other's price within its limit, and a stop when
-    the offers do not move for two rounds. Returns (outcome, price, turns).
+    the offers do not move for two rounds. The prompts are the owners' strategies. Returns (outcome, price, turns).
     """
     negotiator = QvacNegotiator()
     negotiator.use_mock = True
@@ -79,7 +79,7 @@ def _negotiate(reserve, ceiling, list_price, target, max_rounds=10):
             round_number=round_number, role="buyer", wallet_id="wallet_a", wallet_label="Wallet A",
             counterparty_wallet_id="wallet_b", counterparty_label="Wallet B", secret_limit_usd=ceiling,
             buyer_target_usd=target, current_bid_usd=bid, current_ask_usd=ask, your_previous_offer_usd=bid,
-            history=list(history), **common))
+            owner_instructions=buyer_prompt, history=list(history), **common))
         history.append(buyer)
         if ask <= ceiling and (buyer.action == "ACCEPT" or buyer.offer_usd >= ask):
             return "deal", ask, history
@@ -87,7 +87,8 @@ def _negotiate(reserve, ceiling, list_price, target, max_rounds=10):
         seller = negotiator.generate_turn(NegotiationContext(
             round_number=round_number, role="seller", wallet_id="wallet_b", wallet_label="Wallet B",
             counterparty_wallet_id="wallet_a", counterparty_label="Wallet A", secret_limit_usd=reserve,
-            current_bid_usd=bid, current_ask_usd=ask, your_previous_offer_usd=ask, history=list(history), **common))
+            current_bid_usd=bid, current_ask_usd=ask, your_previous_offer_usd=ask, owner_instructions=seller_prompt,
+            history=list(history), **common))
         history.append(seller)
         if bid >= reserve and (seller.action == "ACCEPT" or seller.offer_usd <= bid):
             return "deal", bid, history
@@ -187,11 +188,12 @@ def test_no_offer_lands_on_the_limit_before_the_closing_rounds():
             assert offer == previous or abs(limit - offer) > pace.margin_usd
 
 
-def test_the_buyer_opening_is_measured_from_its_target():
-    # Opening at the ceiling: capped at half of the way from the target (120) to the hold line (134).
-    assert rationality_guard("buyer", "OFFER", 135, 135, None, 150, None, 1, max_rounds=10, buyer_target_usd=120, pace=FASTEST) == ("OFFER", 127)
-    # At the target, or with no target, an opening below the hold line is kept.
-    assert rationality_guard("buyer", "OFFER", 120, 135, None, 150, None, 1, max_rounds=10, buyer_target_usd=120, pace=FASTEST) == ("OFFER", 120)
+def test_the_buyer_opening_stays_below_its_target():
+    # Opening at the ceiling or at the target: lowered to the Balanced opening bid, 90% of the target (120).
+    assert rationality_guard("buyer", "OFFER", 135, 135, None, 150, None, 1, max_rounds=10, buyer_target_usd=120, pace=FASTEST) == ("OFFER", 114)
+    assert rationality_guard("buyer", "OFFER", 120, 135, None, 150, None, 1, max_rounds=10, buyer_target_usd=120, pace=FASTEST) == ("OFFER", 114)
+    # A lower opening is kept; with no target, an opening below the hold line is kept.
+    assert rationality_guard("buyer", "OFFER", 95, 135, None, 150, None, 1, max_rounds=10, buyer_target_usd=120, pace=FASTEST) == ("OFFER", 95)
     assert rationality_guard("buyer", "OFFER", 131, 135, None, 150, None, 1, max_rounds=10, pace=FASTEST) == ("OFFER", 131)
     # With nothing to measure from, an opening at the ceiling stops at the hold line.
     assert rationality_guard("buyer", "OFFER", 135, 135, None, 150, None, 1, max_rounds=10, pace=FASTEST) == ("OFFER", 134)
@@ -224,13 +226,14 @@ def test_the_last_round_never_ends_a_possible_deal():
 
 
 def test_the_mock_eval_scenarios_close_whenever_the_limits_overlap_at_any_pace(monkeypatch):
-    # The 24 scenarios of scripts/eval_negotiation.py (seed 2026) with the mock negotiator, for the
-    # paces at the corners of their ranges, chosen apart for the buyer and the seller.
+    # The 24 scenarios of scripts/eval_negotiation.py (seed 2026) with the mock negotiator and their
+    # owners' strategies, for the paces at the corners of their ranges, chosen apart for the buyer and the seller.
     for buyer, seller in itertools.product(CORNERS, CORNERS):
         _fix_paces(monkeypatch, buyer, seller)
         for sc in _overlapping_eval_scenarios():
             reserve, ceiling = sc["expected_reserve_usd"], sc["buyer_ceiling_usd"]
-            outcome, price, turns = _negotiate(reserve, ceiling, sc["expected_list_price_usd"], sc["buyer_target_usd"])
+            outcome, price, turns = _negotiate(reserve, ceiling, sc["expected_list_price_usd"], sc["buyer_target_usd"],
+                                               buyer_prompt=sc["buyer_prompt"], seller_prompt=sc["seller_prompt"])
             assert outcome == "deal" and reserve <= price <= ceiling, (sc["id"], buyer, seller)
 
 
@@ -246,7 +249,8 @@ def test_agents_that_push_to_their_limits_never_offer_them_early_and_still_close
     _fix_paces(monkeypatch, buyer, seller)
     for sc in _overlapping_eval_scenarios():
         reserve, ceiling, list_price = sc["expected_reserve_usd"], sc["buyer_ceiling_usd"], sc["expected_list_price_usd"]
-        outcome, price, turns = _negotiate(reserve, ceiling, list_price, sc["buyer_target_usd"])
+        outcome, price, turns = _negotiate(reserve, ceiling, list_price, sc["buyer_target_usd"],
+                                           buyer_prompt=sc["buyer_prompt"], seller_prompt=sc["seller_prompt"])
         assert outcome == "deal" and reserve <= price <= ceiling, sc["id"]
         for turn in turns:
             limit = ceiling if turn.speaker_wallet_id == "wallet_a" else reserve
@@ -487,7 +491,8 @@ def test_each_prompt_holds_only_its_own_role():
     buyer = build_system_prompt(_context(owner_instructions="Raise slowly.", counterparty_reliability_pct=86,
                                          counterparty_trust_tier="High Authenticity"))
     seller = build_system_prompt(_context(role="seller", secret_limit_usd=110, buyer_target_usd=None, owner_instructions="Hold firm."))
-    assert "Role: Buyer." in buyer and "CONFIDENTIAL CEILING" in buyer and "target valuation (118 USDT)" in buyer
+    assert "Role: Buyer." in buyer and "CONFIDENTIAL CEILING" in buyer and "target valuation is 118 USDT" in buyer
+    assert "Round 1: open at 112 USDT, well below the list price." in buyer
     for seller_rule in ("For Seller", "reserve", "open at your list price", "-3 to -8"):
         assert seller_rule not in buyer
     assert "Role: Seller." in seller and "CONFIDENTIAL RESERVE" in seller

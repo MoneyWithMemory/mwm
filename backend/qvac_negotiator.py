@@ -10,7 +10,8 @@ Features:
    arithmetic, as a nearby number stated with limit language, or in any talk of the limit.
 4. Rationality Guard: strictly guarantees bid/ask convergence within secret boundaries, and caps
    every concession at a secret pace per session, so that before the closing rounds no offer
-   publishes a limit, nor lets a counterparty that knows the rules solve for it.
+   publishes a limit, nor lets a counterparty that knows the rules solve for it. The owner's
+   strategy (Strict, Balanced, Flexible) sets the buyer's opening and the smallest step.
 5. Structured JSON output with separate private_thought and public_message; a turn that either
    guard changed, or whose words contradict its move, is published with a neutral message quoting
    only the final offer.
@@ -35,10 +36,23 @@ from backend.config import settings
 
 logger = logging.getLogger("mwm.qvac")
 
-# Smallest concession per turn: MIN_STEP_SHARE of the gap to the counterparty, at least
-# MIN_STEP_USD. With the pre-negotiation overlap check, offers always converge in a few rounds.
-MIN_STEP_USD = 2
-MIN_STEP_SHARE = 0.15
+class Strategy(NamedTuple):
+    """How an owner strategy (strategy_of) sets its agent's pace."""
+    opening_share: float  # the buyer opens at most at this share of its target valuation (opening_bid)
+    min_step_share: float  # smallest concession per turn: this share of the gap to the counterparty...
+    min_step_usd: int  # ...and at least this many USD (min_step)
+    raise_usd: Tuple[int, int]  # the buyer's raise per round that the prompt suggests
+    cut_usd: Tuple[int, int]  # the seller's cut per round that the prompt suggests
+
+# Strict opens low and concedes in small steps, Flexible opens near the target and concedes faster.
+# With the pre-negotiation overlap check, offers always converge in a few rounds at any strategy.
+STRATEGIES: Dict[str, Strategy] = {
+    "strict": Strategy(opening_share=0.70, min_step_share=0.07, min_step_usd=1, raise_usd=(1, 3), cut_usd=(1, 4)),
+    "balanced": Strategy(opening_share=0.95, min_step_share=0.15, min_step_usd=2, raise_usd=(2, 5), cut_usd=(3, 8)),
+    "flexible": Strategy(opening_share=1.00, min_step_share=0.25, min_step_usd=2, raise_usd=(4, 8), cut_usd=(5, 12)),
+}
+# The Balanced minimum step in USD (evals/offer_channel_attack.py replays the guard's old rule with it).
+MIN_STEP_USD = STRATEGIES["balanced"].min_step_usd
 
 # Before the closing rounds each agent concedes at a secret pace of its own (concession_pace): an
 # offer covers at most a share in PACE_SHARE_PCT of the room left to a hold line, which lies a secret
@@ -55,10 +69,36 @@ PROMPT_MAX_LENGTH = 500
 # A number within this share of the speaker's secret limit, stated with limit language, discloses it.
 LEAK_NEAR_SHARE = 0.05
 
-def min_step(previous_offer: int, counter_offer: Optional[int]) -> int:
+# Owners' own words ("Other" in the strategy picker) that clearly ask for a tough or a quick negotiation.
+_TOUGH_WORDS = re.compile(r"\b(?:aggressive\w*|low[\s-]*ball\w*|tough\w*|hard[\s-]+bargain\w*|bargain\s+hard)", re.IGNORECASE)
+_QUICK_WORDS = re.compile(r"\b(?:quick\w*|fast\w*|asap|hurry|close\s+soon)\b", re.IGNORECASE)
+
+def strategy_of(owner_instructions: str) -> str:
+    """
+    The owner's strategy, read deterministically: the presets of the strategy picker
+    (frontend/src/views/shared/strategies.ts) start with "Strict:" or "Flexible:", and Balanced is
+    empty. The owner's own words are Balanced unless they clearly ask to be tough (Strict) or quick
+    (Flexible), and not both.
+    """
+    text = " ".join(owner_instructions.split()).lower()
+    for name in ("strict", "flexible"):
+        if text.startswith(f"{name}:"):
+            return name
+    tough, quick = bool(_TOUGH_WORDS.search(text)), bool(_QUICK_WORDS.search(text))
+    if tough != quick:
+        return "strict" if tough else "flexible"
+    return "balanced"
+
+def opening_bid(target_usd: int, ceiling_usd: int, strategy: str) -> int:
+    """The buyer's highest opening bid: its strategy's share of the target valuation, at least 1 USD and below the ceiling."""
+    return max(1, min(round(STRATEGIES[strategy].opening_share * target_usd), ceiling_usd - 1))
+
+def min_step(previous_offer: int, counter_offer: Optional[int], strategy: str = "balanced") -> int:
+    """The smallest concession of a new offer: the strategy's share of the gap to the counterparty, at least its USD step."""
+    pace = STRATEGIES[strategy]
     if counter_offer is None:
-        return MIN_STEP_USD
-    return max(MIN_STEP_USD, round(MIN_STEP_SHARE * abs(counter_offer - previous_offer)))
+        return pace.min_step_usd
+    return max(pace.min_step_usd, round(pace.min_step_share * abs(counter_offer - previous_offer)))
 
 class NegotiationTurn(BaseModel):
     speaker_wallet_id: str
@@ -423,22 +463,24 @@ def says_its_move(public_message: str, action: str) -> bool:
     return bool(ACCEPT_WORDS.search(text)) if action == "ACCEPT" else not CLAIMS_ACCEPTANCE.search(text)
 
 class ConcessionPace(NamedTuple):
-    """An agent's secret concession pace in one session (concession_pace)."""
+    """An agent's concession pace in one session (concession_pace): a secret share and margin, and its owner's strategy."""
     share_pct: int  # an offer covers at most this share of the room left to the hold line
     margin_usd: int  # the hold line's distance inside the secret limit
+    strategy: str = "balanced"  # the owner's strategy (strategy_of): the buyer's opening and the minimum step
 
-def concession_pace(session_id: str, role: str, secret_limit_usd: int) -> ConcessionPace:
+def concession_pace(session_id: str, role: str, secret_limit_usd: int, strategy: str = "balanced") -> ConcessionPace:
     """
     The pace of `role` in `session_id`: a share in PACE_SHARE_PCT and a margin of 1 USD up to
-    max(PACE_MARGIN_MIN_USD, PACE_MARGIN_SHARE of the limit), keyed by a secret of this process.
-    The same agent in the same session always gets the same pace, but nothing public (the session
-    id, the rules, the offers) computes it, so a counterparty cannot solve the limit from the offers.
+    max(PACE_MARGIN_MIN_USD, PACE_MARGIN_SHARE of the limit), keyed by a secret of this process,
+    with the owner's `strategy`. The same agent in the same session always gets the same share and
+    margin, but nothing public (the session id, the rules, the offers) computes them, so a
+    counterparty cannot solve the limit from the offers.
     """
     digest = hmac.new(_PACE_KEY, f"{session_id}:{role}".encode(), hashlib.sha256).digest()
     low, high = PACE_SHARE_PCT
     widest = max(PACE_MARGIN_MIN_USD, round(PACE_MARGIN_SHARE * secret_limit_usd))
     share = low + int.from_bytes(digest[:8], "big") % (high - low + 1)
-    return ConcessionPace(share, 1 + int.from_bytes(digest[8:16], "big") % widest)
+    return ConcessionPace(share, 1 + int.from_bytes(digest[8:16], "big") % widest, strategy)
 
 def rationality_guard(
     role: str,
@@ -457,10 +499,12 @@ def rationality_guard(
 ) -> Tuple[str, int]:
     """
     Enforces game-theoretic rationality and inviolable mathematical bounds, deterministically for a
-    given pace (generate_turn passes the agent's secret concession_pace()):
+    given pace (generate_turn passes the agent's concession_pace(), with its owner's strategy):
     - Buyer never bids > max_budget; bids must be monotonic non-decreasing; if bid >= current_ask -> ACCEPT.
     - Seller never asks < min_reserve; asks must be monotonic non-increasing; if ask <= current_bid -> ACCEPT.
-    - After its opening every new offer moves towards the counterparty by at least min_step().
+    - The buyer's opening bid is at most opening_bid(): its strategy's share of its target valuation.
+    - After its opening every new offer moves towards the counterparty by at least min_step(), whose
+      size the strategy sets.
     - ACCEPT takes the counterparty's current price, and only when that price is within the secret
       limit: any other ACCEPT is an OFFER at the model's price and goes through the same checks.
     - Before the closing rounds (the last two), an ACCEPT far from the agent's own last offer
@@ -468,9 +512,8 @@ def rationality_guard(
     - Concession cap, before the closing rounds: a hold line lies pace.margin_usd inside the secret
       limit, and a new offer covers at most pace.share_pct (25-50%) of the room left between the
       previous offer and the hold line, rounded down, so it never equals the limit, never concedes
-      more than half of the distance to it, and stays put once the room is too small to move. The
-      buyer's first bid is measured from its target valuation; an opening with nothing to measure
-      from stops at the hold line. The cap beats min_step(): protecting the limit comes before
+      more than half of the distance to it, and stays put once the room is too small to move. An
+      opening stops at the hold line. The cap beats min_step(): protecting the limit comes before
       speed. The pace is secret, so a counterparty that knows these rules cannot solve the limit
       from the offers: the hold line places it only within the margin's range.
     - At its hold line before the closing rounds, an agent takes the counterparty's price when it
@@ -502,6 +545,12 @@ def rationality_guard(
         if offer > secret_limit_usd:
             logger.info(f"RationalityGuard: clamping buyer offer {offer} down to ceiling {secret_limit_usd}")
             offer = secret_limit_usd
+        # The opening bid: at most the strategy's share of the target valuation.
+        if your_previous_offer_usd is None and buyer_target_usd is not None:
+            opening = opening_bid(buyer_target_usd, secret_limit_usd, pace.strategy)
+            if offer > opening:
+                logger.info(f"RationalityGuard: buyer opening {offer} lowered to {opening} ({pace.strategy}).")
+                offer = opening
 
         # Monotonicity: offer >= previous bid
         if your_previous_offer_usd is not None and offer < your_previous_offer_usd:
@@ -509,7 +558,7 @@ def rationality_guard(
             offer = your_previous_offer_usd
         # Convergence: every new bid moves up by at least min_step(), until the ceiling.
         if your_previous_offer_usd is not None:
-            step = min_step(your_previous_offer_usd, current_ask_usd)
+            step = min_step(your_previous_offer_usd, current_ask_usd, pace.strategy)
             if offer < your_previous_offer_usd + step:
                 offer = min(secret_limit_usd, your_previous_offer_usd + step)
 
@@ -531,7 +580,7 @@ def rationality_guard(
         # Convergence: after its opening at the list price, every new ask moves down by at
         # least min_step(), until the reserve.
         if round_number > 1 and your_previous_offer_usd is not None:
-            step = min_step(your_previous_offer_usd, current_bid_usd)
+            step = min_step(your_previous_offer_usd, current_bid_usd, pace.strategy)
             if offer > your_previous_offer_usd - step:
                 offer = max(secret_limit_usd, your_previous_offer_usd - step)
 
@@ -571,8 +620,6 @@ def rationality_guard(
         inward = 1 if role == "buyer" else -1
         hold_line = secret_limit_usd - inward * pace.margin_usd
         anchor = your_previous_offer_usd
-        if anchor is None and role == "buyer" and buyer_target_usd is not None and buyer_target_usd < hold_line:
-            anchor = buyer_target_usd
         if anchor is None:
             capped = max(1, min(offer, hold_line)) if role == "buyer" else max(offer, hold_line)
             reach = None
@@ -638,6 +685,8 @@ def build_system_prompt(ctx: NegotiationContext) -> str:
     pay = ctx.payment_ticker
     closing_round = max(ctx.max_rounds - 1, 1)
     list_price = ctx.list_price_usd or ctx.current_ask_usd or 150
+    strategy = strategy_of(ctx.owner_instructions)
+    pace = STRATEGIES[strategy]
     if ctx.role == "buyer":
         role_desc, limit_name = "Buyer", "ceiling"
         target = ctx.buyer_target_usd
@@ -649,10 +698,11 @@ def build_system_prompt(ctx: NegotiationContext) -> str:
             + (f"Your target valuation is {target} {pay}. " if target else "")
             + f"Your CONFIDENTIAL CEILING (absolute maximum budget) is {ctx.secret_limit_usd} {pay}. NEVER EXCEED IT."
         )
-        opening = f", near your target valuation ({target} {pay})" if target else ""
+        opening = f"open at {opening_bid(target, ctx.secret_limit_usd, strategy)} {pay}, " if target else "open "
+        low, high = pace.raise_usd
         rules = [
-            f"Round 1: open well below the list price{opening}. NEVER open at your ceiling {ctx.secret_limit_usd}!",
-            f"Following rounds: concede gradually (by default +2 to +5 {pay} per round); each new offer must be higher than your previous one. Do NOT jump to your ceiling.",
+            f"Round 1: {opening}well below the list price. NEVER open at your ceiling {ctx.secret_limit_usd}!",
+            f"Following rounds: concede gradually (by default +{low} to +{high} {pay} per round); each new offer must be higher than your previous one. Do NOT jump to your ceiling.",
             f"Before round {closing_round}, never ACCEPT an ask far above your own last offer: counter with a small step instead.",
             f"From round {closing_round}: work to close: ACCEPT the seller's ask if it is within your ceiling, otherwise make your best closing offer.",
         ]
@@ -664,9 +714,10 @@ def build_system_prompt(ctx: NegotiationContext) -> str:
             f"Your goal is a final price as near to your list price as possible. "
             f"Your CONFIDENTIAL RESERVE (absolute minimum price) is {ctx.secret_limit_usd} {pay}. NEVER GO BELOW IT."
         )
+        low, high = pace.cut_usd
         rules = [
             f"Round 1: open at your list price ({list_price} {pay}).",
-            f"Following rounds: concede gradually towards the buyer (by default -3 to -8 {pay} per round); each new offer must be lower than your previous one. Aim to finish as near to your list price as the buyer allows.",
+            f"Following rounds: concede gradually towards the buyer (by default -{low} to -{high} {pay} per round); each new offer must be lower than your previous one. Aim to finish as near to your list price as the buyer allows.",
             f"Before round {closing_round}, never ACCEPT a bid far below your own last offer: counter with a small step instead.",
             f"From round {closing_round}: work to close: ACCEPT the buyer's bid if it is at or above your reserve {ctx.secret_limit_usd}, otherwise make your best closing offer.",
         ]
@@ -726,9 +777,12 @@ Evaluate the state, formulate your private tactical thought, and output your JSO
 def mock_negotiate(ctx: NegotiationContext) -> Dict[str, Any]:
     """
     Intelligent simulated negotiation generator for development and tests without a QVAC daemon:
-    opens in round 1, concedes every round and closes in the last round (ctx.max_rounds).
+    opens in round 1 (the buyer at its strategy's opening bid), concedes every round by a step its
+    owner's strategy sets and closes in the last round (ctx.max_rounds).
     """
     final_round = ctx.round_number >= ctx.max_rounds
+    strategy = strategy_of(ctx.owner_instructions)
+    raise_usd, cut_usd = {"strict": (3, 5), "balanced": (5, 10), "flexible": (8, 15)}[strategy]
     if ctx.role == "buyer":
         target = ctx.buyer_target_usd or 120
         current_ask = ctx.current_ask_usd or 150
@@ -738,8 +792,8 @@ def mock_negotiate(ctx: NegotiationContext) -> Dict[str, Any]:
             thought = f"The ask of {current_ask} is within my target ({target} USD). Accepting it. {counterparty_reliability_line(ctx)}".strip()
             msg = f"Your ask of {current_ask} {ctx.payment_ticker} is acceptable."
         elif ctx.round_number == 1:
-            action, offer = "OFFER", target
-            thought = f"Opening near target valuation ({target} USD) to anchor the spread conservatively. {counterparty_reliability_line(ctx)}".strip()
+            action, offer = "OFFER", opening_bid(target, ctx.secret_limit_usd, strategy)
+            thought = f"Opening at {offer}, below my target valuation ({target} USD), to anchor the spread. {counterparty_reliability_line(ctx)}".strip()
             msg = f"Considering secondary market depth, I open with {offer} {ctx.payment_ticker} for immediate atomic settlement."
         elif final_round:
             if current_ask <= ctx.secret_limit_usd:
@@ -751,7 +805,7 @@ def mock_negotiate(ctx: NegotiationContext) -> Dict[str, Any]:
                 thought = "Final round: pushing to absolute budget ceiling as take-it-or-leave-it."
                 msg = f"This is my final best offer: {offer} {ctx.payment_ticker}."
         else:
-            offer = min((ctx.your_previous_offer_usd or target) + 5, ctx.secret_limit_usd)
+            offer = min((ctx.your_previous_offer_usd or target) + raise_usd, ctx.secret_limit_usd)
             if offer >= current_ask and current_ask <= ctx.secret_limit_usd:
                 action, offer = "ACCEPT", current_ask
                 thought = f"Seller's ask of {current_ask} is within budget. Executing agreement."
@@ -777,7 +831,7 @@ def mock_negotiate(ctx: NegotiationContext) -> Dict[str, Any]:
                 thought = "Final round: Offering absolute reserve price as last chance."
                 msg = f"Final firm ask is {offer} {ctx.payment_ticker}."
         else:
-            offer = max((ctx.your_previous_offer_usd or ctx.current_ask_usd or 150) - 10, ctx.secret_limit_usd)
+            offer = max((ctx.your_previous_offer_usd or ctx.current_ask_usd or 150) - cut_usd, ctx.secret_limit_usd)
             if current_bid >= offer:
                 action, offer = "ACCEPT", current_bid
                 thought = f"Buyer bid {current_bid} satisfies minimum reserve. Accepting."
@@ -865,7 +919,7 @@ class QvacNegotiator:
             max_rounds=ctx.max_rounds,
             buyer_target_usd=ctx.buyer_target_usd if ctx.role == "buyer" else None,
             counterparty_previous_offer_usd=counterparty_offers[-2] if len(counterparty_offers) > 1 else None,
-            pace=concession_pace(ctx.session_id, ctx.role, ctx.secret_limit_usd),
+            pace=concession_pace(ctx.session_id, ctx.role, ctx.secret_limit_usd, strategy_of(ctx.owner_instructions)),
         )
 
         # 3. Run Leak Guard (privacy & secret limit protection). The model's own words are published

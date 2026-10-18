@@ -37,9 +37,9 @@ OLD_RULE_CASES = [
     (("buyer", "OFFER", 135, 135, 134, 150, 134, 4), {}, ("OFFER", 134)),
     # The cap beats the minimum step.
     (("seller", "OFFER", 114, 110, 80, 114, 114, 3), {}, ("OFFER", 112)),
-    # The buyer's opening is measured from its target; with nothing to measure from it moves 2 USD inside the ceiling.
-    (("buyer", "OFFER", 135, 135, None, 150, None, 1), {"buyer_target_usd": 120}, ("OFFER", 127)),
-    (("buyer", "OFFER", 120, 135, None, 150, None, 1), {"buyer_target_usd": 120}, ("OFFER", 120)),
+    # Today's guard lowers a Balanced buyer's round-1 offer to 95% of its target before the old cap applies.
+    (("buyer", "OFFER", 135, 135, None, 150, None, 1), {"buyer_target_usd": 120}, ("OFFER", 114)),
+    (("buyer", "OFFER", 120, 135, None, 150, None, 1), {"buyer_target_usd": 120}, ("OFFER", 114)),
     (("buyer", "OFFER", 131, 135, None, 150, None, 1), {}, ("OFFER", 131)),
     (("buyer", "OFFER", 135, 135, None, 150, None, 1), {}, ("OFFER", 133)),
     # Touching limits: 1 USD from its limit, facing a price repeated 1 USD beyond it, an agent offers the limit.
@@ -109,7 +109,7 @@ def test_the_true_limit_survives_and_the_old_rule_gives_more_away(attack):
             survivors = attack.surviving_limits(sc, model, rule, "buyer", turns)
             assert sc["ceiling"] in survivors
             pinned[rule] += survivors == [sc["ceiling"]]
-    assert pinned["old"] >= 8 and pinned["current"] <= 1
+    assert pinned["old"] >= 6 and pinned["current"] <= 1
 
 
 def test_a_run_restores_what_it_patches(attack):

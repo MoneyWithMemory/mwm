@@ -253,9 +253,9 @@ def test_mock_buyer_takes_an_ask_within_its_target_without_quoting_the_target():
 
     turn = first_turn(60)
     assert (turn.action, turn.offer_usd, turn.public_message) == ("ACCEPT", 60, "Your ask of 60 USDT is acceptable.")
-    # Above the target the buyer still opens at it: then the target is its public bid.
+    # Above the target the buyer opens below it (Balanced: 90% of it), and never names it.
     turn = first_turn(150)
-    assert (turn.action, turn.offer_usd) == ("OFFER", 120) and "120" in turn.public_message
+    assert (turn.action, turn.offer_usd) == ("OFFER", 114) and "114" in turn.public_message and "120" not in turn.public_message
 
 
 def test_coerce_offer_usd():

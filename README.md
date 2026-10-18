@@ -34,6 +34,19 @@ Everything runs live on one laptop, on Bitcoin regtest: rgb-lib, the local QVAC 
 - [QVAC evals](#qvac-evals): 24 negotiations on the real model. 0 public messages disclosed a limit, 0 deals fell outside the limits, and 21 of 21 possible deals closed. On the hardened code, the demo scenario closed in 55 to 62 s; with the later strategy-aware opening, live runs took 67 to 96 s.
 - `REGTEST_SCRIPT="$PWD/scripts/regtest.sh" ./scripts/reproduce_all.sh`: the pre-hackathon RGB suite (RGB↔BTC and RGB↔RGB swaps with re-spends, tampered consignments rejected before signing).
 
+### Quick start
+
+With the [prerequisites](#prerequisites), the patched `rgb_lib` ([step 2](#2-python-and-the-patched-rgb_lib-030b7)) and `npm --prefix vault ci` in place, three terminals run the whole demo:
+
+```bash
+qvac serve --openai --port 11435 --config qvac.config.json --api-key-file ~/.mwm/qvac.key   # 1 · the local model
+./scripts/demo_reset.sh                                                                      # 2 · regtest, backend, Vault
+printf 'VITE_API_MODE=http\nVITE_API_TARGET=http://127.0.0.1:8000\n' > frontend/.env.local
+npm --prefix frontend install && npm --prefix frontend run dev                              # 3 · http://localhost:5173
+```
+
+Then follow [Try it](#6-frontend). To look at the UI alone, skip `.env.local`: the app runs on its built-in mock, with no backend.
+
 ---
 
 ## Contents
@@ -208,6 +221,9 @@ The log line `Demo environment ready` marks the end. Interactive API docs are at
 
 `./scripts/demo_reset.sh` does steps 1, 4 and 5 in one go, and its full mode wipes the chain first ([Reset](#8-reset)).
 
+<details>
+<summary>Backend environment variables</summary>
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `QVAC_BASE_URL` | `http://127.0.0.1:11435/v1` | QVAC server. It can sit on another machine on the LAN. |
@@ -222,6 +238,8 @@ The log line `Demo environment ready` marks the end. Interactive API docs are at
 | `VAULT_URL` / `VAULT_TIMEOUT` | `http://127.0.0.1:8200` / `30` s | Vault service, called only for *move to Vault* |
 | `SATS_PER_USD` | `1000` | the fixed BTC/USD rate (1 BTC = 100,000 USD) used by every valuation |
 
+</details>
+
 ### 5. Vault service (Node 22)
 
 ```bash
@@ -234,6 +252,9 @@ curl -s http://127.0.0.1:8200/vault/health    # {"ok":true}
 The Vault binds to `127.0.0.1` only and uses the same regtest services: electrs over `tcp://127.0.0.1:50001` and the RGB proxy over `rpc://127.0.0.1:3000/json-rpc`. For the demo it also calls `scripts/regtest.sh` to fund a new Vault's fees and to mine after a move.
 
 **The Vault opens only in a browser on the computer that runs it** (`http://localhost:5173`). The service refuses any request that does not name this computer as its host, any browser write from a page opened elsewhere, and any body that is not JSON. The app's `/vault` proxy also answers 404 to phones and other computers on the LAN, and the UI then says *"Your Vault opens only on the computer that holds it."* After 5 wrong passwords in a row, a Vault does not unlock for a minute.
+
+<details>
+<summary>Vault files and environment variables</summary>
 
 Each Vault lives in `~/.mwm/vault/<wallet_id>/`:
 
@@ -251,6 +272,8 @@ The phrase is never logged or returned. A restart of the service locks every Vau
 | `VAULT_INDEXER_URL` / `VAULT_TRANSPORT_ENDPOINT` | `tcp://127.0.0.1:50001` / `rpc://127.0.0.1:3000/json-rpc` | electrs and the RGB proxy |
 | `REGTEST_SCRIPT` | `scripts/regtest.sh` | demo-only fee funding and mining |
 | `COMPOSE_PROJECT_NAME` | unset: Compose uses the repository folder, as `scripts/regtest.sh` does | set it only when the Vault runs from another checkout than the one that started the chain |
+
+</details>
 
 **Optional demo prep:** `VAULT_DEMO_PASSWORD='<8+ characters>' node vault/scripts/prefund.mjs` (Node 22) creates or unlocks Wallet A's Vault and moves USDT in until it holds 500. A new Vault gets a fresh WDK phrase that is never written anywhere: only the Vault holds it, sealed with the password, which is all a re-run needs. To import a known phrase instead, name its file in `PREFUND_MNEMONIC_FILE`. The service README, [`vault/README.md`](vault/README.md), has the other options.
 
@@ -271,7 +294,7 @@ npm --prefix frontend run dev        # http://localhost:5173
 1. Open **Shop** and tap **Buy** on Wallet B's PEPE lot. Choose **50%**, keep the suggested limits (maximum 90% and target 80% of the list price) and tap **Let my agent negotiate**.
 2. Watch the two agents in the chat. Only your own agent's thoughts are visible.
 3. When they agree, tap **Approve & Sign**, then **Sign as Wallet B**. Wallet B lives on the same laptop and approves the same terms from the same screen. The 7 swap steps and the txid follow.
-4. Sybil's lot, at a lower total price, is marked *Low reliability*. Before any agent speaks, buying it shows *Suspicious activity*: Sybil trades in loops with itself, and *Cancel* is the default.
+4. Sybil's lot, at a lower total price, is marked *Low reliability*. Before any agent speaks, buying it shows a short *Be careful* sheet: *Cancel* or *Continue anyway*.
 5. **Vault**: switch the wallet to **Vault** and tap **Create**. The WDK phrase is shown once; type three of its words back and set a password. The sheet refuses the Wallet's own phrase. Then **Move** some USDT to the Vault. In the Move sheet, *Max* leaves the Seller Desk's lot in the Wallet.
 6. **The policy**: the Vault's policy card reads *Sends only to your own wallet*, with the per-move and daily caps. The WDK policy engine enforces it: any other destination is refused (covered by `npm --prefix vault test`).
 7. **Ask your AI** → **Should I move funds to my Vault?**: the local model answers from your own numbers, and **Move to Vault** opens the move. A question about anything else gets *"I only know your account."* **Split view** shows both wallets side by side.
@@ -301,8 +324,8 @@ node frontend/scripts/contract-check.mjs http://127.0.0.1:8000 --e2e
 REGTEST_SCRIPT="$PWD/scripts/regtest.sh" ./scripts/reproduce_all.sh
 ```
 
-- **Backend tests** (305) are hermetic: a temporary `MWM_DATA_DIR` and `QVAC_MOCK=1`. They need `rgb_lib` in the venv but neither regtest nor QVAC. `QVAC_MOCK=0` runs them against the real model.
-- **Frontend unit tests** (27) cover the lot rules, unit prices, trust labels, Vault moves and the advisor's view. They need no dependencies.
+- **Backend tests** (342) are hermetic: a temporary `MWM_DATA_DIR` and `QVAC_MOCK=1`. They need `rgb_lib` in the venv but neither regtest nor QVAC. `QVAC_MOCK=0` runs them against the real model.
+- **Frontend unit tests** (38) cover the lot rules, unit prices, trust labels, Vault moves and the advisor's view. They need no dependencies.
 - **Vault tests** (34) need no regtest. **`npm --prefix vault run e2e`** moves real regtest funds through a test backend and a test Vault, given their `BACKEND_URL` and `VAULT_URL`. It moves Wallet → Vault and Vault → Wallet, then checks that a move over the limit and a payment to another wallet's invoice are both denied.
 - **`scripts/e2e_vault_link.py`** checks the backend side of both moves on regtest against a stand-in Vault (usage in the file).
 - **The contract check** without `--e2e` writes three short sessions and changes no reliability score:
@@ -456,6 +479,9 @@ WDK runs offline by construction: its BTC client rejects every network call, so 
   Each move mines a block on regtest, refreshes both sides and adds a `vault` activity to the wallet.
 - **Hidden from the AI, by architecture.** The Vault is a separate process with separate keys, and the UI reads it straight from its own service. Vault moves create no trust-memory edge, so nobody can farm reputation by moving funds to themselves, and the agents can spend only the AI wallet.
 
+<details>
+<summary>Vault API</summary>
+
 Vault API (`127.0.0.1:8200`). Errors are `{code, message}`, with messages written for non-technical users. It answers this computer only:
 
 - a request whose `Host` is not this computer, or a browser write whose `Origin` is not `localhost`, `127.0.0.1` or `[::1]`, gets `403 forbidden`;
@@ -470,6 +496,8 @@ Vault API (`127.0.0.1:8200`). Errors are `{code, message}`, with messages writte
 | POST | `/vault/{wallet_id}/refresh` | settle incoming transfers |
 | POST | `/vault/{wallet_id}/move_to_wallet` | `{asset_id, amount}`: Vault → its own AI wallet |
 | POST | `/vault/{wallet_id}/send` | `{invoice, asset_id?}`: allowed only for the invoice *move_to_wallet* obtains; a pasted invoice gets `403 policy_denied`, even one your own Wallet made |
+
+</details>
 
 ---
 

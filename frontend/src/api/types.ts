@@ -138,7 +138,10 @@ export type TrustTier = 'High Authenticity' | 'Low Reliability' | 'Ring Anomaly 
 
 /** Never exposes loop percentages or raw trade counts. */
 export interface TrustAudit {
-  /** True only for High Authenticity: the gate blocks every other tier. */
+  /**
+   * True only for High Authenticity. Any other tier (Low Reliability, Unverified, a ring) needs the
+   * buyer's consent before a trade (CreateSessionRequest.accept_risk).
+   */
   trusted: boolean
   sybil_ring_detected: boolean
   /** null means Unverified (cold start). */
@@ -417,6 +420,8 @@ export interface SessionView extends SessionSummary {
   max_rounds?: number
   /** The seller's public list price for this amount (pro rata when it is part of the lot). */
   list_price_usd?: number
+  /** The buyer chose to trade with a counterparty that is not High Authenticity (accept_risk). */
+  risk_accepted?: boolean
 }
 
 // ── Requests ───────────────────────────────────────────────────────
@@ -430,6 +435,11 @@ export interface CreateSessionRequest {
   buyer_max_ceiling_usd: number
   buyer_target_usd: number
   buyer_ai_prompt: string
+  /**
+   * Trade anyway with a seller that is not High Authenticity (Low Reliability, Unverified or a
+   * ring). Without it such a seller gets 409 confirm_risk and nothing is created.
+   */
+  accept_risk?: boolean
 }
 
 /** POST /api/wallets/create. The mnemonic comes from Tether WDK (regtest only). */

@@ -25,7 +25,7 @@ Every non-2xx response has this body:
 | 400 | `invalid_asset`, `invalid_amount`, `amount_too_small`, `invalid_limits`, `invalid_label`, `invalid_profile`, `invalid_address`, `own_address`, `invalid_price`, `desk_listing`, `self_trade`, `sign_error`, `wallet_creation_failed`, `invalid_request` |
 | 403 | `forbidden` (the wallet is not part of the session, or the listing is not its own) |
 | 404 | `wallet_not_found`, `session_not_found`, `listing_not_found`, `no_match` |
-| 409 | `seller_desk_inactive`, `exceeds_lot`, `partial_not_allowed`, `insufficient_funds`, `not_awaiting_signatures`, `terms_hash_mismatch`, `already_signed`, `expired`, `not_cancellable`, `vault_missing`, `vault_locked`, `desk_lot`, `funds_committed` |
+| 409 | `confirm_risk`, `seller_desk_inactive`, `exceeds_lot`, `partial_not_allowed`, `insufficient_funds`, `not_awaiting_signatures`, `terms_hash_mismatch`, `already_signed`, `expired`, `not_cancellable`, `vault_missing`, `vault_locked`, `desk_lot`, `funds_committed` |
 | 500 | `internal_server_error`, `move_failed` |
 | 502 | `vault_invoice_mismatch` (nothing was sent) |
 | 503 | `vault_unavailable`, `wallet_unavailable` |
@@ -196,7 +196,7 @@ Every known address except the wallet's own, with this wallet's alias, the trust
 - `trust_tier` is one of `High Authenticity`, `Low Reliability`, `Ring Anomaly Detected` or `Unverified`.
 - `reliability_pct: null` means Unverified (cold start).
 - **The score is computed by the backend, in code, from settled trades** (`backend/memory_graph.py`): activity (number of trades), variety (distinct counterparties), the reliability of those counterparties, seniority (days since the first trade), and 10% off per agreed deal the wallet walked away from (it cancelled the agreed terms, or left them unsigned until expiry while the other side signed), at most 50%. No history: `Unverified`. A lot going round a closed trading loop (the same asset, amounts within 10% at every hop): `Ring Anomaly Detected`, capped at 20. Otherwise `High Authenticity` from 60, `Low Reliability` below. `trusted` is true only for `High Authenticity`. The memory persists across backend restarts.
-- `desk` is `null` unless the address has `seller_active: true` and an `offered_asset_id`. It carries only `asset`, `offered_amount` (atomic units), `asking_price_usd` and `allow_partial`: **never `secret_min_reserve_usd` or `seller_ai_prompt`**. It is shown regardless of trust; the gate still blocks every untrusted address (ring, Low Reliability, Unverified) when the session is created.
+- `desk` is `null` unless the address has `seller_active: true` and an `offered_asset_id`. It carries only `asset`, `offered_amount` (atomic units), `asking_price_usd` and `allow_partial`: **never `secret_min_reserve_usd` or `seller_ai_prompt`**. It is shown regardless of trust; when the session is created a seller that is not High Authenticity (a ring included) needs the buyer's consent (`accept_risk`).
 - **No exposed field ever carries loop percentages or raw trade counts**, and that includes `assessment_summary` and `gate.reasons`.
 
 ### GET /api/wallets/{id}/advice
@@ -276,13 +276,15 @@ The buyer starts a negotiation with a seller's address. The secret ceiling and t
   "rgb_amount": 1000000,
   "buyer_max_ceiling_usd": 135,
   "buyer_target_usd": 120,
-  "buyer_ai_prompt": "Open low and concede in measured steps."
+  "buyer_ai_prompt": "Open low and concede in measured steps.",
+  "accept_risk": false
 }
 ```
 
 - The endpoint returns immediately with the `SessionView`, and the negotiation runs in the background.
 - Negotiations share one local model, so they run in arrival order, one at a time (`NEGOTIATION_CONCURRENCY`, default 1). While a session waits it stays `NEGOTIATING` with `rounds: []` and `thinking: null`, and `queue_position` is its 1-based place in line (`null` once its negotiation runs). If the seller no longer holds the lot when its turn comes, it moves to `BLOCKED_BY_GATE` with the reason `"The seller no longer holds this lot."`.
-- If either side is not trusted (a ring member, Low Reliability or Unverified), the session is created directly in `BLOCKED_BY_GATE`, with `rounds: []` and one reason per side in `gate.reasons`, e.g. `"Counterparty trust check failed: Low Reliability"`. No QVAC call happens.
+- If the seller address is unknown, the session is created directly in `BLOCKED_BY_GATE`, with `rounds: []` and `gate.reasons: ["Counterparty has no active desk."]`. No QVAC call happens. No tier blocks a session by itself.
+- **Consent to a risky seller:** a seller that is not High Authenticity (Low Reliability, Unverified or a ring member) needs `accept_risk: true` (optional, default `false`). Without it the answer is `409 confirm_risk` (e.g. `"Wallet C has low reliability: trading with it is a risk."`, `"... has no trade history yet: ..."`, or for a ring `"Sybil trades in loops with itself, a pattern used to fake reliability. Trading with it is a high risk."`) and nothing is created; the UI asks the user and resends with the flag. With it the session runs as usual and `risk_accepted: true` is on its `SessionView`. The buyer's own tier never blocks, so a new or low wallet can trade and rebuild its score.
 - **Part of a lot:** only if the desk has `allow_partial: true`; otherwise `rgb_amount` must be the whole `offered_amount`. With it, `rgb_amount` may be any part of the lot, from the smallest part worth `MIN_PART_USD` = 10 USDT at the list price, `ceil(offered_amount * 10 / asking_price_usd)`, up to the whole lot; a lot listed below 10 USDT sells whole only. Prices (`asking_price_usd`, `secret_min_reserve_usd`, `buyer_target_usd`, `buyer_max_ceiling_usd`) are whole dollars: the demo USDT has no decimals. A price with cents gets `400 invalid_request`, whose field list the client shows as one sentence ("Use whole dollars, for example 2."). The session's list price and reserve are the desk's scaled to the amount: `list = floor(asking_price_usd * rgb_amount / offered_amount + 0.5)`, `reserve = min(ceil(secret_min_reserve_usd * rgb_amount / offered_amount), list)`. The whole lot keeps the desk's own prices. The `SessionView` carries the scaled `list_price_usd`.
 - **Pre-negotiation:** if the buyer's ceiling is below the seller's secret reserve (for this amount) no deal is possible, so the session is also born `BLOCKED_BY_GATE`, without QVAC, with the reason `"No deal possible: the buyer's maximum is below the seller's minimum."`. Neither number is revealed. The seller's `asking_price_usd` is the public list price: the seller's agent defends it, the buyer's agent works it down.
 - Errors:
@@ -291,6 +293,7 @@ The buyer starts a negotiation with a seller's address. The secret ceiling and t
   - `409 exceeds_lot`: more than the desk's `offered_amount`.
   - `409 partial_not_allowed`: less than the whole lot, and the desk has `allow_partial: false`.
   - `409 insufficient_funds`: the seller doesn't hold the lot, or the buyer's USDT is below the ceiling.
+  - `409 confirm_risk`: the seller is not High Authenticity and `accept_risk` is not `true` (checked before the desk and balances, so a seller that holds nothing, like Sybil on a fresh regtest, answers `insufficient_funds` only once consent is given).
 
 ### GET /api/sessions/{id}?wallet_id=
 
@@ -339,6 +342,7 @@ Field rules:
 - **ACCEPT:** the accepting side's offer field holds the agreed price. When the buyer accepts it is the seller's last ask; when the seller accepts it is the buyer's bid.
 - **`thinking`:** set to `"buyer"` or `"seller"` while that agent is generating its turn, so the UI can show a thinking state; otherwise `null`.
 - **`gate`:** `null` until the gate runs. `gate.trust_tier` is the tier of the viewer's counterparty.
+- **`risk_accepted`:** `true` when the buyer started the session with consent to a Low Reliability or Unverified seller.
 - **Settlement:** `settlement_steps` stays empty until `SETTLING`. `txid` is set from step 6 (broadcast). `failure` is `{code, message}` when the state is `FAILED`.
 
 `GET /api/sessions?wallet_id=` returns `SessionSummary` items. Each has the first nine fields above, from `session_id` to `updated_at`, plus `needs_my_signature`: true while the terms wait for the requesting wallet's signature (also on `SessionView`).
@@ -478,7 +482,7 @@ create ──► NEGOTIATING ──► AWAITING_SIGNATURES ──► SETTLING �
    │            │                 ├──► EXPIRED   (now > terms.expiry_unix before both signatures)
    │            ├──► BLOCKED_BY_GATE   (gate failed, offers stalled, or no agreement within the round cap)
    │            └──► CANCELLED_BY_USER   (also from AWAITING_SIGNATURES)
-   └──► BLOCKED_BY_GATE   (either party is a ring member, Low Reliability or Unverified)
+   └──► BLOCKED_BY_GATE   (unknown seller address, or the buyer's maximum below the seller's minimum)
 ```
 
 Leaving agreed terms counts against a wallet's reliability: a `CANCELLED_BY_USER` from `AWAITING_SIGNATURES` costs the party that cancelled, an `EXPIRED` with only one signature costs the party that did not sign.
@@ -502,9 +506,9 @@ Every session read carries `wallet_id`, and the response depends on it:
 
 ## Deterministic gate
 
-1. **When the session is created:** it blocks if either party is not `High Authenticity` (a ring member, Low Reliability or Unverified), or if the buyer's ceiling is below the seller's reserve. This happens before any negotiation.
+1. **When the session is created:** it blocks an unknown seller address, or a buyer's ceiling below the seller's reserve. A seller that is not High Authenticity needs the buyer's consent (`accept_risk`, else `409 confirm_risk`). This happens before any negotiation.
 2. **After the agreement:**
-   - it blocks if the seller is no longer trusted (`"Counterparty trust check failed: <tier>"`);
+   - it blocks if the seller is no longer trusted (`"Counterparty trust check failed: <tier>"`), unless the buyer accepted the risk (`risk_accepted`);
    - it blocks if the price is above the buyer's ceiling or below the seller's reserve;
    - it blocks if the amounts are not positive integers;
    - it checks no balance. Balances are checked when the session is created (`409 insufficient_funds`), when a queued negotiation starts (the seller's lot: `BLOCKED_BY_GATE`, `"The seller no longer holds this lot."`), and before settlement step 1, which ends the session `FAILED` before anything moves.
@@ -556,7 +560,7 @@ On 2026-10-17 the backend (`backend/api_server.py`) confirmed and implemented th
 - **Seeded wallets:** `wallet_a`, `wallet_b` and `wallet_sybil`.
 - **Assets and fee:** USDT-RGB and PEPE use precision 0, BTC is the pseudo-asset `btc`, and `network_fee_sat` is 2000.
 - **Gate outcomes:**
-  - an untrusted party (ring member, Low Reliability or Unverified) blocks the session at creation, without calling QVAC;
+  - a seller that is not High Authenticity, a ring member included, needs `accept_risk` (`409 confirm_risk` without it); an unknown address blocks the session at creation, without calling QVAC;
   - no agreement (offers stalled for two rounds, or the round cap) ends in `BLOCKED_BY_GATE`.
 - **Terms TTL:** 600 s (`expiry_unix = now + 600`).
 - **PEPE price:** `null` until the first trade, then `agreed_price_usd / rgb_amount`.

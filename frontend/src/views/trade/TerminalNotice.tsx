@@ -25,16 +25,10 @@ function blockedNotice(session: SessionView): Notice {
           : "The buyer's maximum is below your minimum, so the agents did not start. No funds moved.",
     }
   }
-  const ownTier = ownTrustFailure(session)
-  if (ownTier === 'Unverified') {
-    return {
-      icon: ShieldAlert,
-      title: 'Your wallet has no history yet',
-      body: 'Agents trade only with wallets that have a reliable trade history, so no funds moved.',
-    }
-  }
-  if (ownTier !== null) {
-    return { icon: ShieldAlert, title: 'Your reliability is too low', body: 'Agents trade only between reliable wallets, so no funds moved.' }
+  // The starter's own tier never blocks: this is a seller whose score fell during the deal, so the
+  // check after the agreement refused it (the UI calls every untrusted tier low reliability).
+  if (ownTrustFailure(session) !== null) {
+    return { icon: ShieldAlert, title: 'Your reliability is too low', body: 'It fell during this deal, so no funds moved.' }
   }
   if (isNoAgreement(reasons)) {
     return { icon: Scale, title: 'No agreement', body: 'The agents could not agree on a price, so no funds moved.' }

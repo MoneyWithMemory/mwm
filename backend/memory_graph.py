@@ -21,7 +21,8 @@ party cancelled it, or did not sign before expiry while the other party did (ses
 Tiers: no settled trade -> "Unverified" (reliability_pct None); a lot it sent coming back to it
 (detect_ring) -> "Ring Anomaly Detected" (score capped at 20); score >= 60 -> "High Authenticity";
 otherwise "Low Reliability".
-Only High Authenticity is trusted: the gate blocks every other tier.
+Only High Authenticity is trusted: the gate lets any other tier through only when the session's
+starter accepts the risk.
 
 Persistence: <MWM_DATA_DIR>/memory_graph.json (trades, labels and walk-aways), loaded at startup and
 rewritten atomically after every change. When it is missing, the demo history below is seeded

@@ -1,7 +1,8 @@
 """
 MwM - Deterministic Pre-Signing Gate & Canonical Swap Terms
 Enforces strict pre-signature checks before any cryptographic or on-chain settlement:
-1. Counterparty trust check: only "High Authenticity" passes (rings, Low Reliability and Unverified block)
+1. Counterparty trust check: "High Authenticity" passes; any other tier (Low Reliability, Unverified,
+   a ring) passes only when the party who started the session accepted the risk
 2. Secret limit enforcement (buyer ceiling, seller reserve)
 3. Positive integer validation
 4. Canonical SHA-256 terms_hash generation matching Drop 1 contract
@@ -57,6 +58,7 @@ def evaluate_gate(
     buyer_max_budget_usd: Optional[int] = None,
     seller_min_reserve_usd: Optional[int] = None,
     counterparty_wallet_id: Optional[str] = None,
+    risk_accepted: bool = False,
 ) -> GateResult:
     """
     Evaluate deterministic safety gate for a proposed agreement.
@@ -67,7 +69,7 @@ def evaluate_gate(
         seller_address if active_signer_address == buyer_address else buyer_address
     )
     reputation = memory_graph.get_reputation(target_peer)
-    if not reputation.is_trusted:
+    if not reputation.is_trusted and not risk_accepted:
         return GateResult(
             passed=False,
             reason=f"Gate blocked: counterparty {target_peer} is flagged with {reputation.trust_tier}",

@@ -1,11 +1,14 @@
 // The UI's words for the backend's trust tiers (src/lib/trust.ts), whose trust a gate reason
-// names (src/views/shared/sessionState.ts), and the mock's walk-away penalty (src/api/mock/seed.ts).
+// names (src/views/shared/sessionState.ts), the mock's walk-away penalty (src/api/mock/seed.ts)
+// and its trust gate (src/api/mock/engine.ts).
 // Run with `node --import ./scripts/node-alias.mjs --test 'scripts/*.test.ts'`.
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { GateResult, Role, TrustTier } from '../src/api/types.ts'
-import { ADDRESSES, trustFor, withWalkAways } from '../src/api/mock/seed.ts'
-import { ownTrustExplanation, trustExplanation, trustLabel, withTrustLabels } from '../src/lib/trust.ts'
+import { ApiError } from '../src/api/client.ts'
+import { mockEngine } from '../src/api/mock/engine.ts'
+import { ADDRESSES, ASSETS, trustFor, withWalkAways } from '../src/api/mock/seed.ts'
+import { ownTrustExplanation, riskConsent, trustExplanation, trustLabel, withTrustLabels } from '../src/lib/trust.ts'
 import { isNoAgreement, isNoOverlap, ownTrustFailure } from '../src/views/shared/sessionState.ts'
 
 const TIERS: TrustTier[] = ['High Authenticity', 'Low Reliability', 'Ring Anomaly Detected', 'Unverified']
@@ -29,8 +32,23 @@ test('gate reasons name each tier in the UI words', () => {
 test("the owner's own explanation says what the score does to their trades, never that they are a risk", () => {
   for (const tier of TIERS) assert.doesNotMatch(ownTrustExplanation(tier), /risk/, tier)
   assert.equal(ownTrustExplanation('Low Reliability'), ownTrustExplanation('Ring Anomaly Detected'))
-  assert.match(ownTrustExplanation('Low Reliability'), /can't trade until it rises/)
+  assert.match(ownTrustExplanation('Low Reliability'), /warned before trading with you until it rises/)
   assert.match(ownTrustExplanation('Low Reliability'), /walking away from agreed deals lowers it/)
+})
+
+test('every tier but High Authenticity asks for consent, a ring the loudest', () => {
+  assert.deepEqual(riskConsent('Low Reliability', 'Merchant'), {
+    title: 'Low reliability',
+    body: 'Merchant has little reliable trade history. Trading with it is a risk.',
+    severe: false,
+  })
+  assert.equal(riskConsent('Unverified', 'Bob')?.title, 'No history yet')
+  assert.deepEqual(riskConsent('Ring Anomaly Detected', 'Sybil'), {
+    title: 'Suspicious activity',
+    body: 'Sybil trades in loops with itself, a pattern used to fake reliability. Trading with it is a high risk.',
+    severe: true,
+  })
+  assert.equal(riskConsent('High Authenticity', 'Wallet B'), null)
 })
 
 test("a gate reason names the viewer's own wallet by role: the backend writes both from the buyer's side", () => {
@@ -54,4 +72,25 @@ test('mock: each walk-away takes 10% off the score, at most 50%, and below 60 th
   assert.equal(withWalkAways(a, 9).reliability_pct, withWalkAways(a, 5).reliability_pct)
   assert.equal(withWalkAways(trustFor(ADDRESSES.sybil), 1).trust_tier, 'Ring Anomaly Detected')
   assert.equal(withWalkAways(trustFor(ADDRESSES.newcomer), 2).reliability_pct, null)
+})
+
+test('mock: a ring needs consent and negotiates with it, and a new wallet as the starter passes the gate', () => {
+  const request = { asset_id: ASSETS.pepe.asset_id, rgb_amount: 500_000, buyer_max_ceiling_usd: 135, buyer_target_usd: 120, buyer_ai_prompt: '' }
+  const toSybil = { ...request, buyer_wallet_id: 'wallet_a' as const, seller_address: ADDRESSES.sybil }
+
+  assert.throws(
+    () => mockEngine.createSession(toSybil),
+    (err: unknown) => err instanceof ApiError && err.code === 'confirm_risk' && err.message.startsWith('Sybil trades in loops with itself'),
+  )
+  const ring = mockEngine.createSession({ ...toSybil, accept_risk: true })
+  assert.equal(ring.state, 'NEGOTIATING')
+  assert.equal(ring.risk_accepted, true)
+  mockEngine.cancel(ring.session_id, 'wallet_a')
+
+  // No history is no block for the starter: it gets as far as its (empty) balance.
+  const fresh = mockEngine.createWallet({ label: 'Fresh' })
+  assert.throws(
+    () => mockEngine.createSession({ ...request, rgb_amount: 1_000_000, buyer_wallet_id: fresh.wallet_id, seller_address: ADDRESSES.b }),
+    (err: unknown) => err instanceof ApiError && err.code === 'insufficient_funds',
+  )
 })

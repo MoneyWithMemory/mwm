@@ -36,6 +36,7 @@ import {
   type ShopQuery,
   type TransferResult,
   type TrustAudit,
+  type TrustTier,
   type UpdateAgentProfileRequest,
   type WalletId,
   type WalletState,
@@ -106,6 +107,8 @@ interface MockSession {
   thinking: Role | null
   agreedPriceUsd: number | null
   gate: { passed: boolean; reasons: string[] } | null
+  /** The buyer chose to trade with a seller that is not High Authenticity (accept_risk). */
+  riskAccepted: boolean
   terms: CanonicalSwapTerms | null
   termsHash: string | null
   buyerSigned: boolean
@@ -148,7 +151,9 @@ function walletByAddress(address: string): MockWallet | undefined {
 /** Agreed deals each address walked away from: it cancelled them, or left them unsigned to expiry while the other side signed. */
 const walkAways = new Map<string, number>()
 
-function walkAway(address: string) {
+/** As session_store: leaving a deal whose counterparty is not High Authenticity is declining a risk, not walking away. */
+function walkAway(address: string, counterparty: string) {
+  if (trustOf(counterparty).trust_tier !== 'High Authenticity') return
   walkAways.set(address, (walkAways.get(address) ?? 0) + 1)
 }
 
@@ -280,6 +285,7 @@ function sessionView(s: MockSession, role: Role): SessionView {
     ...summary,
     payment_asset: s.paymentAsset,
     list_price_usd: s.listPriceUsd,
+    risk_accepted: s.riskAccepted,
     counterparty_trust: counterpartyTrust,
     rounds: s.rounds.map((r) => ({
       n: r.n,
@@ -328,7 +334,11 @@ function schedule(s: MockSession, ms: number, fn: () => void) {
 
 /** Terms past their expiry: a party that left them unsigned while the other signed walked away. */
 function expire(s: MockSession) {
-  if (s.buyerSigned !== s.sellerSigned) walkAway(s.buyerSigned ? s.sellerAddress : walletOrThrow(s.buyerId).summary.address)
+  const buyerAddress = walletOrThrow(s.buyerId).summary.address
+  if (s.buyerSigned !== s.sellerSigned) {
+    if (s.buyerSigned) walkAway(s.sellerAddress, buyerAddress)
+    else walkAway(buyerAddress, s.sellerAddress)
+  }
   setState(s, 'EXPIRED')
 }
 
@@ -337,10 +347,18 @@ function block(s: MockSession, reasons: string[]) {
   setState(s, 'BLOCKED_BY_GATE')
 }
 
-/** As api_server.create_session: one reason per side whose trust check fails, naming only its tier. */
-function trustReasons(address: string, who: 'Counterparty' | 'Buyer'): string[] {
+/** As the gate after the agreement: an untrusted seller fails, naming only its tier, unless the buyer accepted the risk. */
+function trustReasons(address: string, riskAccepted: boolean): string[] {
   const trust = trustOf(address)
-  return trust.trusted ? [] : [`${who} trust check failed: ${trust.trust_tier}`]
+  return trust.trusted || riskAccepted ? [] : [`Counterparty trust check failed: ${trust.trust_tier}`]
+}
+
+/** As api_server.create_session: the 409 confirm_risk sentence for a seller that is not High Authenticity. */
+function riskMessage(label: string, tier: TrustTier): string {
+  if (tier === 'Ring Anomaly Detected') {
+    return `${label} trades in loops with itself, a pattern used to fake reliability. Trading with it is a high risk.`
+  }
+  return `${label} ${tier === 'Unverified' ? 'has no trade history yet' : 'has low reliability'}: trading with it is a risk.`
 }
 
 /** As api_server._lot_prices: unit prices of the lot times the amount; the reserve rounds up. */
@@ -475,7 +493,7 @@ async function runGate(s: MockSession) {
   const buyer = walletOrThrow(s.buyerId)
   const seller = walletOrThrow(s.sellerId as WalletId)
   const paymentAmount = price * 10 ** s.paymentAsset.precision
-  const reasons = [...trustReasons(s.sellerAddress, 'Counterparty'), ...trustReasons(buyer.summary.address, 'Buyer')]
+  const reasons = trustReasons(s.sellerAddress, s.riskAccepted)
 
   if (price > s.ceilingUsd) reasons.push('Agreed price is above the buyer ceiling.')
   if (price < s.reserveUsd) reasons.push('Agreed price is below the seller reserve.')
@@ -880,6 +898,7 @@ export const mockEngine = {
       thinking: null,
       agreedPriceUsd: null,
       gate: null,
+      riskAccepted: false,
       terms: null,
       termsHash: null,
       buyerSigned: false,
@@ -892,12 +911,18 @@ export const mockEngine = {
       timers: new Set(),
     }
 
-    // Layer-0 gate before any negotiation: only High Authenticity addresses reach the agents.
-    const trustBlock = [...trustReasons(body.seller_address, 'Counterparty'), ...trustReasons(buyer.summary.address, 'Buyer')]
-    if (trustBlock.length > 0 || !seller) {
+    // Layer-0 gate before any negotiation: an unknown address never reaches the agents.
+    if (!seller) {
       sessions.set(s.id, s)
-      block(s, trustBlock.length > 0 ? trustBlock : ['Counterparty has no active desk.'])
+      block(s, ['Counterparty has no active desk.'])
       return sessionView(s, 'buyer')
+    }
+    // A seller that is not High Authenticity: the buyer decides, and nothing is created without consent.
+    // The buyer's own tier never blocks, so a new or low wallet can rebuild its score.
+    const sellerTrust = trustOf(body.seller_address)
+    if (!sellerTrust.trusted) {
+      if (!body.accept_risk) throw conflict('confirm_risk', riskMessage(seller.summary.label, sellerTrust.trust_tier))
+      s.riskAccepted = true
     }
 
     const desk = seller.agent_profile
@@ -1036,7 +1061,11 @@ export const mockEngine = {
     const role = roleOrThrow(s, walletId)
     if (!CANCELLABLE_STATES.includes(s.state)) throw conflict('not_cancellable', `Session is ${s.state}`)
     // Cancelling agreed terms is walking away from them.
-    if (s.state === 'AWAITING_SIGNATURES') walkAway(role === 'buyer' ? walletOrThrow(s.buyerId).summary.address : s.sellerAddress)
+    if (s.state === 'AWAITING_SIGNATURES') {
+      const buyerAddress = walletOrThrow(s.buyerId).summary.address
+      if (role === 'buyer') walkAway(buyerAddress, s.sellerAddress)
+      else walkAway(s.sellerAddress, buyerAddress)
+    }
     setState(s, 'CANCELLED_BY_USER')
     return sessionView(s, role)
   },

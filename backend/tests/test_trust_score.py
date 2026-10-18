@@ -223,6 +223,23 @@ def test_leaving_terms_unsigned_until_expiry_is_a_walk_away():
     assert _standing(graph, "t_hub")[1] == 72
 
 
+def test_declining_a_deal_with_a_risky_counterparty_is_not_a_walk_away():
+    graph = _hub_graph()
+    store = SessionStore(graph)
+
+    # The buyer took the risk of a wallet with no history (t_stranger), then cancelled the agreed deal.
+    _agreed(store, "sess_risky_seller", seller="t_stranger")
+    store.cancel_session("sess_risky_seller", cancelled_by="t_hub")
+    # A seller left unsigned the terms a new buyer (t_newbie) signed.
+    terms_hash = _agreed(store, "sess_risky_buyer", buyer="t_newbie", seller="t_seller1")
+    store.sign_session("sess_risky_buyer", "t_newbie", terms_hash)
+    store.get_session("sess_risky_buyer").expiry_unix = int(time.time()) - 1
+    assert store.get_session("sess_risky_buyer").status == SessionStatus.EXPIRED
+
+    assert _standing(graph, "t_hub") == (TrustTier.HIGH_AUTHENTICITY, 80)
+    assert _standing(graph, "t_seller1") == (TrustTier.HIGH_AUTHENTICITY, 80)
+
+
 # ── Persistence ─────────────────────────────────────────────────────
 
 def test_memory_survives_a_restart_and_a_missing_file_reseeds(tmp_path):
@@ -311,6 +328,17 @@ def test_gate_blocks_every_untrusted_tier(counterparty, tier):
     assert tier in res.reason
 
 
+@pytest.mark.parametrize("counterparty", ["node_peer_newcomer", "wallet_never_seen", "wallet_sybil"])
+def test_gate_honours_consent_for_every_untrusted_tier(counterparty):
+    res = evaluate_gate(
+        session_id="sess_trust", asset_id="rgb:pepe", rgb_amount=1_000_000, payment_asset_id="rgb:usdt",
+        payment_amount=125, agreed_price_usd=125, network_fee_sat=2000, buyer_address="bcrt1qbuyer",
+        seller_address="bcrt1qseller", expiry_unix=1700000000, active_signer_address="bcrt1qbuyer",
+        buyer_max_budget_usd=135, seller_min_reserve_usd=110, counterparty_wallet_id=counterparty, risk_accepted=True,
+    )
+    assert res.passed is True
+
+
 def test_gate_passes_seeded_wallets_both_ways():
     for counterparty in ("wallet_a", "wallet_b"):
         res = _gate(counterparty)
@@ -319,9 +347,9 @@ def test_gate_passes_seeded_wallets_both_ways():
 
 # ── API (global state) ──────────────────────────────────────────────
 
-def test_low_reliability_wallet_is_blocked_both_ways_and_skipped_by_the_agent(monkeypatch):
+def test_low_reliability_asks_for_consent_and_the_agent_skips_it(monkeypatch):
     from fastapi.testclient import TestClient
-    from backend.api_server import app
+    from backend.api_server import app, finalize_agreement
     from backend.memory_graph import memory_graph
     from backend.negotiation_queue import NegotiationQueue
 
@@ -339,10 +367,11 @@ def test_low_reliability_wallet_is_blocked_both_ways_and_skipped_by_the_agent(mo
     assert (trust["trust_tier"], trust["trusted"], trust["sybil_ring_detected"]) == ("Low Reliability", False, False)
     assert trust["reliability_pct"] < 60
 
+    # As the starter, its own tier no longer blocks it: it can trade and rebuild its score.
     request = {"asset_id": pepe, "rgb_amount": 1_000_000, "buyer_max_ceiling_usd": 135, "buyer_target_usd": 120, "buyer_ai_prompt": ""}
     as_buyer = client.post("/api/sessions", json={**request, "buyer_wallet_id": thin["wallet_id"], "seller_address": wallets["wallet_b"]["address"]}).json()
-    assert as_buyer["state"] == "BLOCKED_BY_GATE" and as_buyer["rounds"] == []
-    assert as_buyer["gate"]["reasons"] == ["Buyer trust check failed: Low Reliability"]
+    assert (as_buyer["state"], as_buyer["gate"], as_buyer["risk_accepted"]) == ("NEGOTIATING", None, False)
+    client.post(f"/api/sessions/{as_buyer['session_id']}/cancel", json={"wallet_id": thin["wallet_id"]})
 
     # Its desk is the cheapest, yet the agent skips it (and Sybil's) and picks Wallet B.
     client.put(f"/api/wallets/{thin['wallet_id']}/agent_profile", json={"seller_active": True, "offered_asset_id": pepe, "offered_amount": 1_000_000, "asking_price_usd": 40, "secret_min_reserve_usd": 30})
@@ -350,12 +379,34 @@ def test_low_reliability_wallet_is_blocked_both_ways_and_skipped_by_the_agent(mo
     assert found["listing"]["listing_id"] == "desk_wallet_b"
     client.post(f"/api/sessions/{found['session']['session_id']}/cancel", json={"wallet_id": "wallet_a"})
 
-    as_seller = client.post("/api/sessions", json={**request, "buyer_wallet_id": "wallet_a", "seller_address": thin["address"]}).json()
-    assert as_seller["state"] == "BLOCKED_BY_GATE"
-    assert as_seller["gate"] == {"passed": False, "trust_tier": "Low Reliability", "reasons": ["Counterparty trust check failed: Low Reliability"]}
+    # Buying from it without consent: 409 confirm_risk, and nothing is created.
+    to_thin = {**request, "buyer_wallet_id": "wallet_a", "seller_address": thin["address"]}
+    before = len(client.get("/api/sessions?wallet_id=wallet_a").json())
+    refused = client.post("/api/sessions", json=to_thin)
+    assert refused.status_code == 409
+    assert refused.json() == {"code": "confirm_risk", "message": "Thin history has low reliability: trading with it is a risk."}
+    assert len(client.get("/api/sessions?wallet_id=wallet_a").json()) == before
+
+    # With consent the agents negotiate, and the check after the agreement honours it.
+    as_seller = client.post("/api/sessions", json={**to_thin, "accept_risk": True}).json()
+    assert (as_seller["state"], as_seller["risk_accepted"]) == ("NEGOTIATING", True)
     assert as_seller["counterparty_trust"]["trust_tier"] == "Low Reliability"
+    finalize_agreement(as_seller["session_id"], 120)
+    agreed = client.get(f"/api/sessions/{as_seller['session_id']}?wallet_id=wallet_a").json()
+    assert agreed["state"] == "AWAITING_SIGNATURES"
+    assert agreed["gate"] == {"passed": True, "trust_tier": "Low Reliability", "reasons": []}
+
+    # Declining the risky deal after the agreement is not a walk-away.
+    client.post(f"/api/sessions/{as_seller['session_id']}/cancel", json={"wallet_id": "wallet_a"})
+    assert not any(w.session_id == as_seller["session_id"] for w in memory_graph._walk_aways)
     client.put(f"/api/wallets/{thin['wallet_id']}/agent_profile", json={"seller_active": False})
 
+    # A wallet with no history yet asks the same, in its own words.
+    fresh = client.post("/api/wallets/create", json={"label": "Fresh"}).json()
+    client.put(f"/api/wallets/{fresh['wallet_id']}/agent_profile", json={"seller_active": True, "offered_asset_id": pepe, "offered_amount": 1_000_000, "asking_price_usd": 150, "secret_min_reserve_usd": 110})
+    unverified = client.post("/api/sessions", json={**to_thin, "seller_address": fresh["address"]})
+    assert (unverified.status_code, unverified.json()["message"]) == (409, "Fresh has no trade history yet: trading with it is a risk.")
+    client.put(f"/api/wallets/{fresh['wallet_id']}/agent_profile", json={"seller_active": False})
 
 def test_contacts_never_show_seeded_peers():
     from fastapi.testclient import TestClient

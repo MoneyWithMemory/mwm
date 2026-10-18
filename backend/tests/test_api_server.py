@@ -184,32 +184,49 @@ def test_put_aliases_and_get_contacts():
     assert "secret_min_reserve_usd" not in wallet_b_contact["desk"]
     assert "seller_ai_prompt" not in wallet_b_contact["desk"]
 
-def test_session_blocked_immediately_by_gate_on_sybil():
+def test_a_ring_needs_consent_and_negotiates_with_it(monkeypatch):
     """
-    Verify that creating a session with a Ring Anomaly or untrusted counterparty
-    is blocked immediately at session creation without invoking QVAC.
+    A ring member is not blocked: without the buyer's consent the answer is 409 confirm_risk and
+    nothing is created (no QVAC call); with it the agents negotiate, and the check after the
+    agreement honours the consent.
     """
-    # Look up sybil address
+    from backend.api_server import finalize_agreement
+    from backend.memory_graph import memory_graph
+    from backend.negotiation_queue import NegotiationQueue
+
+    _fund_wallets(monkeypatch)
+    monkeypatch.setattr("backend.api_server.negotiation_queue", NegotiationQueue(lambda sid: None))
     wallets = client.get("/api/wallets").json()
     sybil_addr = next(w["address"] for w in wallets if w["wallet_id"] == "wallet_sybil")
-
     req = {
         "buyer_wallet_id": "wallet_a",
         "seller_address": sybil_addr,
         "asset_id": _desk_asset(),
-        "rgb_amount": 1_000_000,
+        "rgb_amount": 500_000,
         "buyer_max_ceiling_usd": 135,
         "buyer_target_usd": 100,
         "buyer_ai_prompt": "Buyer prompt",
     }
-    resp = client.post("/api/sessions", json=req)
-    assert resp.status_code == 200
-    sess = resp.json()
-    assert sess["state"] == "BLOCKED_BY_GATE"
-    assert sess["gate"]["passed"] is False
-    assert sess["gate"]["trust_tier"] == "Ring Anomaly Detected"
-    assert len(sess["rounds"]) == 0
-    assert sess["thinking"] is None
+    before = len(client.get("/api/sessions?wallet_id=wallet_a").json())
+    refused = client.post("/api/sessions", json=req)
+    assert refused.status_code == 409
+    assert refused.json() == {
+        "code": "confirm_risk",
+        "message": "Sybil trades in loops with itself, a pattern used to fake reliability. Trading with it is a high risk.",
+    }
+    assert len(client.get("/api/sessions?wallet_id=wallet_a").json()) == before
+
+    sess = client.post("/api/sessions", json={**req, "accept_risk": True}).json()
+    assert (sess["state"], sess["risk_accepted"]) == ("NEGOTIATING", True)
+    assert sess["counterparty_trust"]["trust_tier"] == "Ring Anomaly Detected"
+    finalize_agreement(sess["session_id"], 70)
+    agreed = client.get(f"/api/sessions/{sess['session_id']}?wallet_id=wallet_a").json()
+    assert agreed["state"] == "AWAITING_SIGNATURES"
+    assert agreed["gate"] == {"passed": True, "trust_tier": "Ring Anomaly Detected", "reasons": []}
+
+    # Declining the deal with a ring is not a walk-away.
+    client.post(f"/api/sessions/{sess['session_id']}/cancel", json={"wallet_id": "wallet_a"})
+    assert not any(w.session_id == sess["session_id"] for w in memory_graph._walk_aways)
 
 def test_session_signature_hash_mismatch_returns_409(monkeypatch):
     _fund_wallets(monkeypatch)
@@ -444,7 +461,9 @@ def test_session_creation_contract_errors(monkeypatch):
     assert (resp.status_code, resp.json()["code"]) == (409, "insufficient_funds")
 
 
-def test_session_blocked_for_unknown_seller_and_untrusted_buyer(monkeypatch):
+def test_session_blocked_for_unknown_seller_but_not_for_a_ring_buyer(monkeypatch):
+    from backend.negotiation_queue import NegotiationQueue
+
     _fund_wallets(monkeypatch)
     resp = client.post("/api/sessions", json=_session_request("bcrt1q_unknown_address"))
     sess = resp.json()
@@ -453,11 +472,13 @@ def test_session_blocked_for_unknown_seller_and_untrusted_buyer(monkeypatch):
 
     wallets = client.get("/api/wallets").json()
     seller_addr = next(w["address"] for w in wallets if w["wallet_id"] == "wallet_b")
+    # The starter's own tier never blocks, a ring's included: the seller sees its badge and may decline.
+    _reset_desk()
+    monkeypatch.setattr("backend.api_server.negotiation_queue", NegotiationQueue(lambda sid: None))
     resp = client.post("/api/sessions", json=_session_request(seller_addr, buyer_wallet_id="wallet_sybil"))
     sess = resp.json()
-    assert sess["state"] == "BLOCKED_BY_GATE"
-    assert any(r.startswith("Buyer trust check failed") for r in sess["gate"]["reasons"])
-    assert sess["rounds"] == []
+    assert (sess["state"], sess["gate"], sess["risk_accepted"]) == ("NEGOTIATING", None, False)
+    client.post(f"/api/sessions/{sess['session_id']}/cancel", json={"wallet_id": "wallet_sybil"})
 
 
 def test_contacts_include_aliased_addresses():
@@ -470,16 +491,21 @@ def test_contacts_include_aliased_addresses():
     assert len([c for c in contacts if c["address"] == "bcrt1q_new_friend"]) == 1
 
 
-def test_new_wdk_wallet_buying_is_blocked_by_gate(monkeypatch):
-    _fund_wallets(monkeypatch, amount=0)
+def test_new_wdk_wallet_can_start_a_deal(monkeypatch):
+    from backend.negotiation_queue import NegotiationQueue
+
+    # A wallet with no history yet is not blocked as the starter: trading is how it builds a score.
+    _fund_wallets(monkeypatch)
+    _reset_desk()
+    monkeypatch.setattr("backend.api_server.negotiation_queue", NegotiationQueue(lambda sid: None))
     new_wallet = client.post("/api/wallets/create", json={"label": "WDK demo"}).json()
     wallets = client.get("/api/wallets").json()
     seller_addr = next(w["address"] for w in wallets if w["wallet_id"] == "wallet_b")
     resp = client.post("/api/sessions", json=_session_request(seller_addr, buyer_wallet_id=new_wallet["wallet_id"]))
     sess = resp.json()
     assert resp.status_code == 200
-    assert sess["state"] == "BLOCKED_BY_GATE"
-    assert "Buyer trust check failed: Unverified" in sess["gate"]["reasons"]
+    assert (sess["state"], sess["gate"], sess["risk_accepted"]) == ("NEGOTIATING", None, False)
+    client.post(f"/api/sessions/{sess['session_id']}/cancel", json={"wallet_id": new_wallet["wallet_id"]})
 
 
 SECRET_KEYS = ("secret_min_reserve_usd", "seller_ai_prompt", "buyer_max_ceiling_usd", "buyer_target_usd", "buyer_ai_prompt")

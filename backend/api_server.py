@@ -202,6 +202,8 @@ class CreateSessionRequest(BaseModel):
     buyer_max_ceiling_usd: int
     buyer_target_usd: int
     buyer_ai_prompt: str
+    # The buyer chose to trade anyway with a counterparty that is not High Authenticity.
+    accept_risk: bool = False
 
 class SignSessionRequest(BaseModel):
     wallet_id: str
@@ -607,6 +609,7 @@ def finalize_agreement(session_id: str, agreed_price_usd: int) -> None:
         buyer_max_budget_usd=session.buyer_max_budget_usd,
         seller_min_reserve_usd=session.seller_min_reserve_usd,
         counterparty_wallet_id=session.seller_wallet_id,
+        risk_accepted=session.risk_accepted,
     )
 
     if not gate_res.passed:
@@ -641,6 +644,7 @@ def finalize_agreement(session_id: str, agreed_price_usd: int) -> None:
         payment_amount=agreed_price_usd,
         canonical_terms=canonical_terms,
         terms_hash=terms_hash,
+        trust_tier=memory_graph.get_reputation(session.seller_wallet_id).trust_tier,
     )
     logger.info(f"Session {session_id}: Agreement reached at {agreed_price_usd} USD. terms_hash={terms_hash[:12]}...")
 
@@ -831,7 +835,7 @@ def create_session(req: CreateSessionRequest):
     # Buying part of a lot: list price and reserve scale with the amount (same unit prices).
     list_price, reserve = _lot_prices(seller_profile, req.rgb_amount) if seller_profile else (0, 0)
 
-    def new_session(status_: str, gate_info: Optional[Dict[str, Any]] = None):
+    def new_session(status_: str, gate_info: Optional[Dict[str, Any]] = None, risk_accepted: bool = False):
         return session_store.create_session(
             session_id=session_id,
             asset_id=req.asset_id,
@@ -853,29 +857,36 @@ def create_session(req: CreateSessionRequest):
             initial_gate=gate_info,
             buyer_ai_prompt=req.buyer_ai_prompt,
             seller_ai_prompt=seller_profile.seller_ai_prompt if seller_profile else "",
+            risk_accepted=risk_accepted,
         )
 
-    # 3. Layer-0 trust gate on both parties: only High Authenticity passes. Rings, Low Reliability
-    # and Unverified wallets and unknown addresses are born BLOCKED_BY_GATE without any QVAC call.
+    # 3. Layer-0 trust gate. An unknown address is born BLOCKED_BY_GATE without any QVAC call. A
+    # seller that is not High Authenticity (Low Reliability, Unverified or a ring) needs the buyer's
+    # consent; the buyer's own tier never blocks, so a new or low wallet can rebuild its score.
     if not seller_wid:
         reasons = ["Counterparty has no active desk."]
-        seller_tier = TrustTier.UNVERIFIED
-    else:
-        reasons = []
-        seller_tier = memory_graph.get_reputation(seller_wid).trust_tier
-        for who, wid in (("Counterparty", seller_wid), ("Buyer", req.buyer_wallet_id)):
-            rep = memory_graph.get_reputation(wid)
-            if not rep.is_trusted:
-                reasons.append(f"{who} trust check failed: {rep.trust_tier}")
-    if reasons:
         logger.warning(f"Session creation blocked by gate: {reasons}")
         session = new_session(
             SessionStatus.BLOCKED_BY_GATE,
-            {"passed": False, "trust_tier": seller_tier, "reasons": reasons},
+            {"passed": False, "trust_tier": TrustTier.UNVERIFIED, "reasons": reasons},
         )
         return _session_view(session, req.buyer_wallet_id)
 
-    # 4. Desk and balances (contract: 409 seller_desk_inactive / insufficient_funds)
+    # 4. A risky seller: the buyer decides. Without consent, 409 confirm_risk and nothing is created;
+    # with it the session records risk_accepted.
+    seller_tier = memory_graph.get_reputation(seller_wid).trust_tier
+    risky = seller_tier != TrustTier.HIGH_AUTHENTICITY
+    if risky and not req.accept_risk:
+        label = wallet_state_manager._labels.get(seller_wid, "This wallet")
+        if seller_tier == TrustTier.RING_ANOMALY:
+            message = f"{label} trades in loops with itself, a pattern used to fake reliability. Trading with it is a high risk."
+        elif seller_tier == TrustTier.UNVERIFIED:
+            message = f"{label} has no trade history yet: trading with it is a risk."
+        else:
+            message = f"{label} has low reliability: trading with it is a risk."
+        raise HTTPException(status_code=409, detail={"code": "confirm_risk", "message": message})
+
+    # 5. Desk and balances (contract: 409 seller_desk_inactive / insufficient_funds)
     if not seller_profile.seller_active or seller_profile.offered_asset_id != req.asset_id:
         raise HTTPException(
             status_code=409,
@@ -911,17 +922,18 @@ def create_session(req: CreateSessionRequest):
             detail={"code": "insufficient_funds", "message": "USDT balance is below the ceiling"},
         )
 
-    # 5. Pre-negotiation: if the buyer's maximum is below the seller's minimum (for this amount)
+    # 6. Pre-negotiation: if the buyer's maximum is below the seller's minimum (for this amount)
     # no deal is possible, so the agents never talk. The reason reveals only that, never a number.
     if req.buyer_max_ceiling_usd < reserve:
         session = new_session(
             SessionStatus.BLOCKED_BY_GATE,
             {"passed": False, "trust_tier": seller_tier, "reasons": [NO_OVERLAP_REASON]},
+            risk_accepted=risky,
         )
         return _session_view(session, req.buyer_wallet_id)
 
-    # 6. Create negotiating session
-    session = new_session(SessionStatus.NEGOTIATING)
+    # 7. Create negotiating session
+    session = new_session(SessionStatus.NEGOTIATING, risk_accepted=risky)
 
     # Negotiations share one local model: they run in arrival order through the queue.
     negotiation_queue.submit(session_id)
@@ -1196,8 +1208,8 @@ def agent_search(req: AgentSearchRequest):
     """
     The buyer's agent picks the cheapest fitting Seller Desk (by unit price, a part of a larger lot
     included where the seller allows it) and opens a session. Untrusted desks (rings, Low Reliability,
-    Unverified) are skipped, and so are desks whose secret floor for this amount is above the buyer's
-    maximum (no deal would be possible).
+    Unverified) are skipped, so it never picks a risk for the buyer, and so are desks whose secret
+    floor for this amount is above the buyer's maximum (no deal would be possible).
     """
     _require_wallet(req.buyer_wallet_id)
 

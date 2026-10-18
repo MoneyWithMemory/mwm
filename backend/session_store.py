@@ -11,7 +11,8 @@ Features:
 - Enforces strict state transitions and 2/2 signature validation
 - In-memory thread-safe store with locking
 - Records in the memory graph each party that walks away from an agreed deal: it cancels it, or
-  does not sign before expiry while the other party did (detected when the session is next read)
+  does not sign before expiry while the other party did (detected when the session is next read).
+  Leaving a deal whose counterparty is not High Authenticity is never a walk-away.
 """
 
 import time
@@ -22,7 +23,7 @@ from pydantic import BaseModel, Field
 
 from backend.qvac_negotiator import NegotiationTurn
 from backend.deterministic_gate import CanonicalSwapTerms
-from backend.memory_graph import MemoryGraph, memory_graph
+from backend.memory_graph import MemoryGraph, TrustTier, memory_graph
 
 logger = logging.getLogger("mwm.session")
 
@@ -78,6 +79,8 @@ class Session(BaseModel):
 
     thinking: Optional[str] = None
     gate: Optional[Dict[str, Any]] = None
+    # The starter chose to trade with a counterparty that is not High Authenticity (accept_risk).
+    risk_accepted: bool = False
     history: List[NegotiationTurn] = Field(default_factory=list)
     created_at_unix: int = Field(default_factory=lambda: int(time.time()))
     updated_at_unix: int = Field(default_factory=lambda: int(time.time()))
@@ -250,6 +253,7 @@ class Session(BaseModel):
             "txid": self.txid,
             "failure": failure,
             "needs_my_signature": self.needs_signature_from(viewer_wallet_id),
+            "risk_accepted": self.risk_accepted,
         }
 
     def to_summary(self, viewer_wallet_id: Optional[str] = None) -> Dict[str, Any]:
@@ -287,6 +291,11 @@ class SessionStore:
         # Where walked-away deals are recorded (they lower that party's reliability score).
         self._memory = memory
 
+    def _walk_away(self, session_id: str, walker: str, other: str, reason: str) -> None:
+        """Leaving a deal with a counterparty that is not High Authenticity costs nothing: declining a risk is not walking away."""
+        if self._memory.get_reputation(other).trust_tier == TrustTier.HIGH_AUTHENTICITY:
+            self._memory.record_walk_away(session_id, walker, other, reason)
+
     def _expire_if_stale(self, session: Session) -> None:
         """Terms past their expiry: EXPIRED. A party that left them unsigned while the other signed walked away."""
         if session.status != SessionStatus.AWAITING_SIGNATURES or int(time.time()) <= session.expiry_unix:
@@ -297,7 +306,7 @@ class SessionStore:
                 (session.seller_wallet_id, session.buyer_wallet_id) if session.buyer_signed
                 else (session.buyer_wallet_id, session.seller_wallet_id)
             )
-            self._memory.record_walk_away(session.session_id, walker, other, "unsigned_at_expiry")
+            self._walk_away(session.session_id, walker, other, "unsigned_at_expiry")
 
     def create_session(
         self,
@@ -321,6 +330,7 @@ class SessionStore:
         initial_gate: Optional[Dict[str, Any]] = None,
         buyer_ai_prompt: str = "",
         seller_ai_prompt: str = "",
+        risk_accepted: bool = False,
     ) -> Session:
         with self._lock:
             now = int(time.time())
@@ -345,6 +355,7 @@ class SessionStore:
                 network_fee_sat=network_fee_sat,
                 expiry_unix=now + expiry_seconds,
                 gate=initial_gate,
+                risk_accepted=risk_accepted,
                 created_at_unix=now,
                 updated_at_unix=now,
             )
@@ -382,6 +393,7 @@ class SessionStore:
         payment_amount: int,
         canonical_terms: CanonicalSwapTerms,
         terms_hash: str,
+        trust_tier: str = TrustTier.HIGH_AUTHENTICITY,
     ) -> Session:
         with self._lock:
             session = self._sessions[session_id]
@@ -397,7 +409,7 @@ class SessionStore:
             session.expiry_unix = canonical_terms.expiry_unix
             session.gate = {
                 "passed": True,
-                "trust_tier": "High Authenticity",
+                "trust_tier": trust_tier,
                 "reasons": [],
             }
             session.updated_at_unix = int(time.time())
@@ -461,7 +473,7 @@ class SessionStore:
                     (session.buyer_wallet_id, session.seller_wallet_id) if by_buyer
                     else (session.seller_wallet_id, session.buyer_wallet_id)
                 )
-                self._memory.record_walk_away(session_id, walker, other, "cancelled_after_agreement")
+                self._walk_away(session_id, walker, other, "cancelled_after_agreement")
             return session
 
     def update_settlement_progress(self, session_id: str, step: int, message: str) -> None:

@@ -1,6 +1,7 @@
 import { ArrowLeft, ChevronRight } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import {
+  ApiError,
   useCreateSession,
   type Contact,
   type Market,
@@ -25,8 +26,10 @@ import {
 import { formatAssetAmount, formatUnitPrice, formatUsd, shortAddress } from '@/lib/format'
 import { lotIssue, MIN_PART_USD, minLotAmount, proRataPrice, suggestedLimits } from '@/lib/lots'
 import { useWalletContext } from '@/lib/navigation'
+import { riskConsent } from '@/lib/trust'
 import { parseUsd, WHOLE_USD_ERROR } from '@/lib/usd'
 import { BuyerLimits } from '../shared/BuyerLimits'
+import { RiskConfirmSheet, type RiskToConfirm } from '../shared/RiskConfirmSheet'
 import { StrategyPicker } from '../shared/StrategyPicker'
 import { useBuyerLimits } from '../shared/useBuyerLimits'
 
@@ -109,6 +112,9 @@ export function SetupForm({ wallet, contacts, market, initialAddress, onCreated 
   )
   const [prompt, setPrompt] = useState(wallet.agent_profile.buyer_ai_prompt)
   const [touched, setTouched] = useState(false)
+  // A seller that is not High Authenticity: the user confirms before the agents start.
+  const [risk, setRisk] = useState<RiskToConfirm | null>(null)
+  const [riskOpen, setRiskOpen] = useState(false)
 
   const contact = choices.find((c) => c.address === address)
   const asset = tradable.find((a) => a.asset_id === assetId)
@@ -163,9 +169,17 @@ export function SetupForm({ wallet, contacts, market, initialAddress, onCreated 
     setTouched(true)
   }
 
-  const submit = (event: FormEvent) => {
-    event.preventDefault()
-    setTouched(true)
+  /** The seller's risk as this form shows it; the server's 409 confirm_risk asks it for a listing out of date. */
+  const riskOf = (fallback: boolean): RiskToConfirm | null => {
+    if (!contact) return null
+    const name = contact.alias ?? shortAddress(contact.address)
+    if (riskConsent(contact.trust.trust_tier, name)) {
+      return { tier: contact.trust.trust_tier, reliabilityPct: contact.trust.reliability_pct, name }
+    }
+    return fallback ? { tier: 'Low Reliability', reliabilityPct: null, name } : null
+  }
+
+  const send = (acceptRisk: boolean) => {
     if (!valid || pending || !asset || atomic === null || ceilingValue === null || targetValue === null) return
     run({
       buyer_wallet_id: wallet.wallet_id,
@@ -175,10 +189,27 @@ export function SetupForm({ wallet, contacts, market, initialAddress, onCreated 
       buyer_max_ceiling_usd: ceilingValue,
       buyer_target_usd: targetValue,
       buyer_ai_prompt: prompt,
+      ...(acceptRisk && { accept_risk: true }),
     }).then(
       (session) => onCreated(session.session_id),
-      () => {},
+      (err: unknown) => {
+        const askRisk = err instanceof ApiError && err.code === 'confirm_risk' && !acceptRisk
+        if (askRisk) setRisk(riskOf(true))
+        setRiskOpen(askRisk)
+      },
     )
+  }
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    setTouched(true)
+    const toConfirm = valid && !pending ? riskOf(false) : null
+    if (toConfirm) {
+      setRisk(toConfirm)
+      setRiskOpen(true)
+      return
+    }
+    send(false)
   }
 
   const show = touched
@@ -307,12 +338,14 @@ export function SetupForm({ wallet, contacts, market, initialAddress, onCreated 
 
       <div className="flex flex-col gap-2">
         <p className="min-h-4 text-xs text-danger" role="alert">
-          {error?.message}
+          {error?.code === 'confirm_risk' ? null : error?.message}
         </p>
         <Button type="submit" fullWidth trailingArrow loading={pending} disabled={touched && !valid}>
           Let my agent negotiate
         </Button>
       </div>
+
+      <RiskConfirmSheet open={riskOpen} risk={risk} pending={pending} onCancel={() => setRiskOpen(false)} onContinue={() => send(true)} />
 
       <Sheet open={pickerOpen} onClose={() => setPickerOpen(false)} title="Choose counterparty">
         <ul className="-mx-3 flex flex-col divide-y divide-separator">

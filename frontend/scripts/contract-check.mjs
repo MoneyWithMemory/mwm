@@ -325,7 +325,7 @@ async function main() {
   )
   const contactSybil = contacts.find((c) => c.address === wallets.sybil.address)
   check(contactSybil?.trust.trust_tier === 'Ring Anomaly Detected' && contactSybil.trust.reliability_pct <= 20, 'Sybil is flagged as a ring, capped at 20%', `${contactSybil?.trust.reliability_pct}%`)
-  warn(contactSybil?.desk !== null, 'Sybil shows a desk (the gate still blocks it)')
+  warn(contactSybil?.desk !== null, 'Sybil shows a desk (trading with it needs consent)')
 
   section('Advisor')
   for (const [key, id] of Object.entries(WALLET_IDS)) {
@@ -376,11 +376,24 @@ async function main() {
   })
 
   section('Gate at creation')
-  const blocked = await post('/sessions', request(wallets.sybil.address))
+  const blocked = await post('/sessions', request('bcrt1qcontractcheckunknownaddress'))
   checkShape(blocked.data, SESSION_VIEW, 'SessionView shape (blocked)')
-  check(blocked.data.state === 'BLOCKED_BY_GATE' && blocked.data.rounds.length === 0, 'Sybil session is born BLOCKED_BY_GATE, without rounds', blocked.data.state)
-  check(blocked.data.gate?.passed === false && blocked.data.gate.trust_tier === 'Ring Anomaly Detected' && blocked.data.gate.reasons.length > 0, 'gate carries trust_tier and reasons', JSON.stringify(blocked.data.gate))
-  check(!blocked.data.gate?.reasons.some((r) => LOOP_WORDING.test(r)), 'no loop % in gate.reasons')
+  check(blocked.data.state === 'BLOCKED_BY_GATE' && blocked.data.rounds.length === 0, 'an unknown address is born BLOCKED_BY_GATE, without rounds', blocked.data.state)
+  check(blocked.data.gate?.passed === false && blocked.data.gate.trust_tier === 'Unverified' && blocked.data.gate.reasons.length > 0, 'gate carries trust_tier and reasons', JSON.stringify(blocked.data.gate))
+  const toSybil = { ...request(wallets.sybil.address), rgb_amount: wallets.sybil.agent_profile.offered_amount }
+  const refused = await post('/sessions', toSybil)
+  expectError(refused, 409, 'confirm_risk', 'a ring without consent → 409 confirm_risk, nothing created')
+  check(!/\d/.test(refused.data?.message ?? ''), 'the warning quotes no loop % or trade counts', refused.data?.message)
+  const consented = await post('/sessions', { ...toSybil, accept_risk: true })
+  if (consented.status === 200) {
+    // Cancelled at once: a negotiation with Sybil is not left running.
+    const cancelled = await post(`/sessions/${consented.data.session_id}/cancel`, { wallet_id: WALLET_IDS.a })
+    check(consented.data.state === 'NEGOTIATING' && consented.data.risk_accepted === true, 'with accept_risk a ring negotiates (risk_accepted)', `${consented.data.state} ${consented.data.risk_accepted}`)
+    check(cancelled.data?.state === 'CANCELLED_BY_USER', 'the consented Sybil session is cancelled at once', cancelled.data?.state)
+  } else {
+    // On a fresh regtest Sybil holds none of the lot it lists: consent passes the gate, the desk check answers.
+    check(consented.status === 409 && consented.data?.code === 'insufficient_funds', 'with accept_risk the gate lets a ring through (Sybil holds none of its lot: 409 insufficient_funds)', `${consented.status} ${JSON.stringify(consented.data)?.slice(0, 120)}`)
+  }
 
   section(`Negotiation (Wallet A → Wallet B, up to ${MAX_ROUNDS} rounds)`)
   const created = await post('/sessions', request(wallets.b.address))

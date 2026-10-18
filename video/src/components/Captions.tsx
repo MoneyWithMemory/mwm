@@ -48,7 +48,9 @@ export function Captions({ scene, index, layout, len, overlap }: { scene: SceneD
         if (frame < start || frame > next + OUT) return null
         const sameTitleAsPrev = i > 0 && scene.cues[i - 1].title === cue.title
         const sameTitleAsNext = i + 1 < scene.cues.length && scene.cues[i + 1].title === cue.title
-        const titleStyle = sameTitleAsPrev ? reveal(frame, -IN, sameTitleAsNext ? null : next) : reveal(frame, start, sameTitleAsNext ? null : next)
+        // A new cue waits for the old one to be mostly gone.
+        const wait = i > 0 ? OUT - 2 : 0
+        const titleStyle = sameTitleAsPrev ? reveal(frame, -IN, sameTitleAsNext ? null : next) : reveal(frame, start, sameTitleAsNext ? null : next, wait)
         const hideTitle = sameTitleAsNext && frame >= next
         return (
           <div key={i} style={layer}>
@@ -76,7 +78,7 @@ export function Captions({ scene, index, layout, len, overlap }: { scene: SceneD
                   fontWeight: 400,
                   color: color.hint,
                   textWrap: 'pretty',
-                  ...reveal(frame, start, next, sameTitleAsPrev ? 0 : 4),
+                  ...reveal(frame, start, next, wait + (sameTitleAsPrev ? 0 : 4)),
                 }}
               >
                 {cue.sub}

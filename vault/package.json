@@ -1,0 +1,24 @@
+{
+  "name": "mwm-vault",
+  "private": true,
+  "version": "0.1.0",
+  "description": "MwM Vault: the self-custodial part of the account, built with Tether WDK and UTEXO's RGB wallet module.",
+  "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "start": "node src/main.js",
+    "test": "node --test test/*.test.js",
+    "e2e": "node scripts/e2e.mjs"
+  },
+  "dependencies": {
+    "@tetherto/wdk": "1.0.0-beta.18",
+    "@utexo/rgb-lib": "0.3.0-beta.8",
+    "@utexo/wdk-wallet-rgb": "2.0.3",
+    "bip39": "3.1.0"
+  },
+  "overrides": {
+    "@tetherto/wdk-wallet": "1.0.0-beta.17"
+  }
+}

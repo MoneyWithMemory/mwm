@@ -43,6 +43,10 @@ SWAP_GLOBAL_LOCK = threading.Lock()
 SWAP_RGB_OUTPUT_SAT = 1_000
 # Bitcoin on the output that receives an isolated allocation; enough for the taker's share.
 ISOLATION_UTXO_SAT = 10_000
+# Unpaid receive invoices expire; the Vault pays the one it asks for right away.
+RECEIVE_INVOICE_TTL_S = 15 * 60
+# Bitcoin on the output a witness invoice asks the payer for (a blind invoice needs none).
+WITNESS_PAYMENT_SAT = 1_000
 
 class SecurityViolationError(RuntimeError):
     """Raised when signature verification or terms hash validation fails."""
@@ -50,6 +54,14 @@ class SecurityViolationError(RuntimeError):
 
 class RgbSwapEngineError(RuntimeError):
     """Raised when an on-chain RGB operation or settlement step fails."""
+    pass
+
+class InvoiceMismatchError(ValueError):
+    """Raised before paying an RGB invoice that is invalid or asks for another transfer."""
+    pass
+
+class InsufficientFundsError(RgbSwapEngineError):
+    """Raised before paying or swapping when a spendable balance does not cover the amount."""
     pass
 
 class WalletManager:
@@ -61,6 +73,8 @@ class WalletManager:
         self._wallets: Dict[str, rgb_lib.Wallet] = {}
         self._onlines: Dict[str, Any] = {}
         self._addresses: Dict[str, str] = {}
+        # Invoices from create_receive_invoice not settled yet: wallet_id -> {recipient_id: asset_id}
+        self._receives: Dict[str, Dict[str, str]] = {}
 
     def get_wallet_dir(self, wallet_id: str) -> Path:
         # wallet_id becomes a path component: reject anything that could escape data_root.
@@ -159,6 +173,7 @@ class WalletManager:
                     "settled": b.settled,
                     "future": b.future,
                     "spendable": b.spendable,
+                    "added_at": nia.added_at,
                 })
         except Exception as exc:
             logger.warning(f"list_assets failed for {wallet_id}: {exc}")
@@ -212,6 +227,139 @@ class WalletManager:
         regtest.mine(1)
         return asset.asset_id
 
+    @staticmethod
+    def ensure_free_utxos(wallet: rgb_lib.Wallet, online: Any, count: int) -> None:
+        """At least `count` empty colorable UTXOs, so a blind receive never shares one."""
+        free = [
+            u for u in wallet.list_unspents(online, False, False)
+            if u.utxo.exists and u.utxo.colorable and not u.rgb_allocations and u.pending_blinded == 0
+        ]
+        if len(free) >= count:
+            return
+        wallet.create_utxos(online, False, count - len(free), ISOLATION_UTXO_SAT, FEE_RATE, False)
+        regtest.mine(1)
+
+    @staticmethod
+    def _transport() -> str:
+        """The RGB proxy as an rgb-lib transport endpoint."""
+        return settings.PROXY_URL.replace("http://", "rpc://").replace("https://", "rpcs://")
+
+    def create_receive_invoice(self, wallet_id: str, asset_id: str, amount: int) -> Dict[str, Any]:
+        """
+        A blind receive for `amount` of an RGB asset: the payer adds no bitcoin output. It lands
+        on an empty colorable UTXO, so it never shares one with the allocations a swap selects,
+        and expires unpaid after RECEIVE_INVOICE_TTL_S. refresh() reports it once settled.
+        """
+        assignment = rgb_lib.Assignment.FUNGIBLE(amount)
+        with SWAP_GLOBAL_LOCK:
+            wallet, online, _ = self.get_or_create_wallet(wallet_id)
+            self.ensure_free_utxos(wallet, online, 1)
+            expiry = int(time.time()) + RECEIVE_INVOICE_TTL_S
+            try:
+                receive = wallet.blind_receive(asset_id, assignment, expiry, [self._transport()], 1)
+            except rgb_lib.RgbLibError.AssetNotFound:
+                # rgb-lib names only an asset the wallet knows: a first receive takes any asset.
+                receive = wallet.blind_receive(None, assignment, expiry, [self._transport()], 1)
+            self._receives.setdefault(wallet_id, {})[receive.recipient_id] = asset_id
+        return {
+            "invoice": receive.invoice,
+            "recipient_id": receive.recipient_id,
+            "expires_at": receive.expiration_timestamp,
+        }
+
+    @staticmethod
+    def _check_invoice(invoice: str, asset_id: str, amount: int) -> Any:
+        """
+        The invoice's data, if paying it exactly `amount` of `asset_id` on regtest fulfils it. An
+        invoice may leave the asset or the amount open (one for a first receive cannot name the
+        asset), but what it names must match, and it must stay valid long enough to be accepted.
+        """
+        try:
+            data = rgb_lib.Invoice(invoice).invoice_data()
+        except rgb_lib.RgbLibError as exc:
+            raise InvoiceMismatchError(f"Not a valid RGB invoice: {exc}") from exc
+        if data.network != NETWORK:
+            raise InvoiceMismatchError(f"The invoice is for {data.network}, not regtest")
+        if data.asset_id not in (None, asset_id):
+            raise InvoiceMismatchError(f"The invoice asks for {data.asset_id}, not {asset_id}")
+        open_amount = isinstance(data.assignment, rgb_lib.Assignment.ANY)
+        exact_amount = isinstance(data.assignment, rgb_lib.Assignment.FUNGIBLE) and data.assignment.amount == amount
+        if not (open_amount or exact_amount):
+            raise InvoiceMismatchError(f"The invoice asks for {data.assignment}, not {amount}")
+        # Paid at once (donation): the receiver must still accept the transfer before expiry.
+        if data.expiration_timestamp is not None and data.expiration_timestamp < time.time() + 60:
+            raise InvoiceMismatchError("The invoice expires in less than a minute")
+        return data
+
+    def pay_invoice(self, wallet_id: str, invoice: str, asset_id: str, amount: int) -> str:
+        """
+        Pays `amount` of `asset_id` to an RGB invoice and returns the txid. Before anything is
+        sent it refuses an invoice asking for another transfer (InvoiceMismatchError) and a
+        balance that does not cover the amount (InsufficientFundsError). The transfer is
+        broadcast at once, then mined and refreshed so the change settles.
+        """
+        with SWAP_GLOBAL_LOCK:
+            data = self._check_invoice(invoice, asset_id, amount)
+            wallet, online, _ = self.get_or_create_wallet(wallet_id)
+            spendable = self.get_spendable(wallet_id, asset_id)
+            if spendable < amount:
+                raise InsufficientFundsError(f"{wallet_id} holds {spendable} spendable {asset_id}, below {amount}")
+            witness = None
+            if rgb_lib.RecipientInfo(data.recipient_id).recipient_type() == rgb_lib.RecipientType.WITNESS:
+                witness = rgb_lib.WitnessData(amount_sat=WITNESS_PAYMENT_SAT, blinding=None)
+            recipient = rgb_lib.Recipient(
+                recipient_id=data.recipient_id,
+                witness_data=witness,
+                assignment=rgb_lib.Assignment.FUNGIBLE(amount),
+                transport_endpoints=data.transport_endpoints or [self._transport()],
+            )
+            txid = wallet.send(online, {asset_id: [recipient]}, True, FEE_RATE, 1, None).txid
+            # Broadcast: the transfer has happened, so from here a failure is only logged (a retry
+            # would pay twice) and the next refresh settles what is left.
+            try:
+                regtest.mine(1)
+                wallet.refresh(online, None, [], False)
+            except Exception as exc:
+                logger.warning(f"{wallet_id}: paid {amount} {asset_id} (txid {txid}), not settled yet: {exc}")
+        return txid
+
+    def refresh(self, wallet_id: str) -> List[Dict[str, Any]]:
+        """
+        Settles pending RGB transfers, in two passes: the first accepts incoming consignments,
+        the second settles those already confirmed. Returns, once each, the invoices from
+        create_receive_invoice that are now settled: {recipient_id, asset_id, amount, txid}.
+        Failed or expired ones are dropped.
+        """
+        with SWAP_GLOBAL_LOCK:
+            wallet, online, _ = self.get_or_create_wallet(wallet_id)
+            for _ in range(2):
+                wallet.refresh(online, None, [], False)
+            pending = self._receives.get(wallet_id, {})
+            if not pending:
+                return []
+            # Transfers not bound to an asset yet are listed under None; rgb-lib lists a known asset only.
+            known = {a.asset_id for a in wallet.list_assets([rgb_lib.AssetSchema.NIA]).nia}
+            transfers = {
+                t.recipient_id: t
+                for aid in [None, *(a for a in set(pending.values()) if a in known)]
+                for t in wallet.list_transfers(aid)
+            }
+            settled: List[Dict[str, Any]] = []
+            for recipient_id, asset_id in list(pending.items()):
+                transfer = transfers.get(recipient_id)
+                if transfer is None:
+                    continue
+                if transfer.status == rgb_lib.TransferStatus.SETTLED:
+                    settled.append({
+                        "recipient_id": recipient_id,
+                        "asset_id": asset_id,
+                        "amount": sum(getattr(a, "amount", 0) for a in transfer.assignments),
+                        "txid": transfer.txid,
+                    })
+                if transfer.status in (rgb_lib.TransferStatus.SETTLED, rgb_lib.TransferStatus.FAILED):
+                    del pending[recipient_id]
+            return settled
+
 
 class RgbSwapEngine:
     """Coordinates and executes RGB <-> RGB atomic swaps."""
@@ -225,8 +373,8 @@ class RgbSwapEngine:
         Initialize Wallet A (Buyer) and Wallet B (Seller) for demo:
         - Funds Wallet A, Wallet B and Sybil with their seed.py BTC on regtest
         - Creates colorable UTXOs on each
-        - Issues 1,000,000 PEPE on Wallet B (Seller)
-        - Issues 10,000 USDT on Wallet A (Buyer)
+        - PEPE: the one Wallet B (Seller) still holds, else 1,000,000 PEPE issued on it
+        - USDT: the one Wallet A (Buyer) knows, even at 0, else 10,000 USDT issued on it
         Returns {'pepe_asset_id': ..., 'usdt_asset_id': ...}.
         """
         with SWAP_GLOBAL_LOCK:
@@ -238,42 +386,43 @@ class RgbSwapEngine:
                 # Top up only when below half the seed, so restarts don't keep adding 0.01 BTC.
                 self.wallet_mgr.fund_and_create_utxos(wid, btc, 5, 10_000, min_btc_sats=sats // 2)
 
-            # 2. Check if Wallet B already has PEPE
-            b_balances = self.wallet_mgr.get_balances("wallet_b")
-            pepe_id = None
-            for a in b_balances["assets"]:
-                if a["ticker"] == settings.DEMO_ASSET_TICKER and a["future"] >= settings.DEMO_ASSET_SUPPLY:
-                    pepe_id = a["asset_id"]
-                    break
-            if not pepe_id:
-                logger.info(f"Issuing {settings.DEMO_ASSET_SUPPLY} {settings.DEMO_ASSET_TICKER} on Wallet B...")
-                pepe_id = self.wallet_mgr.issue_nia(
-                    "wallet_b",
-                    settings.DEMO_ASSET_TICKER,
-                    settings.DEMO_ASSET_NAME,
-                    settings.DEMO_ASSET_SUPPLY,
-                )
-
-            # 3. Check if Wallet A already has USDT (with positive spendable balance)
-            a_balances = self.wallet_mgr.get_balances("wallet_a")
-            usdt_id = None
-            for a in a_balances["assets"]:
-                if a["ticker"] == settings.PAYMENT_ASSET_TICKER and a["spendable"] >= settings.PAYMENT_ASSET_SUPPLY:
-                    usdt_id = a["asset_id"]
-                    break
-            if not usdt_id:
-                logger.info(f"Issuing {settings.PAYMENT_ASSET_SUPPLY} {settings.PAYMENT_ASSET_TICKER} on Wallet A...")
-                usdt_id = self.wallet_mgr.issue_nia(
-                    "wallet_a",
-                    settings.PAYMENT_ASSET_TICKER,
-                    settings.PAYMENT_ASSET_NAME,
-                    settings.PAYMENT_ASSET_SUPPLY,
-                )
+            # 2. Demo assets, kept across restarts so a part sold, a purchase or a Vault move does not
+            # split balances across asset ids. PEPE: a fresh lot once Wallet B holds none of it. USDT:
+            # kept even when Wallet A holds none (all of it moved to its Vault, say), since the rest
+            # of its supply is still out there and must keep its id to come back.
+            pepe_id = self._demo_asset(
+                "wallet_b", settings.DEMO_ASSET_TICKER, settings.DEMO_ASSET_NAME, settings.DEMO_ASSET_SUPPLY,
+            )
+            usdt_id = self._demo_asset(
+                "wallet_a", settings.PAYMENT_ASSET_TICKER, settings.PAYMENT_ASSET_NAME, settings.PAYMENT_ASSET_SUPPLY,
+                keep_empty=True,
+            )
 
             return {
                 "pepe_asset_id": pepe_id,
                 "usdt_asset_id": usdt_id,
             }
+
+    @staticmethod
+    def reusable_demo_asset(
+        assets: List[Dict[str, Any]], ticker: str, keep_empty: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Of a wallet's assets (get_balances()["assets"]), the one with this ticker it holds most of
+        (future balance; the newest on a tie). Only one it still holds some of, unless keep_empty:
+        then any it knows. None when there is none, so a new one must be issued.
+        """
+        known = [a for a in assets if a["ticker"] == ticker and (keep_empty or a["future"] > 0)]
+        return max(known, key=lambda a: (a["future"], a.get("added_at", 0)), default=None)
+
+    def _demo_asset(self, wallet_id: str, ticker: str, name: str, supply: int, keep_empty: bool = False) -> str:
+        """The demo asset `wallet_id` holds (with keep_empty, any it knows), or a new issue of `supply` on it."""
+        held = self.reusable_demo_asset(self.wallet_mgr.get_balances(wallet_id)["assets"], ticker, keep_empty)
+        if held:
+            logger.info(f"Reusing {ticker} {held['asset_id']}: {wallet_id} holds {held['future']}.")
+            return held["asset_id"]
+        logger.info(f"{wallet_id} has no {ticker} to reuse: issuing {supply} {ticker} on it...")
+        return self.wallet_mgr.issue_nia(wallet_id, ticker, name, supply)
 
     @staticmethod
     def _alloc_amount(allocation: Any) -> int:
@@ -340,17 +489,6 @@ class RgbSwapEngine:
             if a.asset_id == asset_id
         )
 
-    def _ensure_free_utxos(self, wallet: rgb_lib.Wallet, online: Any, count: int) -> None:
-        """At least `count` empty colorable UTXOs, so a blind receive never shares one."""
-        free = [
-            u for u in wallet.list_unspents(online, False, False)
-            if u.utxo.exists and u.utxo.colorable and not u.rgb_allocations and u.pending_blinded == 0
-        ]
-        if len(free) >= count:
-            return
-        wallet.create_utxos(online, False, count - len(free), ISOLATION_UTXO_SAT, FEE_RATE, False)
-        regtest.mine(1)
-
     def _ensure_isolated_allocation(
         self,
         wallet: rgb_lib.Wallet,
@@ -385,6 +523,9 @@ class RgbSwapEngine:
             )
         rest = total - exact_amount
         logger.info(f"{party}: isolating {exact_amount} {asset_id} on a new output (rest {rest} held back)...")
+        # The send needs an empty colorable UTXO of its own (else rgb-lib raises
+        # InsufficientAllocationSlots), besides the one the rest is parked on.
+        WalletManager.ensure_free_utxos(wallet, online, 2 if rest else 1)
         transport = self.proxy_url.replace("http://", "rpc://").replace("https://", "rpcs://")
         assignment = rgb_lib.Assignment.FUNGIBLE(exact_amount)
         exact_rcv = wallet.witness_receive(asset_id, assignment, None, [transport], 1)
@@ -395,7 +536,6 @@ class RgbSwapEngine:
             transport_endpoints=[transport],
         )]
         if rest:
-            self._ensure_free_utxos(wallet, online, 1)
             rest_assignment = rgb_lib.Assignment.FUNGIBLE(rest)
             rest_rcv = wallet.blind_receive(None, rest_assignment, None, [transport], 1)
             recipients.append(rgb_lib.Recipient(
@@ -474,9 +614,9 @@ class RgbSwapEngine:
 
             # Pre-flight: check both legs before anything moves on-chain (no self-send, no fees).
             if self.wallet_mgr.get_spendable(maker_wallet_id, canonical_terms.asset_id) < canonical_terms.rgb_amount:
-                raise RgbSwapEngineError("The seller no longer holds the agreed lot; settlement refused before any transfer.")
+                raise InsufficientFundsError("The seller no longer holds the agreed lot, so no funds moved.")
             if self.wallet_mgr.get_spendable(taker_wallet_id, canonical_terms.payment_asset_id) < canonical_terms.payment_amount:
-                raise RgbSwapEngineError("The buyer's balance does not cover the agreed price; settlement refused before any transfer.")
+                raise InsufficientFundsError("The buyer's balance no longer covers the agreed price, so no funds moved.")
 
             try:
                 txid, finalized = self._isolate_and_broadcast(

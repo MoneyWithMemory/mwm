@@ -3,7 +3,7 @@ MwM - Market & Pricing Engine
 Maintains current simulated market rates and dynamic P2P settlement prices.
 - USDT-RGB pegged at 1.00 USD
 - PEPE-RGB dynamically updated from the last settled P2P atomic swap (null before first trade)
-- Fixed simulated sats_per_usd rate for Bitcoin fee calculation
+- Fixed simulated sats_per_usd rate (settings.SATS_PER_USD) for every BTC valuation
 """
 
 from typing import Dict, List, Optional
@@ -19,15 +19,19 @@ class AssetPrice(BaseModel):
 
 class MarketState(BaseModel):
     mode: str = "fixed_simulated"
-    sats_per_usd: int = 1_000
+    sats_per_usd: int
     assets: List[AssetPrice]
 
 class MarketManager:
     def __init__(self) -> None:
-        self.sats_per_usd = 1_000
         self.last_pepe_price_usd: Optional[float] = None
         self.pepe_asset_id: Optional[str] = None
         self.usdt_asset_id: Optional[str] = None
+
+    @property
+    def sats_per_usd(self) -> int:
+        """The one BTC rate: the market shows it and every total_usd uses it."""
+        return settings.SATS_PER_USD
 
     def set_asset_ids(self, pepe_id: str, usdt_id: str) -> None:
         self.pepe_asset_id = pepe_id

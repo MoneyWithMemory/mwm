@@ -10,6 +10,8 @@ Features:
 - Perspective privacy masking: caller sees only their own my_private_thought
 - Enforces strict state transitions and 2/2 signature validation
 - In-memory thread-safe store with locking
+- Records in the memory graph each party that walks away from an agreed deal: it cancels it, or
+  does not sign before expiry while the other party did (detected when the session is next read)
 """
 
 import time
@@ -20,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from backend.qvac_negotiator import NegotiationTurn
 from backend.deterministic_gate import CanonicalSwapTerms
+from backend.memory_graph import MemoryGraph, memory_graph
 
 logger = logging.getLogger("mwm.session")
 
@@ -123,8 +126,6 @@ class Session(BaseModel):
         Ensures strict perspective masking: my_private_thought is only revealed
         for the requesting wallet's own turns, never for the counterparty.
         """
-        from backend.memory_graph import memory_graph
-
         is_buyer = viewer_wallet_id == self.buyer_wallet_id
         is_seller = viewer_wallet_id == self.seller_wallet_id
         my_role = "buyer" if is_buyer else ("seller" if is_seller else "buyer")
@@ -280,9 +281,23 @@ class Session(BaseModel):
 class SessionStore:
     """Thread-safe in-memory store for MwM negotiation and swap sessions."""
 
-    def __init__(self) -> None:
+    def __init__(self, memory: MemoryGraph) -> None:
         self._lock = threading.Lock()
         self._sessions: Dict[str, Session] = {}
+        # Where walked-away deals are recorded (they lower that party's reliability score).
+        self._memory = memory
+
+    def _expire_if_stale(self, session: Session) -> None:
+        """Terms past their expiry: EXPIRED. A party that left them unsigned while the other signed walked away."""
+        if session.status != SessionStatus.AWAITING_SIGNATURES or int(time.time()) <= session.expiry_unix:
+            return
+        session.status = SessionStatus.EXPIRED
+        if session.buyer_signed != session.seller_signed:
+            walker, other = (
+                (session.seller_wallet_id, session.buyer_wallet_id) if session.buyer_signed
+                else (session.buyer_wallet_id, session.seller_wallet_id)
+            )
+            self._memory.record_walk_away(session.session_id, walker, other, "unsigned_at_expiry")
 
     def create_session(
         self,
@@ -340,6 +355,7 @@ class SessionStore:
         with self._lock:
             res: List[Session] = []
             for s in self._sessions.values():
+                self._expire_if_stale(s)
                 if wallet_id in (s.buyer_wallet_id, s.seller_wallet_id, s.buyer_address, s.seller_address):
                     res.append(s)
             res.sort(key=lambda x: x.created_at_unix, reverse=True)
@@ -348,9 +364,8 @@ class SessionStore:
     def get_session(self, session_id: str) -> Optional[Session]:
         with self._lock:
             session = self._sessions.get(session_id)
-            if session and session.status == SessionStatus.AWAITING_SIGNATURES:
-                if int(time.time()) > session.expiry_unix:
-                    session.status = SessionStatus.EXPIRED
+            if session:
+                self._expire_if_stale(session)
             return session
 
     def record_turn(self, session_id: str, turn: NegotiationTurn) -> Session:
@@ -398,6 +413,7 @@ class SessionStore:
         """
         with self._lock:
             session = self._sessions[session_id]
+            self._expire_if_stale(session)
             if session.status != SessionStatus.AWAITING_SIGNATURES:
                 raise ValueError(f"Cannot sign session in state {session.status}")
 
@@ -429,13 +445,23 @@ class SessionStore:
             return session, started
 
     def cancel_session(self, session_id: str, cancelled_by: str) -> Session:
+        """Cancel; after an agreement (AWAITING_SIGNATURES) the cancelling party walked away from it."""
         with self._lock:
             session = self._sessions[session_id]
+            self._expire_if_stale(session)
             if session.status not in (SessionStatus.NEGOTIATING, SessionStatus.AWAITING_SIGNATURES):
                 raise ValueError(f"Cannot cancel session {session_id} in state {session.status}")
+            agreed = session.status == SessionStatus.AWAITING_SIGNATURES
             session.status = SessionStatus.CANCELLED_BY_USER
             session.updated_at_unix = int(time.time())
             logger.info(f"Session {session_id} cancelled by {cancelled_by}")
+            if agreed:
+                by_buyer = cancelled_by in (session.buyer_wallet_id, session.buyer_address)
+                walker, other = (
+                    (session.buyer_wallet_id, session.seller_wallet_id) if by_buyer
+                    else (session.seller_wallet_id, session.buyer_wallet_id)
+                )
+                self._memory.record_walk_away(session_id, walker, other, "cancelled_after_agreement")
             return session
 
     def update_settlement_progress(self, session_id: str, step: int, message: str) -> None:
@@ -497,4 +523,4 @@ class SessionStore:
             return session
 
 # Global session store instance
-session_store = SessionStore()
+session_store = SessionStore(memory_graph)

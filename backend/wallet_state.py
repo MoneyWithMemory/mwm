@@ -42,8 +42,8 @@ class HistoryPoint(BaseModel):
 class ActivityItem(BaseModel):
     id: str
     t: int
-    kind: str  # "swap" | "receive" | "issue"
-    direction: str  # "in" | "out"
+    kind: str  # "swap" | "receive" | "issue" | "vault"
+    direction: str  # "in" | "out" ("vault": out = to the Vault, in = from it)
     asset: AssetRef
     amount: int
     counterparty_address: Optional[str] = None
@@ -139,6 +139,8 @@ class WalletStateManager:
             buyer_max_ceiling_usd=140,
             buyer_target_usd=120,
             buyer_ai_prompt="",
+            # The demo sells part of this lot; profiles live in RAM, so the consent is seeded.
+            allow_partial=True,
         )
         self._aliases["wallet_b"] = {}
         self._activities["wallet_b"] = []
@@ -174,58 +176,57 @@ class WalletStateManager:
         ]
         self._cost_basis["wallet_sybil"] = {"btc": None, "rgb:usdt_nia": 1.0, "rgb:pepe_nia": None}
 
-    def sync_demo_assets(self, pepe_id: str, usdt_id: str) -> None:
-        """Update demo asset IDs across profiles, cost basis, and history."""
+    def sync_demo_assets(
+        self, pepe_id: str, usdt_id: str, holdings: Optional[Dict[str, Optional[Dict[str, int]]]] = None,
+    ) -> None:
+        """
+        Update demo asset IDs across profiles, cost basis, and history. Each seed history point is
+        what the wallet holds now (`holdings`: wallet_id -> {"btc": sats, asset_id: amount}), since a
+        restart keeps demo assets their holders may hold only part of. A wallet missing from
+        `holdings` starts from the seed amounts.
+        """
         self._profiles["wallet_b"].offered_asset_id = pepe_id
         self._profiles["wallet_sybil"].offered_asset_id = pepe_id
 
-        # Update initial seed points with real asset IDs and BTC valuation at sats_per_usd
-        sats_per_usd = settings.SATS_PER_USD or 1000
-        btc_a = SEED_WALLETS["wallet_a"].initial_btc_sats
-        btc_b = SEED_WALLETS["wallet_b"].initial_btc_sats
-        btc_sybil = SEED_WALLETS["wallet_sybil"].initial_btc_sats
-        self._history["wallet_a"] = [
-            HistoryPoint(
-                t=int(time.time()) - 3600,
-                balances={"btc": btc_a, usdt_id: 10_000, pepe_id: 0},
-                total_usd=round(btc_a / sats_per_usd + 10_000.0, 2),
+        seeded = {
+            "wallet_a": {usdt_id: 10_000, pepe_id: 0},
+            "wallet_b": {pepe_id: 1_000_000, usdt_id: 0},
+            "wallet_sybil": {pepe_id: 0, usdt_id: 0},
+        }
+        for wallet_id, amounts in seeded.items():
+            held = (holdings or {}).get(wallet_id)
+            balances = (
+                {"btc": SEED_WALLETS[wallet_id].initial_btc_sats, **amounts}
+                if held is None
+                else {"btc": held.get("btc", 0), pepe_id: held.get(pepe_id, 0), usdt_id: held.get(usdt_id, 0)}
             )
-        ]
-        self._cost_basis["wallet_a"] = {"btc": None, usdt_id: 1.0, pepe_id: None}
+            # BTC at sats_per_usd and USDT at 1.00; PEPE has no price before the first swap.
+            total_usd = balances["btc"] / market_manager.sats_per_usd + balances[usdt_id]
+            self._history[wallet_id] = [
+                HistoryPoint(t=int(time.time()) - 3600, balances=balances, total_usd=round(total_usd, 2))
+            ]
+            self._cost_basis[wallet_id] = {"btc": None, usdt_id: 1.0, pepe_id: None}
 
-        self._history["wallet_b"] = [
-            HistoryPoint(
-                t=int(time.time()) - 3600,
-                balances={"btc": btc_b, pepe_id: 1_000_000, usdt_id: 0},
-                total_usd=round(btc_b / sats_per_usd + 0.0, 2),
-            )
-        ]
-        self._cost_basis["wallet_b"] = {"btc": None, usdt_id: 1.0, pepe_id: None}
-
-        self._history["wallet_sybil"] = [
-            HistoryPoint(
-                t=int(time.time()) - 3600,
-                balances={"btc": btc_sybil, pepe_id: 0, usdt_id: 0},
-                total_usd=round(btc_sybil / sats_per_usd + 0.0, 2),
-            )
-        ]
-        self._cost_basis["wallet_sybil"] = {"btc": None, usdt_id: 1.0, pepe_id: None}
+    @staticmethod
+    def _new_profile() -> AgentProfile:
+        """A new wallet's profile: no Seller Desk, default buyer limits."""
+        return AgentProfile(
+            seller_active=False,
+            offered_asset_id=None,
+            offered_amount=0,
+            asking_price_usd=100,
+            secret_min_reserve_usd=80,
+            seller_ai_prompt="",
+            buyer_max_ceiling_usd=100,
+            buyer_target_usd=80,
+            buyer_ai_prompt="",
+        )
 
     def register_wallet(self, wallet_id: str, label: str, address: str) -> None:
         self._labels[wallet_id] = label
         self._addresses[wallet_id] = address
         if wallet_id not in self._profiles:
-            self._profiles[wallet_id] = AgentProfile(
-                seller_active=False,
-                offered_asset_id=None,
-                offered_amount=0,
-                asking_price_usd=100,
-                secret_min_reserve_usd=80,
-                seller_ai_prompt="",
-                buyer_max_ceiling_usd=100,
-                buyer_target_usd=80,
-                buyer_ai_prompt="",
-            )
+            self._profiles[wallet_id] = self._new_profile()
         if wallet_id not in self._aliases:
             self._aliases[wallet_id] = {}
         if wallet_id not in self._activities:
@@ -248,9 +249,12 @@ class WalletStateManager:
         return None
 
     def get_profile(self, wallet_id: str) -> AgentProfile:
-        if wallet_id not in self._profiles:
-            self.register_wallet(wallet_id, f"Wallet {wallet_id[:8]}", "")
-        return self._profiles[wallet_id]
+        """
+        The wallet's agent profile. Reading registers nothing: a wallet this process does not know,
+        such as a memory-graph peer after a restart, has a new wallet's profile (no desk).
+        """
+        profile = self._profiles.get(wallet_id)
+        return profile if profile is not None else self._new_profile()
 
     def update_profile(self, wallet_id: str, updates: Dict[str, Any]) -> AgentProfile:
         profile = self.get_profile(wallet_id)
@@ -271,8 +275,23 @@ class WalletStateManager:
         profile = self._profiles.get(wallet_id)
         if not profile or profile.offered_asset_id != asset_id or profile.offered_amount <= 0:
             return
+        self._shrink_lot(wallet_id, profile, profile.offered_amount - amount, f"after a sale of {amount}")
+
+    def fit_lot(self, wallet_id: str, asset_id: str, held: int) -> None:
+        """
+        A desk lot above what the wallet holds shrinks to it, as after a sale: the seed lists the
+        whole lot at every start, while part of it may have been sold or moved to the Vault.
+        """
+        profile = self._profiles.get(wallet_id)
+        if not profile or profile.offered_asset_id != asset_id or held >= profile.offered_amount:
+            return
+        self._shrink_lot(wallet_id, profile, held, f"to fit the {held} held")
+
+    @staticmethod
+    def _shrink_lot(wallet_id: str, profile: AgentProfile, left: int, why: str) -> None:
+        """The lot becomes `left`, at the same unit prices; an empty lot switches the desk off."""
         lot = profile.offered_amount
-        left = max(lot - amount, 0)
+        left = max(left, 0)
         if left == 0:
             profile.seller_active = False
             profile.offered_amount = 0
@@ -284,7 +303,7 @@ class WalletStateManager:
                 int(math.floor(profile.secret_min_reserve_usd * share + 0.5)),
                 profile.asking_price_usd,
             )
-        logger.info(f"{wallet_id}: desk lot {lot} -> {profile.offered_amount} after a sale of {amount}")
+        logger.info(f"{wallet_id}: desk lot {lot} -> {profile.offered_amount} {why}")
 
     def get_aliases(self, wallet_id: str) -> Dict[str, str]:
         return self._aliases.get(wallet_id, {})
@@ -387,7 +406,7 @@ class WalletStateManager:
         self._cost_basis[buyer_wallet_id][asset_id] = unit_pepe_price
 
         # 5. Append new HistoryPoint for Buyer and Seller
-        sats_per_usd = settings.SATS_PER_USD or 1000
+        sats_per_usd = market_manager.sats_per_usd
 
         # Buyer history point
         if buyer_wallet_id in self._history and self._history[buyer_wallet_id]:
@@ -421,6 +440,49 @@ class WalletStateManager:
                 total_usd=round(btc_usd + usdt_usd + pepe_usd, 2)
             ))
 
+    def record_vault_move(
+        self,
+        wallet_id: str,
+        direction: str,
+        asset_id: str,
+        asset_ticker: str,
+        amount: int,
+        txid: Optional[str],
+        btc_sats: Optional[int] = None,
+    ) -> None:
+        """
+        A move between the wallet and its own Vault ("out" = to the Vault, "in" = from it): an
+        activity item with no counterparty and a history point with the new balances. Nothing
+        else about the Vault is kept, and the memory graph never sees the move.
+        """
+        now = int(time.time())
+        self._activities.setdefault(wallet_id, []).insert(0, ActivityItem(
+            id=f"act_{uuid.uuid4().hex[:8]}",
+            t=now,
+            kind="vault",
+            direction=direction,
+            asset=AssetRef(asset_id=asset_id, ticker=asset_ticker, schema="NIA", precision=0),
+            amount=amount,
+            txid=txid,
+            status="confirmed",
+        ))
+
+        history = self._history.get(wallet_id)
+        if not history:
+            return
+        balances = dict(history[-1].balances)
+        if btc_sats is not None:
+            balances["btc"] = btc_sats
+        balances[asset_id] = max(0, balances.get(asset_id, 0) + (amount if direction == "in" else -amount))
+        pepe_id = market_manager.pepe_asset_id or settings.DEMO_ASSET_ID
+        usdt_id = market_manager.usdt_asset_id or settings.PAYMENT_ASSET_ID
+        total_usd = (
+            balances.get("btc", 0) / market_manager.sats_per_usd
+            + balances.get(usdt_id, 0)
+            + balances.get(pepe_id, 0) * (market_manager.last_pepe_price_usd or 0.0)
+        )
+        history.append(HistoryPoint(t=now, balances=balances, total_usd=round(total_usd, 2)))
+
     def assemble_wallet_state(self, wallet_id: str, balance_data: Dict[str, Any]) -> WalletState:
         address = balance_data.get("address", self._addresses.get(wallet_id, ""))
         label = self._labels.get(wallet_id, f"Wallet {wallet_id[:8]}")
@@ -449,6 +511,10 @@ class WalletStateManager:
             ticker = nia["ticker"]
             amt = nia.get("spendable", nia.get("settled", 0))
             balances_map[aid] = amt
+            # Listed only while held (sold out or all in the Vault: no row); one that a transfer
+            # makes unspendable for a moment still is.
+            if nia.get("future", amt) <= 0:
+                continue
             assets.append(AssetBalance(
                 asset_id=aid,
                 ticker=ticker,
@@ -459,7 +525,7 @@ class WalletStateManager:
 
         # Total USD: BTC (sats / sats_per_usd) + USDT + PEPE (if settled and priced)
         btc_sats = balances_map.get("btc", 0)
-        sats_per_usd = settings.SATS_PER_USD or 1000
+        sats_per_usd = market_manager.sats_per_usd
         btc_usd = float(btc_sats) / float(sats_per_usd)
         total_usd = btc_usd + float(balances_map.get(usdt_id, 0))
         if market_manager.last_pepe_price_usd and balances_map.get(pepe_id, 0) > 0:

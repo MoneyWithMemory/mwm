@@ -35,13 +35,17 @@ class Settings(BaseModel):
     ELECTRUM_URL: str = Field(default_factory=lambda: os.getenv("ELECTRUM_URL", "127.0.0.1:50001"))
     PROXY_URL: str = Field(default_factory=lambda: os.getenv("PROXY_URL", "http://127.0.0.1:3000/json-rpc"))
 
+    # Vault: the self-custodial Node service (Tether WDK) bound to each AI wallet
+    VAULT_URL: str = Field(default_factory=lambda: os.getenv("VAULT_URL", "http://127.0.0.1:8200"))
+    VAULT_TIMEOUT: int = Field(default_factory=lambda: int(os.getenv("VAULT_TIMEOUT", "30")))
+
     # Storage & Persistence
     MWM_DATA_DIR: str = Field(
         default_factory=lambda: os.getenv("MWM_DATA_DIR", str(Path.home() / ".mwm" / "data"))
     )
 
-    # Market Simulation (1 sat = 0.001 USD -> 1 BTC = $100,000)
-    SATS_PER_USD: int = Field(default_factory=lambda: int(os.getenv("SATS_PER_USD", "1000")))
+    # Market Simulation (1 sat = 0.001 USD -> 1 BTC = $100,000); a rate of 0 or less fails at startup
+    SATS_PER_USD: int = Field(default_factory=lambda: int(os.getenv("SATS_PER_USD", "1000")), gt=0, validate_default=True)
 
     # Demo Assets (PEPE-RGB NIA <-> USDT-RGB NIA)
     DEMO_ASSET_TICKER: str = "PEPE"

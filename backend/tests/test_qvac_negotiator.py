@@ -7,9 +7,13 @@ from backend.qvac_negotiator import (
     leak_guard,
     rationality_guard,
     parse_llm_json_response,
+    ConcessionPace,
     NegotiationContext,
     QvacNegotiator,
 )
+
+# The fastest secret pace (half of the room, a 1 USD margin): the guard's numbers below follow from it.
+FASTEST = ConcessionPace(share_pct=50, margin_usd=1)
 
 def test_leak_guard_integer_detection():
     secret_reserve = 110
@@ -31,7 +35,8 @@ def test_leak_guard_integer_detection():
     assert has_leak is True
 
 def test_rationality_guard_buyer_clamp():
-    # Buyer attempts to bid higher than max budget (135)
+    # Buyer attempts to bid higher than max budget (135): clamped to it, then, before the closing
+    # rounds, capped at half of the 24 USD left from its last bid to its hold line (134).
     action, offer = rationality_guard(
         role="buyer",
         raw_action="OFFER",
@@ -41,9 +46,12 @@ def test_rationality_guard_buyer_clamp():
         current_ask_usd=140,
         your_previous_offer_usd=110,
         round_number=2,
+        pace=FASTEST,
     )
-    assert offer == 135
+    assert offer == 122
     assert action == "OFFER"
+    # In a closing round the ceiling itself may be bid.
+    assert rationality_guard("buyer", "OFFER", 145, 135, 110, 140, 110, 9, max_rounds=10, pace=FASTEST) == ("OFFER", 135)
 
     # Buyer attempts to lower bid
     action, offer = rationality_guard(
@@ -55,6 +63,7 @@ def test_rationality_guard_buyer_clamp():
         current_ask_usd=130,
         your_previous_offer_usd=115,
         round_number=3,
+        pace=FASTEST,
     )
     assert offer == 117  # raised to the previous bid, then the minimum step
 
@@ -68,12 +77,14 @@ def test_rationality_guard_buyer_clamp():
         current_ask_usd=125,
         your_previous_offer_usd=122,
         round_number=3,
+        pace=FASTEST,
     )
     assert action == "ACCEPT"
     assert offer == 125
 
 def test_rationality_guard_seller_clamp():
-    # Seller attempts to ask below reserve (110)
+    # Seller attempts to ask below reserve (110): clamped to it, then, before the closing rounds,
+    # capped at half of the 19 USD left from its last ask to its hold line (111), rounded down.
     action, offer = rationality_guard(
         role="seller",
         raw_action="OFFER",
@@ -83,9 +94,12 @@ def test_rationality_guard_seller_clamp():
         current_ask_usd=130,
         your_previous_offer_usd=130,
         round_number=2,
+        pace=FASTEST,
     )
-    assert offer == 110
+    assert offer == 121
     assert action == "OFFER"
+    # In a closing round the reserve itself may be asked.
+    assert rationality_guard("seller", "OFFER", 90, 110, 100, 130, 130, 9, max_rounds=10, pace=FASTEST) == ("OFFER", 110)
 
     # Seller attempts to raise ask
     action, offer = rationality_guard(
@@ -97,6 +111,7 @@ def test_rationality_guard_seller_clamp():
         current_ask_usd=130,
         your_previous_offer_usd=130,
         round_number=3,
+        pace=FASTEST,
     )
     assert offer == 126  # lowered to the previous ask, then 15% of the 30 USD gap
 
@@ -110,6 +125,7 @@ def test_rationality_guard_seller_clamp():
         current_ask_usd=123,
         your_previous_offer_usd=123,
         round_number=3,
+        pace=FASTEST,
     )
     assert action == "ACCEPT"
     assert offer == 120
@@ -149,11 +165,14 @@ def test_full_four_round_mock_negotiation_convergence():
     agreed = False
     agreed_price = None
 
+    # Four rounds at most: rounds 3 and 4 are the closing rounds, where the guard lets an agent
+    # reach its limit (before them every concession is capped).
     for round_num in range(1, 5):
         # 1. Buyer Turn
         buyer_ctx = NegotiationContext(
             session_id="test_sess",
             round_number=round_num,
+            max_rounds=4,
             role="buyer",
             wallet_id="wallet_a",
             wallet_label="Wallet A",
@@ -183,6 +202,7 @@ def test_full_four_round_mock_negotiation_convergence():
         seller_ctx = NegotiationContext(
             session_id="test_sess",
             round_number=round_num,
+            max_rounds=4,
             role="seller",
             wallet_id="wallet_b",
             wallet_label="Wallet B",
@@ -218,6 +238,26 @@ def test_full_four_round_mock_negotiation_convergence():
         assert str(buyer_budget) not in turn.public_message or "budget" not in turn.public_message.lower()
 
 
+def test_mock_buyer_takes_an_ask_within_its_target_without_quoting_the_target():
+    # A part of a lot can list below the buyer's target: the mock buyer accepts the ask in round 1,
+    # and its public message never names the secret target it did not offer.
+    negotiator = QvacNegotiator()
+    negotiator.use_mock = True
+
+    def first_turn(ask):
+        return negotiator.generate_turn(NegotiationContext(
+            session_id="test_low_ask", round_number=1, role="buyer", wallet_id="wallet_a", wallet_label="Wallet A",
+            counterparty_wallet_id="wallet_b", counterparty_label="Wallet B", asset_ticker="PEPE", asset_amount=400_000,
+            payment_ticker="USDT", secret_limit_usd=135, buyer_target_usd=120, current_ask_usd=ask, list_price_usd=ask,
+        ))
+
+    turn = first_turn(60)
+    assert (turn.action, turn.offer_usd, turn.public_message) == ("ACCEPT", 60, "Your ask of 60 USDT is acceptable.")
+    # Above the target the buyer still opens at it: then the target is its public bid.
+    turn = first_turn(150)
+    assert (turn.action, turn.offer_usd) == ("OFFER", 120) and "120" in turn.public_message
+
+
 def test_coerce_offer_usd():
     from backend.qvac_negotiator import coerce_offer_usd
 
@@ -225,26 +265,29 @@ def test_coerce_offer_usd():
     assert coerce_offer_usd(129.6) == 130
     assert coerce_offer_usd("$130") == 130
     assert coerce_offer_usd("130 USDT") == 130
-    for bad in (None, True, "", "about 130", "130-140", 0, -5):
+    for bad in (None, True, "", "about 130", "130-140", 0, -5, 0.4):
+        assert coerce_offer_usd(bad) is None
+    # json.loads reads Infinity, NaN and 1e309: never an offer, never an OverflowError.
+    for bad in (float("inf"), float("-inf"), float("nan"), "9" * 400):
         assert coerce_offer_usd(bad) is None
 
 
 def test_accept_is_recorded_at_the_counterparty_price():
     # Buyer says ACCEPT with its own lower number: the round must show the seller's ask.
-    assert rationality_guard("buyer", "ACCEPT", 120, 135, 125, 128, 125, 3) == ("ACCEPT", 128)
+    assert rationality_guard("buyer", "ACCEPT", 120, 135, 125, 128, 125, 3, pace=FASTEST) == ("ACCEPT", 128)
     # Buyer cannot accept an ask above its ceiling: the ACCEPT becomes an OFFER.
-    assert rationality_guard("buyer", "ACCEPT", 120, 135, 115, 140, 115, 3) == ("OFFER", 120)
+    assert rationality_guard("buyer", "ACCEPT", 120, 135, 115, 140, 115, 3, pace=FASTEST) == ("OFFER", 120)
     # Seller cannot accept a bid below its reserve.
-    assert rationality_guard("seller", "ACCEPT", 130, 110, 100, 135, 135, 3) == ("OFFER", 130)
+    assert rationality_guard("seller", "ACCEPT", 130, 110, 100, 135, 135, 3, pace=FASTEST) == ("OFFER", 130)
 
 
 def test_seller_closes_an_in_range_bid_on_the_final_turn():
-    assert rationality_guard("seller", "OFFER", 128, 110, 124, 132, 132, 4, max_rounds=4) == ("ACCEPT", 124)
-    assert rationality_guard("seller", "OFFER", 128, 110, 124, 132, 132, 3, max_rounds=4) == ("OFFER", 128)
-    assert rationality_guard("seller", "OFFER", 128, 110, 105, 132, 132, 4, max_rounds=4) == ("OFFER", 128)
+    assert rationality_guard("seller", "OFFER", 128, 110, 124, 132, 132, 4, max_rounds=4, pace=FASTEST) == ("ACCEPT", 124)
+    assert rationality_guard("seller", "OFFER", 128, 110, 124, 132, 132, 3, max_rounds=4, pace=FASTEST) == ("OFFER", 128)
+    assert rationality_guard("seller", "OFFER", 128, 110, 105, 132, 132, 4, max_rounds=4, pace=FASTEST) == ("OFFER", 128)
     # With a cap of 10, round 4 is not the last turn any more.
-    assert rationality_guard("seller", "OFFER", 128, 110, 124, 132, 132, 4, max_rounds=10) == ("OFFER", 128)
-    assert rationality_guard("seller", "OFFER", 128, 110, 124, 132, 132, 10, max_rounds=10) == ("ACCEPT", 124)
+    assert rationality_guard("seller", "OFFER", 128, 110, 124, 132, 132, 4, max_rounds=10, pace=FASTEST) == ("OFFER", 128)
+    assert rationality_guard("seller", "OFFER", 128, 110, 124, 132, 132, 10, max_rounds=10, pace=FASTEST) == ("ACCEPT", 124)
 
 
 def test_missing_offer_from_model_never_publishes_the_secret(monkeypatch):
@@ -281,19 +324,22 @@ def test_missing_offer_from_model_never_publishes_the_secret(monkeypatch):
 
 def test_no_early_capitulation_far_from_own_last_offer():
     # Round 1: the seller (list price 150) tries to take a 120 bid -> counters 150 - 30/4 instead.
-    assert rationality_guard("seller", "ACCEPT", 120, 110, 120, 150, 150, 1, max_rounds=10) == ("OFFER", 142)
+    assert rationality_guard("seller", "ACCEPT", 120, 110, 120, 150, 150, 1, max_rounds=10, pace=FASTEST) == ("OFFER", 142)
     # Same move in a closing round is honoured.
-    assert rationality_guard("seller", "ACCEPT", 120, 110, 120, 150, 150, 9, max_rounds=10) == ("ACCEPT", 120)
+    assert rationality_guard("seller", "ACCEPT", 120, 110, 120, 150, 150, 9, max_rounds=10, pace=FASTEST) == ("ACCEPT", 120)
     # The buyer jumping from 115 to a 140 ask counts too, and never passes its ceiling.
-    assert rationality_guard("buyer", "ACCEPT", 140, 135, 115, 135, 115, 2, max_rounds=10) == ("OFFER", 120)
+    assert rationality_guard("buyer", "ACCEPT", 140, 135, 115, 135, 115, 2, max_rounds=10, pace=FASTEST) == ("OFFER", 120)
     # Within a small gap the counterparty's price is taken.
-    assert rationality_guard("seller", "ACCEPT", 127, 110, 127, 130, 130, 3, max_rounds=10) == ("ACCEPT", 127)
+    assert rationality_guard("seller", "ACCEPT", 127, 110, 127, 130, 130, 3, max_rounds=10, pace=FASTEST) == ("ACCEPT", 127)
 
 
 def test_offers_always_move_towards_each_other():
     # A seller repeating its ask is moved down by the minimum step (but not in its opening round).
-    assert rationality_guard("seller", "OFFER", 140, 110, 125, 140, 140, 3, max_rounds=10) == ("OFFER", 138)
-    assert rationality_guard("seller", "OFFER", 150, 110, 120, 150, 150, 1, max_rounds=10) == ("OFFER", 150)
-    # Never below the reserve, never above the ceiling.
-    assert rationality_guard("seller", "OFFER", 111, 110, 100, 111, 111, 3, max_rounds=10) == ("OFFER", 110)
-    assert rationality_guard("buyer", "OFFER", 134, 135, 134, 150, 134, 3, max_rounds=10) == ("OFFER", 135)
+    assert rationality_guard("seller", "OFFER", 140, 110, 125, 140, 140, 3, max_rounds=10, pace=FASTEST) == ("OFFER", 138)
+    assert rationality_guard("seller", "OFFER", 150, 110, 120, 150, 150, 1, max_rounds=10, pace=FASTEST) == ("OFFER", 150)
+    # Never below the reserve, never above the ceiling: 1 USD from its limit an offer stays put
+    # until the closing rounds, where the limit itself may be offered.
+    assert rationality_guard("seller", "OFFER", 111, 110, 100, 111, 111, 3, max_rounds=10, pace=FASTEST) == ("OFFER", 111)
+    assert rationality_guard("seller", "OFFER", 111, 110, 100, 111, 111, 9, max_rounds=10, pace=FASTEST) == ("OFFER", 110)
+    assert rationality_guard("buyer", "OFFER", 134, 135, 134, 150, 134, 3, max_rounds=10, pace=FASTEST) == ("OFFER", 134)
+    assert rationality_guard("buyer", "OFFER", 134, 135, 134, 150, 134, 9, max_rounds=10, pace=FASTEST) == ("OFFER", 135)

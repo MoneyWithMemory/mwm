@@ -1,7 +1,7 @@
 """
 MwM - Deterministic Pre-Signing Gate & Canonical Swap Terms
 Enforces strict pre-signature checks before any cryptographic or on-chain settlement:
-1. Counterparty trust & wash-trading ring anomaly check
+1. Counterparty trust check: only "High Authenticity" passes (rings, Low Reliability and Unverified block)
 2. Secret limit enforcement (buyer ceiling, seller reserve)
 3. Positive integer validation
 4. Canonical SHA-256 terms_hash generation matching Drop 1 contract
@@ -11,7 +11,7 @@ import json
 import hashlib
 from typing import Any, Dict, Optional, Union
 from pydantic import BaseModel, Field
-from backend.memory_graph import memory_graph, TrustTier
+from backend.memory_graph import memory_graph
 
 class CanonicalSwapTerms(BaseModel):
     session_id: str
@@ -29,6 +29,7 @@ class GateResult(BaseModel):
     passed: bool
     reason: Optional[str] = None
     block_state: Optional[str] = None  # e.g., "BLOCKED_BY_GATE"
+    trust_tier: Optional[str] = None  # the counterparty's tier, when it is what blocked the gate
     terms: Optional[Dict[str, Any]] = None
     terms_hash: Optional[str] = None
 
@@ -66,11 +67,12 @@ def evaluate_gate(
         seller_address if active_signer_address == buyer_address else buyer_address
     )
     reputation = memory_graph.get_reputation(target_peer)
-    if reputation.trust_tier == TrustTier.RING_ANOMALY:
+    if not reputation.is_trusted:
         return GateResult(
             passed=False,
-            reason=f"Gate blocked: counterparty {target_peer} is flagged with {TrustTier.RING_ANOMALY}",
+            reason=f"Gate blocked: counterparty {target_peer} is flagged with {reputation.trust_tier}",
             block_state="BLOCKED_BY_GATE",
+            trust_tier=reputation.trust_tier,
         )
 
     # 2. Positive Integer Checks

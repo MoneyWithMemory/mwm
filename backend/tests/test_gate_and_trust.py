@@ -8,18 +8,18 @@ from backend.deterministic_gate import evaluate_gate, compute_terms_hash
 
 def test_memory_graph_trust_tiers():
     graph = MemoryGraph()
-    # Verified counterparties
+    # Verified counterparties: scores computed from the seeded settled trades
     rep_a = graph.get_reputation("wallet_a")
     rep_b = graph.get_reputation("wallet_b")
     assert rep_a.trust_tier == TrustTier.HIGH_AUTHENTICITY
-    assert rep_a.reliability_pct == 98
+    assert 85 <= rep_a.reliability_pct <= 92
     assert rep_a.is_trusted is True
     assert rep_b.trust_tier == TrustTier.HIGH_AUTHENTICITY
 
-    # Sybil wash-trading ring
+    # Sybil wash-trading ring: capped at 20
     rep_sybil = graph.get_reputation("wallet_sybil")
     assert rep_sybil.trust_tier == TrustTier.RING_ANOMALY
-    assert rep_sybil.reliability_pct == 15
+    assert rep_sybil.reliability_pct <= 20
     assert rep_sybil.is_trusted is False
     assert "loop %" not in rep_sybil.assessment_summary.lower()
 

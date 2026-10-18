@@ -22,6 +22,11 @@ Key Endpoints:
 - POST /api/shop/wants
 - POST /api/shop/{listing_id}/close
 - POST /api/shop/agent_search
+- POST /api/wallets/{wallet_id}/receive_invoice
+- POST /api/wallets/{wallet_id}/refresh
+- POST /api/wallets/{wallet_id}/move_to_vault
+- GET  /api/wallets/{wallet_id}/advice
+- POST /api/wallets/{wallet_id}/ask
 """
 
 import math
@@ -29,7 +34,7 @@ import time
 import uuid
 import logging
 import threading
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request, Query, status
@@ -49,7 +54,7 @@ from backend.deterministic_gate import (
 )
 from backend.qvac_negotiator import negotiator, NegotiationContext
 from backend.session_store import session_store, SessionStatus
-from backend.rgb_swap_engine import RgbSwapEngine, WalletManager
+from backend.rgb_swap_engine import InsufficientFundsError, RgbSwapEngine, WalletManager
 from backend.market import market_manager
 from backend.shop import shop_store, Want
 from backend.negotiation_queue import NegotiationQueue
@@ -91,7 +96,13 @@ async def lifespan(app: FastAPI):
         settings.PAYMENT_ASSET_ID = assets["usdt_asset_id"]
         settings.DEMO_ASSET_ID = assets["pepe_asset_id"]
         market_manager.set_asset_ids(assets["pepe_asset_id"], assets["usdt_asset_id"])
-        wallet_state_manager.sync_demo_assets(assets["pepe_asset_id"], assets["usdt_asset_id"])
+        # Kept assets can be held in any amount: the history and Wallet B's desk lot start from
+        # what each wallet holds, not from the seeded supply.
+        holdings = {wid: _holdings(wid) for wid in SEED_WALLETS}
+        wallet_state_manager.sync_demo_assets(assets["pepe_asset_id"], assets["usdt_asset_id"], holdings)
+        if holdings["wallet_b"] is not None:
+            pepe_held = holdings["wallet_b"].get(assets["pepe_asset_id"], 0)
+            wallet_state_manager.fit_lot("wallet_b", assets["pepe_asset_id"], pepe_held)
         shop_store.seed_demo_wants(assets["pepe_asset_id"])
         logger.info(f"Demo environment ready: PEPE={assets['pepe_asset_id'][:12]}... USDT={assets['usdt_asset_id'][:12]}...")
     except Exception as exc:
@@ -316,6 +327,8 @@ def set_alias(wallet_id: str, req: SetAliasRequest):
 
 @app.put("/api/wallets/{wallet_id}/agent_profile")
 def update_agent_profile(wallet_id: str, req: UpdateAgentProfileRequest):
+    # Only a wallet set up here or by POST /api/wallets/create has a desk: never a graph-only peer.
+    _require_wallet(wallet_id)
     updates = req.model_dump(exclude_unset=True)
     merged = {**wallet_state_manager.get_profile(wallet_id).model_dump(), **{k: v for k, v in updates.items() if v is not None}}
     # The asking price is the public list price, so the secret floor cannot sit above it.
@@ -424,6 +437,9 @@ def run_negotiation_loop(session_id: str) -> None:
     offers_per_round: List[Tuple[int, int]] = []
     buyer_label = wallet_state_manager._labels.get(session.buyer_wallet_id, "Buyer")
     seller_label = wallet_state_manager._labels.get(session.seller_wallet_id, "Seller")
+    # Each agent sees the other side's computed reliability (never its limits or trade counts).
+    buyer_rep = memory_graph.get_reputation(session.buyer_wallet_id)
+    seller_rep = memory_graph.get_reputation(session.seller_wallet_id)
     logger.info(f"Starting autonomous negotiation loop for session {session_id} (max {max_rounds} rounds)...")
 
     for r_num in range(1, max_rounds + 1):
@@ -456,6 +472,8 @@ def run_negotiation_loop(session_id: str) -> None:
             wallet_label=buyer_label,
             counterparty_wallet_id=session.seller_wallet_id,
             counterparty_label=seller_label,
+            counterparty_reliability_pct=seller_rep.reliability_pct,
+            counterparty_trust_tier=seller_rep.trust_tier,
             asset_ticker=session.asset_ticker,
             asset_amount=session.asset_amount,
             payment_ticker=session.payment_ticker,
@@ -504,6 +522,8 @@ def run_negotiation_loop(session_id: str) -> None:
             wallet_label=seller_label,
             counterparty_wallet_id=session.buyer_wallet_id,
             counterparty_label=buyer_label,
+            counterparty_reliability_pct=buyer_rep.reliability_pct,
+            counterparty_trust_tier=buyer_rep.trust_tier,
             asset_ticker=session.asset_ticker,
             asset_amount=session.asset_amount,
             payment_ticker=session.payment_ticker,
@@ -593,8 +613,11 @@ def finalize_agreement(session_id: str, agreed_price_usd: int) -> None:
         logger.warning(f"Session {session_id} agreement blocked by gate: {gate_res.reason}")
         session_store.set_blocked(
             session_id,
-            reason="Agreed price outside the secret limits",
-            trust_tier="High Authenticity",
+            reason=(
+                f"Counterparty trust check failed: {gate_res.trust_tier}" if gate_res.trust_tier
+                else "Agreed price outside the secret limits"
+            ),
+            trust_tier=gate_res.trust_tier or TrustTier.HIGH_AUTHENTICITY,
         )
         return
 
@@ -630,6 +653,15 @@ def _btc_sats(wallet_id: str) -> Optional[int]:
         logger.warning(f"Could not read BTC balance of {wallet_id}: {exc}")
         return None
 
+def _holdings(wallet_id: str) -> Optional[Dict[str, int]]:
+    """What a wallet holds now: {"btc": sats, asset_id: spendable}; None when it cannot be read."""
+    try:
+        balances = wallet_mgr.get_balances(wallet_id)
+    except Exception as exc:
+        logger.warning(f"Could not read the balances of {wallet_id}: {exc}")
+        return None
+    return {"btc": balances["btc_sats"], **{a["asset_id"]: a["spendable"] for a in balances["assets"]}}
+
 def run_settlement_worker(session_id: str) -> None:
     """Executes the 7-step atomic swap on Bitcoin regtest once both parties sign."""
     session = session_store.get_session(session_id)
@@ -657,18 +689,15 @@ def run_settlement_worker(session_id: str) -> None:
         session_store.set_settled(session_id, txid)
         wallet_state_manager.consume_lot(session.seller_wallet_id, session.asset_id, terms.rgb_amount)
 
-        # Record trade in Layer-0 memory graph
-        memory_graph.record_trade(
-            source_wallet=session.buyer_wallet_id,
-            counterparty=session.seller_wallet_id,
-            asset_ticker=session.payment_ticker,
-            amount=terms.payment_amount,
-        )
-        memory_graph.record_trade(
-            source_wallet=session.seller_wallet_id,
-            counterparty=session.buyer_wallet_id,
+        # Record the trade in the Layer-0 memory graph (persisted): both parties' scores move
+        memory_graph.record_swap(
+            buyer_wallet_id=session.buyer_wallet_id,
+            seller_wallet_id=session.seller_wallet_id,
             asset_ticker=session.asset_ticker,
-            amount=terms.rgb_amount,
+            asset_amount=terms.rgb_amount,
+            payment_ticker=session.payment_ticker,
+            payment_amount=terms.payment_amount,
+            session_id=session_id,
         )
 
         # Update wallet state, activity records, and market price
@@ -690,13 +719,26 @@ def run_settlement_worker(session_id: str) -> None:
         logger.info(f"Session {session_id} successfully settled and confirmed. txid={txid}")
     except Exception as exc:
         logger.error(f"Settlement failed for session {session_id}: {exc}", exc_info=True)
-        failure_msg = str(exc).strip() or repr(exc)
-        failure_str = f"{type(exc).__name__}: {failure_msg}"
-        session_store.set_failed(session_id, failure_str)
+        session_store.set_failed(session_id, _settlement_failure(exc, session.txid))
+
+# What the parties read when a settlement fails; the log keeps the error itself.
+SETTLEMENT_NOT_PREPARED = "The swap could not be prepared, so no funds moved. Try again in a moment."
+SETTLEMENT_NOT_FINISHED = "The swap was broadcast, but the wallets did not finish settling it."
+
+def _settlement_failure(exc: Exception, txid: Optional[str]) -> str:
+    """Whether funds may have moved and, when a side no longer holds its part of the deal, which."""
+    if txid:
+        return SETTLEMENT_NOT_FINISHED
+    if isinstance(exc, InsufficientFundsError):
+        return str(exc)
+    return SETTLEMENT_NOT_PREPARED
 
 # ── Sessions Endpoints ──────────────────────────────────────────────
 
 NO_OVERLAP_REASON = "No deal possible: the buyer's maximum is below the seller's minimum."
+# The smallest part of a lot a buyer may take is worth this much at the list price, so the agents
+# have room to negotiate in whole dollars (frontend: src/lib/lots.ts MIN_PART_USD, same value).
+MIN_PART_USD = 10
 
 def _round_half_up(value: float) -> int:
     return int(math.floor(value + 0.5))
@@ -715,10 +757,11 @@ def _lot_prices(profile: AgentProfile, amount: int) -> Tuple[int, int]:
     return list_price, min(reserve, list_price)
 
 def _min_lot_amount(profile: AgentProfile) -> int:
-    """Smallest part of a lot worth at least 1 unit of the payment asset at the list price."""
+    """Smallest part of a lot worth at least MIN_PART_USD at the list price; a cheaper lot sells whole."""
+    lot = profile.offered_amount
     if profile.asking_price_usd <= 0:
-        return profile.offered_amount
-    return max(1, math.ceil(profile.offered_amount / profile.asking_price_usd))
+        return lot
+    return min(lot, max(1, -(-lot * MIN_PART_USD // profile.asking_price_usd)))
 
 def _asset_ticker(asset_id: str) -> str:
     return next(
@@ -812,8 +855,8 @@ def create_session(req: CreateSessionRequest):
             seller_ai_prompt=seller_profile.seller_ai_prompt if seller_profile else "",
         )
 
-    # 3. Layer-0 trust gate on both parties: rings, Unverified wallets and unknown
-    # addresses are born BLOCKED_BY_GATE without any QVAC call.
+    # 3. Layer-0 trust gate on both parties: only High Authenticity passes. Rings, Low Reliability
+    # and Unverified wallets and unknown addresses are born BLOCKED_BY_GATE without any QVAC call.
     if not seller_wid:
         reasons = ["Counterparty has no active desk."]
         seller_tier = TrustTier.UNVERIFIED
@@ -822,7 +865,7 @@ def create_session(req: CreateSessionRequest):
         seller_tier = memory_graph.get_reputation(seller_wid).trust_tier
         for who, wid in (("Counterparty", seller_wid), ("Buyer", req.buyer_wallet_id)):
             rep = memory_graph.get_reputation(wid)
-            if rep.trust_tier in (TrustTier.RING_ANOMALY, TrustTier.UNVERIFIED) or not rep.is_trusted:
+            if not rep.is_trusted:
                 reasons.append(f"{who} trust check failed: {rep.trust_tier}")
     if reasons:
         logger.warning(f"Session creation blocked by gate: {reasons}")
@@ -852,7 +895,10 @@ def create_session(req: CreateSessionRequest):
     if req.rgb_amount < min_amount:
         raise HTTPException(
             status_code=400,
-            detail={"code": "amount_too_small", "message": f"Buy at least {min_amount}: a smaller part costs less than 1 {settings.PAYMENT_ASSET_TICKER}"},
+            detail={
+                "code": "amount_too_small",
+                "message": f"Buy at least {min_amount} {_asset_ticker(req.asset_id)}: a smaller part is worth less than {MIN_PART_USD} {settings.PAYMENT_ASSET_TICKER}.",
+            },
         )
     if _spendable(seller_wid, req.asset_id) < req.rgb_amount:
         raise HTTPException(
@@ -1149,8 +1195,9 @@ def _desk_profile(listing: Dict[str, Any]) -> AgentProfile:
 def agent_search(req: AgentSearchRequest):
     """
     The buyer's agent picks the cheapest fitting Seller Desk (by unit price, a part of a larger lot
-    included where the seller allows it) and opens a session. Rings are skipped, and so are desks
-    whose secret floor for this amount is above the buyer's maximum (no deal would be possible).
+    included where the seller allows it) and opens a session. Untrusted desks (rings, Low Reliability,
+    Unverified) are skipped, and so are desks whose secret floor for this amount is above the buyer's
+    maximum (no deal would be possible).
     """
     _require_wallet(req.buyer_wallet_id)
 
@@ -1163,7 +1210,7 @@ def agent_search(req: AgentSearchRequest):
         and l["asset"]["asset_id"] == req.asset_id
         and l["amount"] >= req.rgb_amount
         and (l["allow_partial"] or req.rgb_amount == l["amount"])
-        and l["trust"]["trust_tier"] != TrustTier.RING_ANOMALY
+        and l["trust"]["trusted"]
         and price_for(l) <= 1.5 * req.buyer_max_ceiling_usd
         and req.rgb_amount >= _min_lot_amount(_desk_profile(l))
         and _lot_prices(_desk_profile(l), req.rgb_amount)[1] <= req.buyer_max_ceiling_usd
@@ -1182,3 +1229,241 @@ def agent_search(req: AgentSearchRequest):
         buyer_ai_prompt=req.buyer_ai_prompt,
     ))
     return {"listing": best, "session": session}
+
+# ── Vault ───────────────────────────────────────────────────────────
+# The Vault is the self-custodial part of the account: a separate service (Tether WDK) with its own
+# seed, one Vault per wallet id. Funds move only between a wallet and its own Vault. move_to_vault
+# is the one endpoint that sends funds, and it pays only an invoice this backend asks the wallet's
+# own Vault for, never one from the client. The agents stay blind to the Vault: nothing reaches the
+# negotiator, the memory graph records no edge, and no Vault balance is kept here.
+
+from backend.rgb_swap_engine import InvoiceMismatchError
+
+VAULT_UNAVAILABLE = "The Vault is not reachable right now. Try again in a moment."
+
+class VaultTransferRequest(BaseModel):
+    asset_id: str
+    # Validated by hand so any bad amount gets a readable message.
+    amount: Any
+
+class MoveToVaultRequest(VaultTransferRequest):
+    # Nothing else is accepted, an invoice least of all.
+    model_config = {"extra": "forbid"}
+
+def _vault_error(status_code: int, code: str, message: str) -> HTTPException:
+    return HTTPException(status_code=status_code, detail={"code": code, "message": message})
+
+def _vault_transfer(wallet_id: str, req: VaultTransferRequest) -> Tuple[str, int]:
+    """Checks the wallet, the asset (USDT or PEPE) and the amount; returns (ticker, amount)."""
+    _require_wallet(wallet_id)
+    ticker = next((a.ticker for a in market_manager.get_market().assets if a.asset_id == req.asset_id), None)
+    if ticker is None:
+        raise _vault_error(400, "invalid_request", "Only USDT and PEPE move between your Wallet and your Vault.")
+    amount = _positive_int(req.amount)
+    if amount is None:
+        raise _vault_error(400, "invalid_request", "The amount must be a whole number above 0.")
+    return ticker, amount
+
+def _vault_post(wallet_id: str, action: str, payload: Optional[Dict[str, Any]] = None) -> requests.Response:
+    # Never called holding SWAP_GLOBAL_LOCK: swaps must not wait on the Vault service.
+    return requests.post(
+        f"{settings.VAULT_URL.rstrip('/')}/vault/{wallet_id}/{action}",
+        json=payload or {},
+        timeout=settings.VAULT_TIMEOUT,
+    )
+
+def _vault_invoice(wallet_id: str, asset_id: str, amount: int) -> str:
+    """An invoice from the wallet's own Vault for this move; its errors keep their code."""
+    try:
+        resp = _vault_post(wallet_id, "invoice", {"asset_id": asset_id, "amount": amount})
+        body = resp.json()
+    except (requests.RequestException, ValueError) as exc:
+        logger.warning(f"Vault of {wallet_id} unreachable: {exc}")
+        raise _vault_error(503, "vault_unavailable", VAULT_UNAVAILABLE)
+    body = body if isinstance(body, dict) else {}
+    if body.get("code") == "vault_missing":
+        raise _vault_error(409, "vault_missing", "You have no Vault yet. Create it first.")
+    if body.get("code") == "vault_locked":
+        raise _vault_error(409, "vault_locked", "The Vault is locked. Unlock it and try again.")
+    if resp.ok and isinstance(body.get("invoice"), str):
+        return body["invoice"]
+    if 400 <= resp.status_code < 500 and isinstance(body.get("code"), str) and isinstance(body.get("message"), str):
+        raise _vault_error(resp.status_code, body["code"], body["message"])
+    logger.warning(f"Vault of {wallet_id} answered {resp.status_code} without an invoice: {body}")
+    raise _vault_error(503, "vault_unavailable", VAULT_UNAVAILABLE)
+
+@app.post("/api/wallets/{wallet_id}/receive_invoice")
+def create_receive_invoice(wallet_id: str, req: VaultTransferRequest):
+    """An invoice that pays this wallet, asked for by its Vault (Vault -> Wallet). Receive only."""
+    _, amount = _vault_transfer(wallet_id, req)
+    try:
+        receive = wallet_mgr.create_receive_invoice(wallet_id, req.asset_id, amount)
+    except Exception as exc:
+        logger.error(f"Could not create a receive invoice for {wallet_id}: {exc}", exc_info=True)
+        raise _vault_error(503, "wallet_unavailable", "Your wallet cannot receive right now. Try again in a moment.")
+    return {**receive, "asset_id": req.asset_id, "amount": amount}
+
+@app.post("/api/wallets/{wallet_id}/refresh")
+def refresh_wallet(wallet_id: str):
+    """Settles incoming RGB transfers; each settled receive_invoice becomes a "vault in" activity."""
+    _require_wallet(wallet_id)
+    try:
+        settled = wallet_mgr.refresh(wallet_id)
+    except Exception as exc:
+        logger.error(f"Refresh of {wallet_id} failed: {exc}", exc_info=True)
+        raise _vault_error(503, "wallet_unavailable", "Your wallet cannot be updated right now. Try again in a moment.")
+    for receive in settled:
+        wallet_state_manager.record_vault_move(
+            wallet_id=wallet_id,
+            direction="in",
+            asset_id=receive["asset_id"],
+            asset_ticker=_asset_ticker(receive["asset_id"]),
+            amount=receive["amount"],
+            txid=receive["txid"],
+            btc_sats=_btc_sats(wallet_id),
+        )
+    return {"wallet_id": wallet_id, "refreshed": True}
+
+# Deals that can still settle: what a wallet promised in them must stay in the wallet.
+DEALS_IN_PROGRESS = (SessionStatus.NEGOTIATING, SessionStatus.AWAITING_SIGNATURES, SessionStatus.SETTLING)
+
+def _promised(wallet_id: str, asset_id: str) -> int:
+    """
+    How much of an asset the wallet has promised in deals in progress: each lot it sells and, as
+    the buyer, each agreed price, or its own ceiling while the price is negotiated (the price may
+    still reach it; 1 USDT = 1 USD). Only the wallet's own amounts count, never a counterparty's.
+    """
+    promised = 0
+    for s in session_store.list_sessions_for(wallet_id):
+        if s.status not in DEALS_IN_PROGRESS:
+            continue
+        if s.seller_wallet_id == wallet_id and s.asset_id == asset_id:
+            promised += s.asset_amount
+        if s.buyer_wallet_id == wallet_id and s.payment_asset_id == asset_id:
+            promised += s.buyer_max_budget_usd if s.status == SessionStatus.NEGOTIATING else (s.payment_amount or 0)
+    return promised
+
+def _keep_promises(wallet_id: str, asset_id: str, ticker: str, left: int) -> None:
+    """
+    A move to the Vault must leave in the wallet the lot its active Seller Desk lists and what its
+    deals in progress promise. The messages reach only the wallet's owner.
+    """
+    profile = wallet_state_manager.get_profile(wallet_id)
+    lot = profile.offered_amount if profile.seller_active and profile.offered_asset_id == asset_id else 0
+    if left < lot:
+        raise _vault_error(409, "desk_lot", f"{lot:,} {ticker} are listed on your Seller Desk. Lower the lot or pause the desk first.")
+    promised = _promised(wallet_id, asset_id)
+    if left < promised:
+        raise _vault_error(409, "funds_committed", f"{promised:,} {ticker} are promised in a deal in progress. Wait for it to finish or cancel it.")
+
+# One move to the Vault at a time per wallet, from its checks to its payment: two at once (two
+# tabs, a retry while the first waits on the Vault) would both pass the checks and both pay.
+_MOVE_LOCKS: Dict[str, threading.Lock] = {}
+_MOVE_LOCKS_GUARD = threading.Lock()
+
+def _move_lock(wallet_id: str) -> threading.Lock:
+    with _MOVE_LOCKS_GUARD:
+        return _MOVE_LOCKS.setdefault(wallet_id, threading.Lock())
+
+@app.post("/api/wallets/{wallet_id}/move_to_vault")
+def move_to_vault(wallet_id: str, req: MoveToVaultRequest):
+    """
+    Wallet -> its own Vault, the one endpoint that sends funds: the invoice is fetched here from
+    the wallet's own Vault and must ask for exactly this asset and amount. What the Seller Desk
+    lists or a deal in progress has promised stays in the wallet.
+    """
+    ticker, amount = _vault_transfer(wallet_id, req)
+    not_enough = _vault_error(409, "insufficient_funds", f"Your wallet does not hold {amount:,} {ticker}.")
+    with _move_lock(wallet_id):
+        spendable = _spendable(wallet_id, req.asset_id)
+        if spendable < amount:
+            raise not_enough
+        _keep_promises(wallet_id, req.asset_id, ticker, spendable - amount)
+        invoice = _vault_invoice(wallet_id, req.asset_id, amount)
+        try:
+            txid = wallet_mgr.pay_invoice(wallet_id, invoice, req.asset_id, amount)
+        except InsufficientFundsError:
+            raise not_enough
+        except InvoiceMismatchError as exc:
+            logger.warning(f"Refused the Vault invoice for {wallet_id}: {exc}")
+            raise _vault_error(502, "vault_invoice_mismatch", "The Vault asked for a different transfer, so nothing was sent.")
+        except Exception as exc:
+            logger.error(f"Move to the Vault failed for {wallet_id}: {exc}", exc_info=True)
+            raise _vault_error(500, "move_failed", "The move to the Vault did not go through. Try again in a moment.")
+
+        wallet_state_manager.record_vault_move(
+            wallet_id=wallet_id,
+            direction="out",
+            asset_id=req.asset_id,
+            asset_ticker=ticker,
+            amount=amount,
+            txid=txid,
+            btc_sats=_btc_sats(wallet_id),
+        )
+    try:
+        _vault_post(wallet_id, "refresh").raise_for_status()
+    except requests.RequestException as exc:
+        logger.warning(f"Moved {amount} {ticker} to the Vault of {wallet_id} (txid {txid}); its refresh failed: {exc}")
+    return {"txid": txid, "asset_id": req.asset_id, "amount": amount}
+
+# ── Advisor ─────────────────────────────────────────────────────────
+# The wallet's internal memory: observations from the owner's own data, phrased by the local model.
+
+from backend import advisor
+
+def _negotiation_pending() -> bool:
+    """Negotiations have priority on the single local model."""
+    queue = negotiation_queue.snapshot()
+    return bool(queue["running"] or queue["waiting"])
+
+def _owner_session(session, wallet_id: str) -> Dict[str, Any]:
+    """The session as the owner sees it, with the strategy they gave their own agent (never the counterparty's)."""
+    own_prompt = (
+        session.buyer_ai_prompt if session.buyer_wallet_id == wallet_id
+        else session.seller_ai_prompt if session.seller_wallet_id == wallet_id
+        else ""
+    )
+    return {**_session_view(session, wallet_id), "my_ai_prompt": own_prompt}
+
+@app.get("/api/wallets/{wallet_id}/advice")
+def get_advice(wallet_id: str):
+    """
+    Reads only what the owner sees: their WalletState and their sessions as they see them (no
+    counterparty limit is in a SessionView). The summary is phrased in the background.
+    """
+    _require_wallet(wallet_id)
+    sessions = [_owner_session(s, wallet_id) for s in session_store.list_sessions_for(wallet_id)]
+    return advisor.advise(
+        wallet_id,
+        get_wallet(wallet_id),
+        sessions,
+        market_manager.get_market().model_dump(),
+        model_busy=_negotiation_pending,
+    )
+
+# ── Your AI ─────────────────────────────────────────────────────────
+# The assistant behind "Ask your AI": the Advisor's sources, worded by the local model.
+
+from backend import assistant
+
+class AskRequest(BaseModel):
+    preset: Optional[Literal["analyze", "week", "vault"]] = None
+    question: Optional[str] = Field(default=None, max_length=assistant.QUESTION_MAX)
+    model_config = {"extra": "forbid"}
+
+@app.post("/api/wallets/{wallet_id}/ask")
+def ask_assistant(wallet_id: str, req: AskRequest):
+    """A preset or a free question about the owner's own account; never the Vault or a counterparty's limits."""
+    _require_wallet(wallet_id)
+    if req.preset is None and not (req.question or "").strip():
+        raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "Pick a preset or ask a question."})
+    sessions = [_owner_session(s, wallet_id) for s in session_store.list_sessions_for(wallet_id)]
+    return assistant.ask(
+        wallet_id,
+        get_wallet(wallet_id),
+        sessions,
+        market_manager.get_market().model_dump(),
+        preset=req.preset,
+        question=req.question,
+        model_busy=_negotiation_pending,
+    )

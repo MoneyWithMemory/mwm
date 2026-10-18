@@ -5,6 +5,7 @@ pre-signature security gates, signature hash verification (409 on mismatch),
 and state machine progression.
 """
 
+import re
 import time
 import pytest
 from fastapi.testclient import TestClient
@@ -56,6 +57,23 @@ def test_market_endpoint():
     pepe_asset = next(a for a in data["assets"] if a["ticker"] == "PEPE")
     assert pepe_asset["precision"] == 0
 
+def test_one_btc_rate_from_settings(monkeypatch):
+    from pydantic import ValidationError
+    from backend.config import Settings
+
+    monkeypatch.setattr("backend.config.settings.SATS_PER_USD", 2_000)
+    assert client.get("/api/market").json()["sats_per_usd"] == 2_000
+    # Totals use the same rate: Sybil's seeded 500,000 sats, and nothing else, are 250 USD.
+    assert client.get("/api/wallets/wallet_sybil").json()["history_points"][0]["total_usd"] == 250.0
+
+    monkeypatch.setenv("SATS_PER_USD", "2500")
+    assert Settings().SATS_PER_USD == 2_500
+    monkeypatch.delenv("SATS_PER_USD")
+    assert Settings().SATS_PER_USD == 1_000
+    monkeypatch.setenv("SATS_PER_USD", "0")  # every total would divide by it
+    with pytest.raises(ValidationError, match="SATS_PER_USD"):
+        Settings()
+
 def test_wallets_list_and_details():
     resp = client.get("/api/wallets")
     assert resp.status_code == 200
@@ -98,6 +116,24 @@ def test_wallet_state_carries_its_own_trust():
     contacts = client.get("/api/wallets/wallet_b/contacts").json()
     wallet_a_addr = client.get("/api/wallets/wallet_a").json()["address"]
     assert next(c["trust"] for c in contacts if c["address"] == wallet_a_addr) == trust["wallet_a"]
+
+
+def test_a_wallet_lists_only_the_rgb_assets_it_holds(monkeypatch):
+    from backend.market import market_manager
+    from backend.wallet_state import WalletStateManager
+
+    monkeypatch.setattr(market_manager, "pepe_asset_id", "rgb:pepe_demo")
+    monkeypatch.setattr(market_manager, "usdt_asset_id", "rgb:usdt_demo")
+
+    def held(asset_id, ticker, spendable, future):
+        return {"asset_id": asset_id, "ticker": ticker, "name": ticker, "settled": spendable, "future": future, "spendable": spendable}
+
+    # The whole lot sold (or moved to the Vault): no PEPE row, as in mock mode. USDT a settling
+    # transfer keeps unspendable for a moment is still held, so it stays listed.
+    state = WalletStateManager().assemble_wallet_state("wallet_b", {
+        "btc_sats": 990_000, "assets": [held("rgb:pepe_demo", "PEPE", 0, 0), held("rgb:usdt_demo", "USDT", 0, 75)],
+    })
+    assert [(a.ticker, a.amount) for a in state.assets] == [("BTC", 990_000), ("USDT", 0)]
 
 
 def test_put_agent_profile_seller_desk():
@@ -240,6 +276,14 @@ def test_session_signature_hash_mismatch_returns_409(monkeypatch):
     assert sess_after_buyer["buyer_signed"] is True
     assert sess_after_buyer["seller_signed"] is False
 
+def _leaves(value):
+    """Every scalar inside a JSON value."""
+    if isinstance(value, dict):
+        return [leaf for v in value.values() for leaf in _leaves(v)]
+    if isinstance(value, list):
+        return [leaf for v in value for leaf in _leaves(v)]
+    return [value]
+
 def test_incompatible_buyer_is_blocked_before_any_negotiation(monkeypatch):
     """Buyer maximum below the seller's minimum: no agent ever talks, and no number is revealed."""
     _fund_wallets(monkeypatch)
@@ -250,7 +294,10 @@ def test_incompatible_buyer_is_blocked_before_any_negotiation(monkeypatch):
     assert sess["state"] == "BLOCKED_BY_GATE"
     assert sess["gate"]["reasons"] == ["No deal possible: the buyer's maximum is below the seller's minimum."]
     assert sess["rounds"] == [] and sess["queue_position"] is None
-    assert "140" not in str(sess) and "100" not in str(sess["gate"])
+    # The reserve as a value anywhere (ids, hashes and timestamps may contain the digits by chance).
+    leaves = _leaves(sess)
+    assert 140 not in leaves and not any(isinstance(v, str) and re.search(r"\b140\b", v) for v in leaves)
+    assert "100" not in str(sess["gate"])
     _reset_desk()
 
 
@@ -609,19 +656,39 @@ def test_partial_lot_is_priced_pro_rata(monkeypatch):
 
     resp = client.post("/api/sessions", json=_session_request(seller_addr, rgb_amount=1_000_001))
     assert (resp.status_code, resp.json()["code"]) == (409, "exceeds_lot")
-    # The smallest part is worth 1 USDT at the list price: ceil(1,000,000 / 150) = 6,667.
-    resp = client.post("/api/sessions", json=_session_request(seller_addr, rgb_amount=6_666, buyer_max_ceiling_usd=5, buyer_target_usd=1))
-    assert (resp.status_code, resp.json()["code"]) == (400, "amount_too_small")
-    smallest = client.post("/api/sessions", json=_session_request(seller_addr, rgb_amount=6_667, buyer_max_ceiling_usd=5, buyer_target_usd=1)).json()
-    assert (smallest["state"], smallest["list_price_usd"]) == ("NEGOTIATING", 1)
+    # The smallest part is worth MIN_PART_USD (10) at the list price: ceil(1,000,000 * 10 / 150) = 66,667.
+    from backend.api_server import MIN_PART_USD
+    assert MIN_PART_USD == 10  # same value as frontend/src/lib/lots.ts
+    resp = client.post("/api/sessions", json=_session_request(seller_addr, rgb_amount=66_666, buyer_max_ceiling_usd=9, buyer_target_usd=8))
+    assert (resp.status_code, resp.json()) == (400, {
+        "code": "amount_too_small", "message": "Buy at least 66667 PEPE: a smaller part is worth less than 10 USDT.",
+    })
+    smallest = client.post("/api/sessions", json=_session_request(seller_addr, rgb_amount=66_667, buyer_max_ceiling_usd=9, buyer_target_usd=8)).json()
+    assert (smallest["state"], smallest["list_price_usd"]) == ("NEGOTIATING", 10)
     client.post(f"/api/sessions/{smallest['session_id']}/cancel", json={"wallet_id": "wallet_a"})
+    # The agent never picks a part below the minimum either.
+    search = {"buyer_wallet_id": "wallet_a", "asset_id": _desk_asset(), "rgb_amount": 12_500, "buyer_max_ceiling_usd": 9, "buyer_target_usd": 8, "buyer_ai_prompt": ""}
+    assert client.post("/api/shop/agent_search", json=search).json()["code"] == "no_match"
+
+    # A lot worth less than MIN_PART_USD sells whole only.
+    _reset_desk(asking=8, reserve=5, allow_partial=True)
+    resp = client.post("/api/sessions", json=_session_request(seller_addr, rgb_amount=999_999, buyer_max_ceiling_usd=8, buyer_target_usd=6))
+    assert (resp.status_code, resp.json()["code"]) == (400, "amount_too_small")
+    whole = client.post("/api/sessions", json=_session_request(seller_addr, buyer_max_ceiling_usd=8, buyer_target_usd=6)).json()
+    assert (whole["state"], whole["list_price_usd"]) == ("NEGOTIATING", 8)
+    client.post(f"/api/sessions/{whole['session_id']}/cancel", json={"wallet_id": "wallet_a"})
+    _reset_desk()
 
 
 def test_partial_purchase_needs_the_sellers_consent(monkeypatch):
-    from backend.wallet_state import AgentProfile
+    from backend.wallet_state import AgentProfile, WalletStateManager
 
     _fund_wallets(monkeypatch)
     assert AgentProfile.model_fields["allow_partial"].default is False  # off unless the seller opts in
+    # The demo seller has opted in: profiles live in RAM, and the demo's partial purchase must not
+    # need the switch again after every restart.
+    seeded = WalletStateManager()
+    assert (seeded.get_profile("wallet_b").allow_partial, seeded.get_profile("wallet_sybil").allow_partial) == (True, False)
     _reset_desk()
     wallets = client.get("/api/wallets").json()
     seller_addr = next(w["address"] for w in wallets if w["wallet_id"] == "wallet_b")
@@ -703,6 +770,10 @@ def test_session_view_shows_every_round(monkeypatch):
     seller_ctx = next(c for c in contexts if c.session_id == sess_id and c.role == "seller")
     assert (buyer_ctx.owner_instructions, buyer_ctx.wallet_label, buyer_ctx.counterparty_label) == ("Raise slowly.", "Wallet A", "Wallet B")
     assert (seller_ctx.owner_instructions, seller_ctx.wallet_label) == ("Defend the list price.", "Wallet B")
+    # ...and the other side's computed reliability, as the API shows it (never its limits or counts).
+    for ctx, other in ((buyer_ctx, "wallet_b"), (seller_ctx, "wallet_a")):
+        trust = client.get(f"/api/wallets/{other}").json()["trust"]
+        assert (ctx.counterparty_reliability_pct, ctx.counterparty_trust_tier) == (trust["reliability_pct"], trust["trust_tier"])
     client.put("/api/wallets/wallet_b/agent_profile", json={"seller_ai_prompt": ""})
 
 
@@ -721,3 +792,121 @@ def test_a_sale_shrinks_the_desk_lot():
     assert (profile["seller_active"], profile["offered_amount"]) == (False, 0)
     assert "desk_wallet_b" not in [l["listing_id"] for l in client.get("/api/shop?wallet_id=wallet_a").json()]
     _reset_desk()
+
+
+def test_the_seeded_desk_lists_only_what_the_seller_holds():
+    from backend.wallet_state import WalletStateManager
+
+    state = WalletStateManager()
+    pepe = state.get_profile("wallet_b").offered_asset_id
+
+    def desk():
+        p = state.get_profile("wallet_b")
+        return p.seller_active, p.offered_amount, p.asking_price_usd, p.secret_min_reserve_usd
+
+    state.fit_lot("wallet_b", pepe, 1_000_000)  # the whole lot is held
+    state.fit_lot("wallet_b", "rgb:other", 1)    # another asset
+    assert desk() == (True, 1_000_000, 150, 110)
+    # Part sold or moved to the Vault before a restart: the lot shrinks to it at the same unit prices.
+    state.fit_lot("wallet_b", pepe, 750_000)
+    assert desk() == (True, 750_000, 113, 83)
+
+
+def test_a_restart_starts_history_and_desk_from_what_the_wallets_hold(monkeypatch):
+    from backend import api_server
+    from backend.config import settings
+    from backend.market import market_manager
+    from backend.wallet_state import WalletStateManager
+
+    # The restart kept both demo assets after 250,000 PEPE were sold for 50 USDT.
+    pepe, usdt = "rgb:pepe_kept", "rgb:usdt_kept"
+
+    def asset(asset_id, ticker, amount):
+        return {"asset_id": asset_id, "ticker": ticker, "name": ticker, "settled": amount, "future": amount, "spendable": amount}
+
+    on_chain = {
+        "wallet_a": {"btc_sats": 990_000, "assets": [asset(pepe, "PEPE", 250_000), asset(usdt, "USDT", 9_950)]},
+        "wallet_b": {"btc_sats": 995_000, "assets": [asset(pepe, "PEPE", 750_000), asset(usdt, "USDT", 50), asset("rgb:sold_out", "PEPE", 0)]},
+    }
+
+    def get_balances(wallet_id):
+        if wallet_id not in on_chain:
+            raise RuntimeError("indexer unreachable")  # Sybil: its seed amounts instead
+        return on_chain[wallet_id]
+
+    state = WalletStateManager()
+    monkeypatch.setattr(api_server, "wallet_state_manager", state)
+    monkeypatch.setattr(api_server.regtest, "get_height", lambda: 200)
+    monkeypatch.setattr(api_server.rgb_engine, "setup_demo_environment", lambda: {"pepe_asset_id": pepe, "usdt_asset_id": usdt})
+    monkeypatch.setattr(api_server.wallet_mgr, "get_balances", get_balances)
+    monkeypatch.setattr(api_server.shop_store, "seed_demo_wants", lambda asset_id: None)
+    for obj, name in ((settings, "DEMO_ASSET_ID"), (settings, "PAYMENT_ASSET_ID"), (market_manager, "pepe_asset_id"),
+                      (market_manager, "usdt_asset_id"), (market_manager, "last_pepe_price_usd")):
+        monkeypatch.setattr(obj, name, getattr(obj, name))  # set by the startup or the sale below: restored
+    with TestClient(app):  # runs the startup
+        pass
+
+    assert {wid: state._history[wid][0].balances for wid in ("wallet_a", "wallet_b", "wallet_sybil")} == {
+        "wallet_a": {"btc": 990_000, pepe: 250_000, usdt: 9_950},
+        "wallet_b": {"btc": 995_000, pepe: 750_000, usdt: 50},
+        "wallet_sybil": {"btc": 500_000, pepe: 0, usdt: 0},
+    }
+    profile = state.get_profile("wallet_b")
+    assert (profile.offered_asset_id, profile.offered_amount, profile.asking_price_usd) == (pepe, 750_000, 113)
+
+    # The next sale moves on from what the wallets hold, not from the seeded supply.
+    state.record_swap_settlement(
+        buyer_wallet_id="wallet_a", seller_wallet_id="wallet_b", session_id="sess_next", txid="txid_next",
+        asset_id=pepe, asset_ticker="PEPE", asset_amount=375_000, payment_asset_id=usdt, payment_ticker="USDT",
+        payment_amount=75, agreed_price_usd=75,
+    )
+    assert state._history["wallet_b"][-1].balances == {"btc": 995_000, pepe: 375_000, usdt: 125}
+    assert state._history["wallet_a"][-1].balances == {"btc": 990_000, pepe: 625_000, usdt: 9_875}
+
+
+def test_a_failed_settlement_says_whether_funds_moved(monkeypatch):
+    from backend import api_server
+    from backend.memory_graph import MemoryGraph
+    from backend.rgb_swap_engine import InsufficientFundsError
+    from backend.session_store import SessionStore
+
+    store = SessionStore(MemoryGraph())
+    monkeypatch.setattr(api_server, "session_store", store)
+
+    def failing_swap(exc, broadcast=False):
+        def swap(**kwargs):
+            if broadcast:
+                kwargs["txid_callback"]("ab" * 32)
+            raise exc
+        return swap
+
+    lot_gone = "The seller no longer holds the agreed lot, so no funds moved."
+    cases = [
+        # An rgb-lib error before the broadcast: the parties never see the library's text.
+        (failing_swap(RuntimeError("RgbLibError.InsufficientAllocationSlots()")), api_server.SETTLEMENT_NOT_PREPARED, None),
+        # A side no longer holds its part of the deal: said as is.
+        (failing_swap(InsufficientFundsError(lot_gone)), lot_gone, None),
+        # After the broadcast: the txid stays, so the parties can check it before trying again.
+        (failing_swap(RuntimeError("accept_swap_transfers failed"), broadcast=True), api_server.SETTLEMENT_NOT_FINISHED, "ab" * 32),
+    ]
+    for i, (swap, message, txid) in enumerate(cases):
+        session_id = f"sess_failed_{i}"
+        store.create_session(
+            session_id=session_id, asset_id="rgb:pepe", asset_ticker="PEPE", asset_amount=500_000,
+            payment_asset_id="rgb:usdt", payment_ticker="USDT", buyer_wallet_id="wallet_a", seller_wallet_id="wallet_b",
+            buyer_address="bcrt1qbuyer", seller_address="bcrt1qseller", asking_price_usd=75,
+            buyer_max_budget_usd=70, seller_min_reserve_usd=55,
+        )
+        terms = CanonicalSwapTerms(
+            session_id=session_id, asset_id="rgb:pepe", rgb_amount=500_000, payment_asset_id="rgb:usdt",
+            payment_amount=65, agreed_price_usd=65, network_fee_sat=2000, buyer_address="bcrt1qbuyer",
+            seller_address="bcrt1qseller", expiry_unix=int(time.time()) + 600,
+        )
+        terms_hash = compute_terms_hash(terms)
+        store.set_awaiting_signatures(session_id, 65, 65, terms, terms_hash)
+        store.sign_session(session_id, "wallet_a", terms_hash)
+        store.sign_session(session_id, "wallet_b", terms_hash)
+        monkeypatch.setattr(api_server.rgb_engine, "execute_atomic_swap", swap)
+        api_server.run_settlement_worker(session_id)
+        view = store.get_session(session_id).to_session_view("wallet_a")
+        assert (view["state"], view["failure"], view["txid"]) == ("FAILED", {"code": "settlement_error", "message": message}, txid)

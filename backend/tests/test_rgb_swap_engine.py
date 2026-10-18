@@ -12,11 +12,12 @@ from backend.rgb_swap_engine import (
     SecurityViolationError,
     WalletManager,
 )
+from backend.memory_graph import MemoryGraph
 from backend.session_store import SessionStore, SessionStatus
 from backend.qvac_negotiator import NegotiationTurn
 
 def test_session_state_machine_and_signatures():
-    store = SessionStore()
+    store = SessionStore(MemoryGraph())
     sess = store.create_session(
         session_id="sess_flow_1",
         asset_id="rgb:pepe_id",
@@ -101,7 +102,7 @@ def test_session_state_machine_and_signatures():
     assert sess.settlement_step == 7
 
 def test_session_cancellation_and_expiry():
-    store = SessionStore()
+    store = SessionStore(MemoryGraph())
     sess = store.create_session(
         session_id="sess_cancel",
         asset_id="rgb:pepe",
@@ -301,7 +302,7 @@ def _awaiting_session(store, session_id):
 
 
 def test_cancel_during_negotiation_sticks():
-    store = SessionStore()
+    store = SessionStore(MemoryGraph())
     terms, h = _awaiting_session(store, "sess_race")
     store.cancel_session("sess_race", cancelled_by="wallet_a")
     # The agent turn that was in flight finishes after the cancel.
@@ -312,7 +313,7 @@ def test_cancel_during_negotiation_sticks():
 
 
 def test_only_one_signature_starts_settlement_and_settled_is_final():
-    store = SessionStore()
+    store = SessionStore(MemoryGraph())
     terms, h = _awaiting_session(store, "sess_once")
     store.set_awaiting_signatures("sess_once", 125, 125, terms, h)
     _, started_buyer = store.sign_session("sess_once", "wallet_a", h)
@@ -364,8 +365,81 @@ def test_demo_funding_is_idempotent_across_restarts(monkeypatch, tmp_path):
         assert bool(sent) is expect_send
 
 
+def _held(asset_id, ticker, future, added_at=0):
+    """One entry of WalletManager.get_balances()["assets"]."""
+    return {
+        "asset_id": asset_id, "ticker": ticker, "name": ticker, "settled": future, "future": future,
+        "spendable": future, "added_at": added_at,
+    }
+
+
+@pytest.mark.parametrize("assets,expected", [
+    ([], None),                                             # first start: issue
+    ([_held("rgb:sold", "PEPE", 0)], None),                 # the whole lot was sold: a fresh lot
+    ([_held("rgb:part", "PEPE", 400_000)], "rgb:part"),     # part sold or in the Vault: kept
+    ([_held("rgb:old", "PEPE", 400_000), _held("rgb:new", "PEPE", 1_000_000), _held("rgb:usdt", "USDT", 9_000_000)], "rgb:new"),
+    ([_held("rgb:old", "PEPE", 500_000, added_at=1), _held("rgb:new", "PEPE", 500_000, added_at=2)], "rgb:new"),
+    ([_held("rgb:usdt", "USDT", 10_000)], None),            # only another ticker
+])
+def test_demo_asset_to_reuse_is_the_largest_holding(assets, expected):
+    held = RgbSwapEngine.reusable_demo_asset(assets, "PEPE")
+    assert (held["asset_id"] if held else None) == expected
+
+
+@pytest.mark.parametrize("assets,expected", [
+    ([], None),                                                       # first start: issue
+    ([_held("rgb:in_vault", "USDT", 0)], "rgb:in_vault"),             # all of it moved to the Vault: kept
+    ([_held("rgb:old", "USDT", 0, added_at=1), _held("rgb:new", "USDT", 0, added_at=2)], "rgb:new"),
+    ([_held("rgb:held", "USDT", 5, added_at=1), _held("rgb:new", "USDT", 0, added_at=2)], "rgb:held"),
+])
+def test_a_kept_empty_asset_is_any_one_its_holder_knows(assets, expected):
+    held = RgbSwapEngine.reusable_demo_asset(assets, "USDT", keep_empty=True)
+    assert (held["asset_id"] if held else None) == expected
+
+
+def test_demo_setup_issues_only_what_its_holder_has_none_of():
+    issued = []
+
+    class FakeMgr:
+        balances = {}
+
+        def fund_and_create_utxos(self, wallet_id, btc_amount, utxo_count, size_sat, min_btc_sats=0):
+            pass
+
+        def get_balances(self, wallet_id):
+            return {"assets": self.balances[wallet_id]}
+
+        def issue_nia(self, wallet_id, ticker, name, supply):
+            issued.append((wallet_id, ticker, supply))
+            return f"rgb:fresh_{ticker.lower()}"
+
+    mgr = FakeMgr()
+    engine = RgbSwapEngine(wallet_mgr=mgr)
+    # After a partial sale (or a move to the Vault) both assets are kept: no balance splits.
+    mgr.balances = {
+        "wallet_b": [_held("rgb:pepe", "PEPE", 500_000), _held("rgb:usdt", "USDT", 75)],
+        "wallet_a": [_held("rgb:usdt", "USDT", 9_925), _held("rgb:pepe", "PEPE", 500_000)],
+    }
+    assert engine.setup_demo_environment() == {"pepe_asset_id": "rgb:pepe", "usdt_asset_id": "rgb:usdt"}
+    assert issued == []
+    # Once Wallet B sold the whole lot, the demo needs a fresh one; Wallet A keeps its USDT.
+    mgr.balances["wallet_b"] = [_held("rgb:pepe", "PEPE", 0), _held("rgb:usdt", "USDT", 200)]
+    assert engine.setup_demo_environment() == {"pepe_asset_id": "rgb:fresh_pepe", "usdt_asset_id": "rgb:usdt"}
+    assert issued == [("wallet_b", "PEPE", 1_000_000)]
+    # Wallet A moved all its USDT to its Vault: the same USDT, so the Vault's can come back.
+    mgr.balances = {
+        "wallet_b": [_held("rgb:fresh_pepe", "PEPE", 1_000_000), _held("rgb:usdt", "USDT", 200)],
+        "wallet_a": [_held("rgb:usdt", "USDT", 0), _held("rgb:pepe", "PEPE", 1_000_000)],
+    }
+    assert engine.setup_demo_environment() == {"pepe_asset_id": "rgb:fresh_pepe", "usdt_asset_id": "rgb:usdt"}
+    # A USDT is issued only on a wallet that knows none.
+    mgr.balances["wallet_a"] = []
+    assert engine.setup_demo_environment()["usdt_asset_id"] == "rgb:fresh_usdt"
+    assert issued == [("wallet_b", "PEPE", 1_000_000), ("wallet_a", "USDT", 10_000)]
+
+
 def test_thinking_is_null_outside_negotiation():
-    store = SessionStore()
+    store = SessionStore(MemoryGraph())
     _awaiting_session(store, "sess_think")
     session = store.get_session("sess_think")
     session.thinking = "seller"
@@ -376,7 +450,7 @@ def test_thinking_is_null_outside_negotiation():
 
 
 def test_needs_my_signature_follows_each_side():
-    store = SessionStore()
+    store = SessionStore(MemoryGraph())
     terms, h = _awaiting_session(store, "sess_needs")
     session = store.get_session("sess_needs")
     assert session.to_summary("wallet_a")["needs_my_signature"] is False  # still negotiating
@@ -393,16 +467,27 @@ class _SelfSendWallet(_FakeWallet):
     """
     The asset sits on one small-BTC UTXO, as after receiving it in a swap. After a self-send, a
     refresh filtered on the asset settles the witness receive (a new 10k-sat output) and the
-    send; the blind receive with no asset ID stays pending.
+    send; the blind receive with no asset ID stays pending. As in rgb-lib, a blind receive
+    reserves an empty colorable UTXO and the send needs another one.
     """
 
-    def __init__(self, asset_id, amount, free_utxos=1):
-        super().__init__([_unspent((asset_id, amount, True), btc=847)] + [_unspent() for _ in range(free_utxos)])
+    def __init__(self, asset_id, amount, free_utxos=1, reserved_utxos=0):
+        super().__init__(
+            [_unspent((asset_id, amount, True), btc=847)]
+            + [_unspent() for _ in range(free_utxos)]
+            + [_unspent(pending_blinded=1) for _ in range(reserved_utxos)]
+        )
         self.asset_id = asset_id
         self.receives = []
         self.sent = None
         self.refreshes = []
         self.created = 0
+
+    def _take_free_utxo(self):
+        free = next((u for u in self.unspents if u.utxo.colorable and not u.rgb_allocations and u.pending_blinded == 0), None)
+        if free is None:
+            raise RuntimeError("InsufficientAllocationSlots")
+        return free
 
     def create_utxos(self, online, up_to, num, size, fee_rate, skip_sync):
         self.created += num
@@ -413,10 +498,12 @@ class _SelfSendWallet(_FakeWallet):
         return SimpleNamespace(recipient_id="wvout:fake")
 
     def blind_receive(self, asset_id, assignment, expiration, transports, min_confirmations):
+        self._take_free_utxo().pending_blinded = 1
         self.receives.append(("blind", asset_id, assignment.amount))
         return SimpleNamespace(recipient_id="utxob:fake")
 
     def send(self, online, recipient_map, donation, fee_rate, min_confirmations, expiration):
+        self._take_free_utxo()
         self.sent = [(r.witness_data.amount_sat if r.witness_data else None, r.assignment.amount) for r in recipient_map[self.asset_id]]
 
     def refresh(self, online, asset_id, filters, skip_sync):
@@ -443,7 +530,20 @@ def test_isolation_puts_exactly_the_part_on_a_new_output(monkeypatch, part, free
     assert RgbSwapEngine._selection_fits(wallet, None, "pepe", part, 3_000)
     # A full refresh first, then only refreshes filtered on the asset (the blind receive waits).
     assert wallet.refreshes == [None, "pepe", "pepe"]
-    assert wallet.created == (1 if rest and free_utxos == 0 else 0)
+    # Empty UTXOs are created for the send and the parked rest, as many as are missing.
+    assert wallet.created == max(0, (2 if rest else 1) - free_utxos)
+
+
+def test_isolation_keeps_an_empty_utxo_for_the_send(monkeypatch):
+    # Every empty UTXO is reserved by an unpaid receive (an RGB invoice, or a rest parked by an
+    # earlier attempt): one is created for this rest, and one for the send, which needs its own.
+    monkeypatch.setattr("backend.rgb_swap_engine.regtest.mine", lambda n=1: None)
+    wallet = _SelfSendWallet("usdt", 9_930, free_utxos=0, reserved_utxos=3)
+    RgbSwapEngine(wallet_mgr=object())._ensure_isolated_allocation(
+        wallet=wallet, online=None, asset_id="usdt", exact_amount=70, party="buyer", min_btc_sat=3_000,
+    )
+    assert wallet.created == 2
+    assert wallet.sent == [(10_000, 70), (None, 9_860)]
 
 
 def test_isolation_skips_a_selection_that_already_fits(monkeypatch):

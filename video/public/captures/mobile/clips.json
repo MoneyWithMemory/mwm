@@ -1,0 +1,196 @@
+{
+  "layout": "mobile",
+  "width": 390,
+  "height": 844,
+  "dpr": 2,
+  "clips": {
+    "01-shop": {
+      "file": "captures/mobile/01-shop.mp4",
+      "seconds": 13.725,
+      "marks": {
+        "shop": 3.205,
+        "sybil": 5.797,
+        "offer": 9.795
+      },
+      "boxes": {
+        "feed": [
+          16,
+          334,
+          358,
+          822
+        ],
+        "sybil": [
+          16,
+          525,
+          358,
+          175
+        ],
+        "offer": [
+          16,
+          334,
+          358,
+          175
+        ]
+      }
+    },
+    "02-negotiate": {
+      "file": "captures/mobile/02-negotiate.mp4",
+      "seconds": 19.181,
+      "marks": {
+        "half": 2.744,
+        "start": 5.836,
+        "private": 10.137,
+        "deal": 13.34,
+        "detailsA": 16.568
+      },
+      "boxes": {
+        "paneA": [
+          0,
+          58,
+          390,
+          786
+        ],
+        "amount": [
+          32,
+          8,
+          168,
+          318
+        ],
+        "privateA": [
+          16,
+          358,
+          272,
+          105
+        ],
+        "roundA": [
+          32,
+          298,
+          326,
+          221
+        ]
+      }
+    },
+    "03-settle": {
+      "file": "captures/mobile/03-settle.mp4",
+      "seconds": 20.654,
+      "marks": {
+        "approveA": 4.499,
+        "approveB": 9.152,
+        "steps": 11.034,
+        "settled": 16.257,
+        "txid": 18.454
+      },
+      "boxes": {
+        "steps": [
+          74,
+          253,
+          189,
+          385
+        ],
+        "done": [
+          32,
+          261,
+          326,
+          173
+        ]
+      }
+    },
+    "04-vault": {
+      "file": "captures/mobile/04-vault.mp4",
+      "seconds": 29.354,
+      "marks": {
+        "vault": 2.778,
+        "move": 6.334,
+        "moving": 11.387,
+        "moved": 13.735,
+        "inVault": 18.472,
+        "send": 20.297,
+        "refused": 25.423
+      },
+      "boxes": {
+        "vault": [
+          0,
+          58,
+          390,
+          786
+        ],
+        "moveSheet": [
+          0,
+          487,
+          390,
+          357
+        ],
+        "movedSheet": [
+          0,
+          479,
+          390,
+          366
+        ],
+        "sendSheet": [
+          0,
+          581,
+          390,
+          263
+        ],
+        "refusedSheet": [
+          0,
+          497,
+          390,
+          348
+        ]
+      }
+    },
+    "05-ai": {
+      "file": "captures/mobile/05-ai.mp4",
+      "seconds": 11.647,
+      "marks": {
+        "open": 2.998,
+        "analyze": 5.787,
+        "answer": 8.42
+      },
+      "boxes": {
+        "aiPanel": [
+          0,
+          259,
+          390,
+          585
+        ],
+        "answer": [
+          16,
+          496,
+          140,
+          292
+        ]
+      }
+    },
+    "06-contacts": {
+      "file": "captures/mobile/06-contacts.mp4",
+      "seconds": 10.404,
+      "marks": {
+        "contacts": 2.697,
+        "score": 4.766,
+        "sybil": 8.196
+      },
+      "boxes": {
+        "list": [
+          0,
+          58,
+          390,
+          786
+        ],
+        "profile": [
+          32,
+          218,
+          321,
+          45
+        ],
+        "sybilRow": [
+          16,
+          363,
+          358,
+          69
+        ]
+      }
+    }
+  }
+}

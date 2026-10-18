@@ -1,0 +1,6 @@
+node_modules/
+# Frames the recorder writes before encoding a clip
+*.frames/
+# Remotion caches
+.remotion/
+build/

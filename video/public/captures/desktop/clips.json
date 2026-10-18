@@ -1,0 +1,210 @@
+{
+  "layout": "desktop",
+  "width": 1440,
+  "height": 900,
+  "dpr": 1.5,
+  "clips": {
+    "01-shop": {
+      "file": "captures/desktop/01-shop.mp4",
+      "seconds": 15.834,
+      "marks": {
+        "shop": 3.516,
+        "sybil": 6.786,
+        "offer": 11.161
+      },
+      "boxes": {
+        "feed": [
+          272,
+          305,
+          1120,
+          440
+        ],
+        "sybil": [
+          651,
+          305,
+          363,
+          212
+        ],
+        "offer": [
+          272,
+          305,
+          363,
+          212
+        ]
+      }
+    },
+    "02-negotiate": {
+      "file": "captures/desktop/02-negotiate.mp4",
+      "seconds": 27.403,
+      "marks": {
+        "half": 3.141,
+        "start": 6.715,
+        "both": 9.44,
+        "private": 12.442,
+        "deal": 15.511,
+        "detailsA": 19.453,
+        "detailsB": 24.781
+      },
+      "boxes": {
+        "paneA": [
+          316,
+          72,
+          392,
+          796
+        ],
+        "panes": [
+          316,
+          72,
+          808,
+          796
+        ],
+        "amount": [
+          349,
+          365,
+          214,
+          142
+        ],
+        "privateA": [
+          333,
+          335,
+          272,
+          104
+        ],
+        "roundA": [
+          349,
+          356,
+          327,
+          220
+        ],
+        "roundB": [
+          765,
+          356,
+          327,
+          220
+        ]
+      }
+    },
+    "03-settle": {
+      "file": "captures/desktop/03-settle.mp4",
+      "seconds": 23.478,
+      "marks": {
+        "approveA": 5.567,
+        "approveB": 11.177,
+        "steps": 13.599,
+        "settled": 18.377,
+        "txid": 21.277
+      },
+      "boxes": {
+        "steps": [
+          391,
+          276,
+          189,
+          384
+        ],
+        "done": [
+          349,
+          284,
+          327,
+          173
+        ]
+      }
+    },
+    "04-vault": {
+      "file": "captures/desktop/04-vault.mp4",
+      "seconds": 32.13,
+      "marks": {
+        "vault": 3.075,
+        "move": 6.903,
+        "moving": 12.687,
+        "moved": 15.055,
+        "inVault": 20.124,
+        "send": 22.207,
+        "refused": 28.164
+      },
+      "boxes": {
+        "vault": [
+          24,
+          56,
+          1392,
+          844
+        ],
+        "moveSheet": [
+          248,
+          527,
+          1168,
+          357
+        ],
+        "movedSheet": [
+          248,
+          519,
+          1168,
+          365
+        ],
+        "sendSheet": [
+          248,
+          622,
+          1168,
+          262
+        ],
+        "refusedSheet": [
+          248,
+          537,
+          1168,
+          347
+        ]
+      }
+    },
+    "05-ai": {
+      "file": "captures/desktop/05-ai.mp4",
+      "seconds": 12.21,
+      "marks": {
+        "open": 3.095,
+        "analyze": 6.346,
+        "answer": 8.991
+      },
+      "boxes": {
+        "aiPanel": [
+          1004,
+          232,
+          400,
+          640
+        ],
+        "answer": [
+          1021,
+          469,
+          140,
+          346
+        ]
+      }
+    },
+    "06-contacts": {
+      "file": "captures/desktop/06-contacts.mp4",
+      "seconds": 11.305,
+      "marks": {
+        "contacts": 3.001,
+        "score": 5.464,
+        "sybil": 9.092
+      },
+      "boxes": {
+        "list": [
+          24,
+          56,
+          1392,
+          844
+        ],
+        "profile": [
+          280,
+          216,
+          1099,
+          45
+        ],
+        "sybilRow": [
+          264,
+          361,
+          1136,
+          69
+        ]
+      }
+    }
+  }
+}

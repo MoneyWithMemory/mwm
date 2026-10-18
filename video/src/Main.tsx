@@ -40,7 +40,7 @@ function Crossfade({ len, children, fadeOut = true }: { len: number; children: R
   return <AbsoluteFill style={{ opacity: fin * fout, transform: `scale(${0.985 + 0.015 * fin})` }}>{children}</AbsoluteFill>
 }
 
-function useFonts() {
+export function useFonts() {
   const [handle] = useState(() => delayRender('Loading Inter'))
   useEffect(() => {
     Promise.all([400, 500, 600].map((w) => document.fonts.load(`${w} 40px "Inter Variable"`)))

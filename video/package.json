@@ -6,6 +6,7 @@
   "scripts": {
     "capture": "node capture/capture.mjs",
     "studio": "remotion studio",
+    "render:promo": "remotion render MwMPromo out/mwm-promo-1080p.mp4",
     "render": "remotion render MwM out/mwm-motion-1080p.mp4",
     "render:vertical": "remotion render MwMVertical out/mwm-motion-vertical.mp4"
   },

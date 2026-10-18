@@ -6,10 +6,13 @@ mock. That mock needs no backend, no AI model and no Vault service. Everything s
 
 | Output | Size | Composition |
 |---|---|---|
+| `out/mwm-promo-1080p.mp4` | 1920×1080, 14 s teaser | `MwMPromo` |
 | `out/mwm-motion-1080p.mp4` | 1920×1080, 30 fps | `MwM` |
 | `out/mwm-motion-vertical.mp4` | 1080×1920, 30 fps | `MwMVertical` |
 
-## Scenes
+The **teaser** (`src/Promo.tsx`) shows the phone in 3D playing the app, with one line per feature: "Know who you trade with.", "Local AI negotiates.", "RGB settles.", "You stay in control.". It ends on the name, the line and a call to action.
+
+## Scenes (long version)
 
 1. **Shop.** Wallet B's PEPE offer (*PEPE Desk*). Sybil is *Low reliability*, and its (?) explains why.
 2. **Negotiation.** Wallet A buys 50% from Wallet B. In split view, the two agents negotiate in a chat. *Details* then shows that each side sees only its own agent's private reasoning.
@@ -48,6 +51,7 @@ npm run capture -- mobile
 
 # 3. Preview and render
 npm run studio
+npm run render:promo
 npm run render
 npm run render:vertical
 ```

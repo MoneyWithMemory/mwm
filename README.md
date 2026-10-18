@@ -2,7 +2,7 @@
 
 > **Local AI negotiates. RGB settles. You stay in control.**
 
-MwM is a wallet in which your own AI agent buys and sells RGB assets on Bitcoin for you. You give it a secret limit and a strategy. It negotiates with the other side's agent, and both agents run locally on QVAC, so neither limit ever leaves the machine. When the agents agree, both owners approve the exact same terms (2/2), and an RGB on-chain atomic swap settles the trade: both assets move in one Bitcoin transaction, or neither does. A trust memory computed by code, never by the AI, blocks wash-trading rings and unknown wallets before any agent speaks. A self-custodial Vault built with Tether WDK holds the funds your agents must never see or spend.
+MwM is a wallet in which your own AI agent buys and sells RGB assets on Bitcoin for you. You give it a secret limit and a strategy. It negotiates with the other side's agent, and both agents run locally on QVAC, so neither limit ever leaves the machine. When the agents agree, both owners approve the exact same terms (2/2), and an RGB on-chain atomic swap settles the trade: both assets move in one Bitcoin transaction, or neither does. A trust memory computed by code, never by the AI, flags wash-trading rings and wallets with no history, and asks you to confirm before any agent speaks. A self-custodial Vault built with Tether WDK holds the funds your agents must never see or spend.
 
 Everything runs live on one laptop, on Bitcoin regtest: rgb-lib, the local QVAC model, the WDK Vault. The [simulated parts](#what-is-simulated-mocked-or-hard-coded) are listed, all of them.
 
@@ -28,10 +28,10 @@ Everything runs live on one laptop, on Bitcoin regtest: rgb-lib, the local QVAC 
 
 **Proof** (details in [Tests](#7-tests)):
 
-- `.venv/bin/pytest`: 305 hermetic backend tests (gate, guards, trust score, session state machine, 2/2, allocation isolation, Vault link, advisor).
+- `.venv/bin/pytest`: 342 hermetic backend tests (gate, guards, trust score, session state machine, 2/2, allocation isolation, Vault link, advisor).
 - `npm --prefix vault test`: 34 Vault tests (encryption, the policy matrix on the real WDK policy engine, the HTTP API and its local-only guards).
 - `node frontend/scripts/contract-check.mjs http://127.0.0.1:8000 --e2e`: a negotiation with the real model, both approvals and the on-chain settlement, run against a live backend. Expected result: `OK: 0 failed, 0 warnings`.
-- [QVAC evals](#qvac-evals): 24 negotiations on the real model. 0 public messages disclosed a limit, 0 deals fell outside the limits, and 21 of 21 possible deals closed. On the hardened code, the demo scenario closed in 55 to 62 s.
+- [QVAC evals](#qvac-evals): 24 negotiations on the real model. 0 public messages disclosed a limit, 0 deals fell outside the limits, and 21 of 21 possible deals closed. On the hardened code, the demo scenario closed in 55 to 62 s; with the later strategy-aware opening, live runs took 67 to 96 s.
 - `REGTEST_SCRIPT="$PWD/scripts/regtest.sh" ./scripts/reproduce_all.sh`: the pre-hackathon RGB suite (RGB↔BTC and RGB↔RGB swaps with re-spends, tampered consignments rejected before signing).
 
 ---
@@ -500,7 +500,7 @@ score = 100 × (0.35·activity + 0.25·variety + 0.25·quality + 0.15·seniority
 
 - **Inputs:** only swaps that reached `SETTLED` add an edge, and Vault moves add none. A party *walks away* when, after the agents agreed, it cancels the deal, or leaves it unsigned until expiry while the other side signed. Each walk-away costs 10%.
 - **Persistent:** the graph lives in `MWM_DATA_DIR/memory_graph.json`, rewritten atomically after every change and loaded at startup. It survives `demo_reset.sh --restart`, and the full reset seeds it again.
-- **Every tier but High Authenticity asks for consent; no tier is blocked outright.** Before trading with such a seller the buyer sees *"Low reliability"*, *"No history yet"* or, for a ring, *"Suspicious activity"*, and chooses *Continue anyway* or *Cancel*. Only an unknown address and a pair with no possible deal are blocked, and the buyer's agent never picks a risky desk by itself. A low or new wallet can start deals itself, so it can rebuild its score, and the other side sees its badge and may decline: leaving a deal whose counterparty is not High Authenticity is not a walk-away.
+- **Every tier but High Authenticity asks for consent; no tier is blocked outright.** Before trading with such a seller the buyer sees a short *"Be careful"* sheet (the seller isn't considered reliable, or has no trade history yet) and chooses *Continue anyway* or *Cancel*. Only an unknown address and a pair with no possible deal are blocked, and the buyer's agent never picks a risky desk by itself. A low or new wallet can start deals itself, so it can rebuild its score, and the other side sees its badge and may decline: leaving a deal whose counterparty is not High Authenticity is not a walk-away.
 - **Seeded demo history** (declared): Wallet A scores 89 and Wallet B 86, each after about 10 swaps over 30 days with five or more counterparties, most of them synthetic peers that never appear as contacts. Sybil sits in a ring and scores 20.
 - **The UI shows** one *Low reliability* label for both kinds of risk, with a (?) that explains it, a percentage and no raw counts. Your own score appears in Contacts.
 - **Honest limits:** on regtest anyone can create wallets. The score makes faking a history expensive, because variety, quality and seniority all need real, independent, older counterparties; it does not make faking impossible. Cold start is softened, not solved: a new wallet can trade, but its counterparties are warned until it has a history, and in this demo the trusted history comes from the seed. Small, capped trades with sellers who opt in are on the [roadmap](#roadmap).

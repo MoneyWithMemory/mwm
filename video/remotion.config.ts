@@ -10,3 +10,6 @@ Config.setCrf(16)
 Config.setPixelFormat('yuv420p')
 // Use a local Chromium when Remotion cannot download its own (offline or proxied machines).
 if (process.env.REMOTION_BROWSER) Config.setBrowserExecutable(process.env.REMOTION_BROWSER)
+// Some containers report a bogus memory limit; without a cap the frame cache can get the
+// compositor killed. 1.5 GB is plenty for these clips.
+Config.setOffthreadVideoCacheSizeInBytes(1536 * 1024 * 1024)

@@ -541,7 +541,7 @@ score = 100 × (0.35·activity + 0.25·variety + 0.25·quality + 0.15·seniority
 | AI | the local QVAC model | **Deterministic fallbacks:** if QVAC is unreachable or returns no usable offer, that turn comes from a deterministic negotiator, with a warning in the log (`QVAC live call failed ... Falling back to internal mock`). The advisor falls back to a rules template. `QVAC_MOCK=1` forces both, the tests use it, and in that mode `/api/health` reports `qvac: true`. |
 | Vault | WDK keys, policies, RGB transfers | **A regtest funding helper:** when a Vault is created, the service sends it 0.01 BTC from the regtest miner for fees, creates its colorable UTXOs, tops them up before an invoice when none is free, and mines a block after each move. On a real network the user funds fees and miners confirm. There is no auto-lock. |
 | Demo setup | the funding and issuance transactions | At startup the backend funds the demo wallets from the regtest miner. It turns on the Seller Desks of Wallet B (partial purchases allowed) and Sybil with preset prices and minimums, and adds two demo requests to the Shop. |
-| State | rgb-lib wallets, Vaults and the trust memory are on disk | Sessions, Shop requests, agent profiles, aliases, activity, balance history and the PEPE price live in memory and reset on a backend restart. |
+| State | rgb-lib wallets, Vaults, the trust memory and the last PEPE price are on disk | Sessions, Shop requests, agent profiles, aliases, activity and balance history live in memory and reset on a backend restart. |
 | Fees | real regtest transactions | Fixed: 1 sat/vB, and a 2,000-sat network fee per swap. |
 
 ---
